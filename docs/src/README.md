@@ -1,3 +1,5 @@
+<img src="images/madcats-logo.png" align="right" width="180" alt="MADCATS logo">
+
 # Welcome to MADCATS!
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)

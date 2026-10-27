@@ -19,7 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from madc_pipeline import Locus, allele_type, read_madc, write_reference_tags
+from madcats import Locus, allele_type, read_madc, write_reference_tags
 
 
 # Why a marker cannot become a locus, in the words a user needs to act on it.

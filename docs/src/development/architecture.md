@@ -9,10 +9,11 @@ madcats.py`), as the installed `madcats` command, or frozen into a standalone bi
 | Path | Contents |
 |------|----------|
 | `madcats.py` | The whole tool: library functions and the command line |
-| `madc_pipeline.py` | Compatibility shim re-exporting `madcats` under the tool's former name |
 | `tests/` | Unit and end-to-end tests (`unittest`) |
 | `scripts/` | Diagnostic and conversion scripts (e.g. `madc_to_reference_tags.py`, `validate_inferred_design.py`) |
 | `docs/` | This documentation (mdBook), plus `DEVELOPMENT.md`, the long-form development record |
+| `examples/madcats-demo/` | Simulated example project and the script that generates it |
+| `assets/` | Full-size logo (2028 × 2028 PNG); the docs use a 600 px copy in `docs/src/images/` |
 | `packaging/` | PyInstaller entry point for the standalone binaries |
 | `pyproject.toml` | Package metadata for PyPI |
 | `.github/workflows/` | Tests on every push; PyPI and binary releases on version tags |

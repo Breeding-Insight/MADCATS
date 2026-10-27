@@ -15,8 +15,7 @@ and VCF-ready output. `madcats.py` uses only Python 3's standard library,
 exposes all analysis thresholds on the command line, and writes a QC and
 provenance JSON beside every result. (The name also reflects the tool's
 origins as a FASTQ-to-MADC workflow, where MADC denotes the Missing
-Allele Discovery Counts format; `madc_pipeline.py` remains as a
-compatibility shim for existing scripts.)
+Allele Discovery Counts format.)
 
 **A prior MADC is not an input to the workflow.** Generation uses the FASTQs
 plus the assay design: either the DArTag primer/probe files or a

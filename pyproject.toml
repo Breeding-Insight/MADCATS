@@ -48,7 +48,7 @@ Changelog = "https://madcats.readthedocs.io/en/latest/development/changelog.html
 madcats = "madcats:main"
 
 [tool.setuptools]
-py-modules = ["madcats", "madc_pipeline"]
+py-modules = ["madcats"]
 
 [tool.setuptools.dynamic]
 version = { attr = "madcats.__version__" }

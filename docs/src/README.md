@@ -1,3 +1,5 @@
+<img src="images/madcats-logo.png" align="right" width="180" alt="MADCATS logo">
+
 # Welcome to MADCATS!
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -69,7 +71,8 @@ New to MADCATS? Start here:
 
 1. [Installation](getting-started/installation.md): install with pip or download a binary
 2. [Quick Start](getting-started/quickstart.md): your first MADC in two commands
-3. [Choosing a Workflow](getting-started/workflows.md): which commands your platform and inputs need
+3. [Try the Example](getting-started/example.md): run a small simulated project and check it against the truth
+4. [Choosing a Workflow](getting-started/workflows.md): which commands your platform and inputs need
 
 ## Scope
 

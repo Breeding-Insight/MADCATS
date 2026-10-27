@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from madc_pipeline import QUALITY_THRESHOLDS, allele_type, compatible_mismatches, read_madc
+from madcats import QUALITY_THRESHOLDS, allele_type, compatible_mismatches, read_madc
 
 
 def parse_args() -> argparse.Namespace:

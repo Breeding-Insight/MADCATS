@@ -152,7 +152,7 @@ from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Name
 # ============================================================================
 
 
-__version__ = "0.12.1"
+__version__ = "0.13.0"
 
 # Increment only when the serialized per-sample cache or raw-read processing
 # changes. Output-row filtering does not invalidate reusable FASTQ counts.
@@ -5048,6 +5048,14 @@ def proper_fraction(value: str) -> float:
     return parsed
 
 
+def partial_read_mode(value: str) -> str:
+    """``--partial-read-mode``: on/off, still accepting the 0.12 spelling ``assign``."""
+    if value == "assign":
+        print("warning: --partial-read-mode assign is now spelled 'on'", file=sys.stderr)
+        return "on"
+    return value
+
+
 def ratio_at_least_one(value: str) -> float:
     parsed = float(value)
     if parsed < 1:
@@ -5071,10 +5079,24 @@ def _add_fastq_arguments(parser: argparse.ArgumentParser, directory_help: str = 
 
 
 def _add_design_command(subparsers) -> None:
-    design = subparsers.add_parser("design", help="reconstruct Ref/Alt tags from DArT design tables")
-    design.add_argument("--primers", required=True, help="primer-sequence CSV")
-    design.add_argument("--probe-design", required=True, help="probe/marker design TSV or CSV")
-    design.add_argument("--tag-length", type=positive_int, default=TAG_LENGTH_DEFAULT)
+    design = subparsers.add_parser(
+        "design",
+        help="reconstruct each marker's Ref/Alt tags from DArT primer and probe-design files",
+        description=(
+            "Reconstruct each marker's canonical Ref and Alt tags from a DArT primer-sequence CSV and "
+            "probe-design file, and write them as a reference-tag CSV for generate. Uses no sequencing data."
+        ),
+    )
+    design.add_argument("--primers", required=True, help="DArT primer-sequence CSV")
+    design.add_argument(
+        "--probe-design", required=True, help="probe-design TSV or CSV with one bracketed variant per marker, e.g. [C/T]"
+    )
+    design.add_argument(
+        "--tag-length",
+        type=positive_int,
+        default=TAG_LENGTH_DEFAULT,
+        help=f"tag length to build, e.g. 54, 81 or 109 (default: {TAG_LENGTH_DEFAULT})",
+    )
     design.add_argument("--output", required=True, help="reference-tag CSV to write")
     design.set_defaults(func=run_design)
 
@@ -5082,9 +5104,15 @@ def _add_design_command(subparsers) -> None:
 def _add_infer_design_command(subparsers) -> None:
     infer = subparsers.add_parser(
         "infer-design",
-        help="infer a reference-tag panel from the probe design plus FASTQ evidence when the primer file is unavailable",
+        help="infer the reference-tag panel from the probe design and the reads when the primer file is unavailable",
+        description=(
+            "Infer each marker's Ref and Alt tags from the probe design and the reads, for panels whose primer "
+            "file is not available. Reads vote for each locus's tag window: exact prefix matches decide first, "
+            "and a fuzzy pass runs only for loci with no exact votes. Loci that cannot be resolved are left out "
+            "and listed, with the reason, in the QC report."
+        ),
     )
-    infer.add_argument("--probe-design", required=True, help="probe/marker design TSV or CSV")
+    infer.add_argument("--probe-design", required=True, help="probe-design TSV or CSV with bracketed variants")
     _add_fastq_arguments(infer)
     infer.add_argument(
         "--leading-anchor",
@@ -5101,7 +5129,7 @@ def _add_infer_design_command(subparsers) -> None:
         "--min-identity",
         type=probability,
         default=0.80,
-        help="identity envelope for the fuzzy pass, matching generate (default: 0.80)",
+        help="minimum identity for fuzzy-pass votes, as in generate (default: 0.80)",
     )
     infer.add_argument(
         "--dominance-ratio",
@@ -5113,7 +5141,7 @@ def _add_infer_design_command(subparsers) -> None:
         "--fuzzy-min-reads",
         type=nonnegative_int,
         default=30,
-        help="identity-envelope votes required to anchor a locus with no exact support; 0 disables the fuzzy pass (default: 30)",
+        help="fuzzy-pass votes needed to resolve a locus with no exact votes; 0 disables the fuzzy pass (default: 30)",
     )
     infer.add_argument(
         "--fuzzy-min-samples",
@@ -5131,7 +5159,7 @@ def _add_infer_design_command(subparsers) -> None:
         "--anchor-max-length",
         type=positive_int,
         default=30,
-        help="longest pseudo-primer anchor; also capped below each variant (default: 30)",
+        help="longest pseudo-primer anchor; an anchor always ends before the variant (default: 30)",
     )
     _add_jobs_argument(infer)
     infer.add_argument("--output", required=True, help="reference-tag CSV to write")
@@ -5142,7 +5170,14 @@ def _add_infer_design_command(subparsers) -> None:
 def _add_merge_pairs_command(subparsers) -> None:
     merge = subparsers.add_parser(
         "merge-pairs",
-        help="stitch overlapping paired-end reads into single fragment reads (R2 reverse-complemented; read-through adapter tails removed by the overlap geometry)",
+        help="merge overlapping paired-end reads into single fragment reads",
+        description=(
+            "Merge each overlapping R1/R2 pair into one fragment read, before normalize-reads or generate. R2 is "
+            "reverse-complemented and the best-scoring overlap is used (overlap length with a penalty for "
+            "each mismatch). Adapter read-through falls outside the "
+            "overlap and never reaches the merged read, so no adapter trimming is needed. Use this only when "
+            "mates overlap."
+        ),
     )
     merge.add_argument("--fastq-dir", required=True, help="folder holding paired FASTQ(.gz) files")
     merge.add_argument("--r1-suffix", default="_R1.fastq.gz", help="filename suffix of the R1 mate (default: _R1.fastq.gz)")
@@ -5158,8 +5193,8 @@ def _add_merge_pairs_command(subparsers) -> None:
     merge.add_argument(
         "--unmerged", choices=("r1", "pool", "drop"), default="r1",
         help=(
-            "unmergeable pairs: keep the R1 (default), keep both mates (pool — for dual-anchored "
-            "designs whose mates cover opposite locus halves), or drop"
+            "pairs that do not merge: keep the R1 (default), keep both mates (pool; for dual-anchored "
+            "designs whose mates cover opposite halves of the locus), or drop the pair"
         ),
     )
     _add_jobs_argument(merge)
@@ -5170,12 +5205,14 @@ def _add_merge_pairs_command(subparsers) -> None:
 def _add_window_scan_command(subparsers) -> None:
     scan = subparsers.add_parser(
         "window-scan",
-        help=(
-            "sweep candidate tag lengths on a sample subset and report the selection curves "
-            "(retention, cleanliness, information) with a recommended length"
+        help="try several tag lengths on a subset of samples and recommend one",
+        description=(
+            "Run normalize-reads and generate at each candidate tag length on a subset of samples, measure "
+            "read retention, cleanliness and haplotype information, and recommend a length. Use it before "
+            "the first normalize-reads run of a new panel."
         ),
     )
-    scan.add_argument("--probe-design", required=True, help="DArT probe/marker design TSV or CSV")
+    scan.add_argument("--probe-design", required=True, help="probe-design TSV or CSV with bracketed variants")
     _add_fastq_arguments(scan)
     scan.add_argument(
         "--lengths", required=True,
@@ -5197,8 +5234,8 @@ def _add_window_scan_command(subparsers) -> None:
         "--scan-draws", type=positive_int, default=1,
         help=(
             "independent sample draws to sweep (seeds --scan-seed, +1, +2, ...; default: 1); with more than one, "
-            "each draw's recommendation and their agreement are reported, so a recommendation that depends "
-            "on the subset is visible without external truth"
+            "each draw's recommendation and their agreement are reported, so you can see whether the "
+            "recommendation depends on which samples were scanned"
         ),
     )
     scan.add_argument(
@@ -5213,12 +5250,21 @@ def _add_window_scan_command(subparsers) -> None:
             "informative eligible length is recommended (default: 0.10)"
         ),
     )
-    scan.add_argument("--anchor-length", type=positive_int, default=12)
-    scan.add_argument("--kmer-size", type=positive_int, default=21)
-    scan.add_argument("--str-penalty", type=float, default=0.002)
+    scan.add_argument(
+        "--anchor-length", type=positive_int, default=12,
+        help="as in normalize-reads; used for the coverage pass and every candidate run (default: 12)",
+    )
+    scan.add_argument(
+        "--kmer-size", type=positive_int, default=21,
+        help="as in normalize-reads; used for the coverage pass and every candidate run (default: 21)",
+    )
+    scan.add_argument(
+        "--str-penalty", type=float, default=0.002,
+        help="as in normalize-reads; used for the coverage pass and every candidate run (default: 0.002)",
+    )
     scan.add_argument(
         "--group-routing", choices=("nearest", "covered"), default="nearest",
-        help="passed through to the candidate normalize runs (use covered for merged tiled input)",
+        help="passed to the candidate normalize-reads runs; use covered for merged, tiled input (default: nearest)",
     )
     _add_jobs_argument(scan)
     scan.add_argument("--out-dir", required=True, help="folder for per-length runs and the scan report")
@@ -5228,15 +5274,21 @@ def _add_window_scan_command(subparsers) -> None:
 def _add_normalize_reads_command(subparsers) -> None:
     normalize = subparsers.add_parser(
         "normalize-reads",
-        help="normalize bidirectional, variable-start amplicon reads (e.g. AgriSeq) into pipeline-ready pseudo-tag FASTQs plus a window panel",
+        help="orient and window reads that do not start at a primer (e.g. AgriSeq), ready for generate",
+        description=(
+            "For platforms such as AgriSeq (Ion Torrent) whose reads do not start at a fixed primer. Each read "
+            "is located against the probe-design targets, oriented forward, and cut to a fixed-length window "
+            "containing the variant. Writes one FASTQ per sample plus a window reference-tags CSV, ready for "
+            "generate. Pass the first run's CSV to later runs with --reuse-tags."
+        ),
     )
-    normalize.add_argument("--probe-design", required=True, help="probe/marker design TSV or CSV with bracketed variants")
+    normalize.add_argument("--probe-design", required=True, help="probe-design TSV or CSV with bracketed variants")
     _add_fastq_arguments(normalize, directory_help="folder containing one raw FASTQ(.gz) per sample")
     normalize.add_argument(
         "--tag-length",
         type=positive_int,
         default=41,
-        help="excised window length; shorter windows suffer fewer indel losses on indel-prone chemistries (default: 41)",
+        help="window length to cut; shorter windows lose fewer reads to indels on indel-prone chemistries (default: 41)",
     )
     normalize.add_argument(
         "--window-placement",
@@ -5270,11 +5322,11 @@ def _add_normalize_reads_command(subparsers) -> None:
         choices=("nearest", "covered"),
         default="nearest",
         help=(
-            "how a read covering several member windows of one LocusGroup is routed: 'nearest' feeds "
-            "exactly one tile (window center nearest the read center; default), 'covered' emits the "
-            "excision at every member window the read fully covers — use with merged full-span fragments, "
-            "where nearest-routing is winner-take-all and starves the other tiles (each window still "
-            "sees each fragment at most once in both modes)"
+            "how a read covering several windows of one LocusGroup is routed: 'nearest' (default) sends it "
+            "to the one tile whose window center is nearest the read's center; 'covered' cuts a window at "
+            "every tile the read fully covers. Use covered with merged full-span fragments: they all share "
+            "the amplicon's center, so with nearest one tile would get almost every read. In both modes "
+            "each window counts each fragment at most once"
         ),
     )
     normalize.add_argument(
@@ -5283,7 +5335,8 @@ def _add_normalize_reads_command(subparsers) -> None:
         default=0.002,
         help=(
             "auto placement: coverage penalty per tandem-repeat bp (unit sizes 1-3) beyond 4 in a candidate "
-            "window; steers windows off repeat runs that cause allele-biased read dropout (0 disables; default: 0.002)"
+            "window; steers windows away from repeats where reads carrying one allele are lost more often "
+            "(0 disables; default: 0.002)"
         ),
     )
     normalize.add_argument(
@@ -5301,14 +5354,27 @@ def _add_normalize_reads_command(subparsers) -> None:
 
 def _add_generate_command(subparsers) -> None:
     """``generate``'s options, grouped by the pipeline stage each one feeds."""
-    generate = subparsers.add_parser("generate", help="generate a MADC-compatible count table")
+    generate = subparsers.add_parser(
+        "generate",
+        help="count alleles in every sample and write the MADC table",
+        description=(
+            "Assign reads to markers, count exact tag sequences per sample, report new microhaplotypes that "
+            "pass the evidence rules, remove sequencing errors by denoising, and write a raw MADC table plus "
+            "a QC/provenance JSON. Run one generate over the whole cohort: the reproducibility route counts "
+            "supporting samples within the run. The raw MADC goes through HapApp before BIGr and other "
+            "downstream tools."
+        ),
+    )
     panel = generate.add_argument_group("panel and samples (stage 1)")
     _add_fastq_arguments(panel)
-    panel.add_argument("--primers", help="DArT primer-sequence CSV")
-    panel.add_argument("--probe-design", help="DArT probe/marker design TSV or CSV")
+    panel.add_argument("--primers", help="DArT primer-sequence CSV (use with --probe-design)")
+    panel.add_argument("--probe-design", help="DArT probe-design TSV or CSV (use with --primers)")
     panel.add_argument(
         "--reference-tags",
-        help="platform-neutral reference-tag CSV made by the design command; replaces --primers/--probe-design",
+        help=(
+            "reference-tag CSV from design, infer-design or normalize-reads, or curated by hand; "
+            "use instead of --primers/--probe-design"
+        ),
     )
     panel.add_argument(
         "--target-metadata",
@@ -5328,14 +5394,22 @@ def _add_generate_command(subparsers) -> None:
             "FASTQ ids, matching the raw-MADC layout"
         ),
     )
-    panel.add_argument("--tag-length", type=positive_int, default=TAG_LENGTH_DEFAULT)
+    panel.add_argument(
+        "--tag-length",
+        type=positive_int,
+        default=TAG_LENGTH_DEFAULT,
+        help=f"tag length; must match the panel, e.g. 41 after normalize-reads (default: {TAG_LENGTH_DEFAULT})",
+    )
 
-    assignment = generate.add_argument_group("read assignment (stage 2; these settings key the cache)")
+    assignment = generate.add_argument_group("read assignment (stage 2)")
     assignment.add_argument(
         "--min-identity",
         type=probability,
         default=0.80,
-        help="minimum substitution-only identity to Ref or Alt tag; a gapped reading spends the same edit budget (default: 0.80)",
+        help=(
+            "minimum identity to the marker's Ref or Alt tag, counting substitutions only; a gapped "
+            "alignment uses the same edit limit (default: 0.80)"
+        ),
     )
     assignment.add_argument(
         "--leading-anchor",
@@ -5355,9 +5429,8 @@ def _add_generate_command(subparsers) -> None:
         choices=(0, 1),
         default=1,
         help=(
-            "allowed mismatches while assigning a left primer/anchor (default: 1; every "
-            "validated benchmark ran with 1 — exact-only matching silently drops Match-haplotype "
-            "reads whose distinguishing SNP falls inside the anchor prefix)"
+            "mismatches allowed when matching a read's start to a primer/anchor (default: 1). With 0, "
+            "reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost"
         ),
     )
     assignment.add_argument(
@@ -5365,26 +5438,27 @@ def _add_generate_command(subparsers) -> None:
         choices=("on", "off"),
         default="on",
         help=(
-            "offer reads that fail substitution-only identity at every candidate one gapped reading "
-            "under the same edit budget, so undesigned indel haplotypes are counted instead of dropped "
-            "(default: on; 'off' is the 0.9 path)"
+            "give reads that fail the substitution-only identity check for every marker one gapped "
+            "alignment under the same edit limit, so undesigned indels are counted instead of dropped "
+            "(default: on)"
         ),
     )
     assignment.add_argument(
         "--max-indel-length",
         type=positive_int,
         default=GAP_BAND_DEFAULT,
-        help="widest gap (alignment band) a gapped reading may use (default: 10)",
+        help=f"widest gap (alignment band) a gapped alignment may use (default: {GAP_BAND_DEFAULT})",
     )
     assignment.add_argument(
         "--partial-read-mode",
-        choices=("off", "assign"),
-        default="assign",
+        type=partial_read_mode,
+        choices=("on", "off"),
+        default="on",
         help=(
-            "handling of primer-assigned reads shorter than --tag-length: assign credits a truncated read "
-            "to the one learned full-length allele it is a prefix of, and only when it is longer than every "
-            "prefix shared between that locus's alleles, so it can support but never invent an allele or "
-            "shift an allele ratio (default: assign); off drops such reads"
+            "handling of reads shorter than --tag-length: on adds such a read to the one full-length "
+            "allele whose start it matches exactly, only when that allele already passes the evidence rules "
+            "and the read is longer than every prefix shared between that locus's alleles, so partial reads "
+            "cannot create an allele or change an allele ratio (default: on); off drops them"
         ),
     )
     assignment.add_argument(
@@ -5392,32 +5466,39 @@ def _add_generate_command(subparsers) -> None:
         type=positive_int,
         default=None,
         help=(
-            "minimum read length a partial read must have to be credited (--partial-read-mode assign) "
-            "(default: --tag-length minus 9, so at most 9 unobserved tail bases)"
+            "minimum length for a partial read to be counted with --partial-read-mode on "
+            "(default: --tag-length minus 9)"
         ),
     )
-    assignment.add_argument("--cache-dir", help="optional reusable per-sample count cache")
+    assignment.add_argument(
+        "--cache-dir",
+        help=(
+            "folder for a reusable per-sample cache, so re-runs skip the read pass. The cache is rebuilt "
+            "when the panel or --tag-length, --min-identity, --leading-anchor, --primer-mismatches, "
+            "--gapped-rescue, --max-indel-length or --min-partial-length changes"
+        ),
+    )
     _add_jobs_argument(assignment)
 
-    evidence = generate.add_argument_group("evidence (stage 4: when a novel sequence earns a row)")
+    evidence = generate.add_argument_group("evidence (stage 4: which new sequences are reported)")
     evidence.add_argument(
         "--min-global-count",
         type=positive_int,
         default=1,
-        help="minimum project-wide reads for a de novo discovered allele (default: 1)",
+        help="minimum project-wide reads for a newly discovered allele (default: 1)",
     )
     evidence.add_argument(
         "--reproducible-min-reads",
         type=positive_int,
         default=10,
-        help="reproducibility evidence route: per-sample reads used by --reproducible-min-samples (default: 10)",
+        help="reproducibility route: reads per sample counted toward --reproducible-min-samples (default: 10)",
     )
     evidence.add_argument(
         "--reproducible-min-samples",
         type=nonnegative_int,
         default=2,
         help=(
-            "reproducibility evidence route: a novel allele needs --reproducible-min-reads reads in at "
+            "reproducibility route: a new allele needs at least --reproducible-min-reads reads in at "
             "least this many samples; 0 disables the route (default: 2)"
         ),
     )
@@ -5426,9 +5507,9 @@ def _add_generate_command(subparsers) -> None:
         type=nonnegative_int,
         default=30,
         help=(
-            "depth evidence route: reads within a single sample that establish a novel allele on their "
-            "own, so private alleles in unreplicated designs remain discoverable; 0 disables the route "
-            "(default: 30)"
+            "depth route: reads within one sample that are enough on their own to report a new allele, so "
+            "alleles found in only one sample can still be reported when samples are not replicated; "
+            "0 disables the route (default: 30)"
         ),
     )
     evidence.add_argument(
@@ -5436,16 +5517,16 @@ def _add_generate_command(subparsers) -> None:
         type=int,
         choices=QUALITY_THRESHOLDS,
         default=20,
-        help="Phred score every tag base must reach for a read to count as clean on the quality route (default: 20)",
+        help="Phred score every tag base must reach for a read to count as high-quality on the quality route (default: 20)",
     )
     evidence.add_argument(
         "--quality-min-clean-reads",
         type=nonnegative_int,
         default=0,
         help=(
-            "quality evidence route: project-wide clean reads that establish a novel allele on their own; "
-            "0 disables the route (default: 0).  Whole-tag clean-read requirements veto sequences with one "
-            "systematically low-quality base position, so reproducibility is the primary route."
+            "quality route: project-wide high-quality reads that are enough on their own to report a new "
+            "allele; 0 disables the route (default: 0). Off by default because one systematically "
+            "low-quality base position would block real alleles; reproducibility is the main route"
         ),
     )
     evidence.add_argument(
@@ -5453,10 +5534,11 @@ def _add_generate_command(subparsers) -> None:
         type=proper_fraction,
         default=0.0,
         help=(
-            "minimum share of a sample's locus reads before that sample can support the reproducibility "
-            "or depth route; 0 disables the floor (default: 0).  Consider around 0.01 when relying on "
-            "the depth route in unreplicated designs; note co-amplified paralogs deflate real alleles' "
-            "shares, so a floor trades recall for precision"
+            "minimum share of a sample's reads at the locus before that sample can count toward the "
+            "reproducibility or depth route; 0 disables the floor (default: 0). Use 0.10 at very high depth "
+            "(above ~500x per sample per marker, e.g. AgriSeq), or about 0.01 for unreplicated designs that "
+            "rely on the depth route. Otherwise leave it off: co-amplified paralogs lower real alleles' "
+            "shares, so a floor can drop them"
         ),
     )
 
@@ -5466,7 +5548,10 @@ def _add_generate_command(subparsers) -> None:
         type=int,
         choices=(0, 1, 2),
         default=1,
-        help="per-sample abundance-skew denoising distance (default: 1)",
+        help=(
+            "per-sample denoising: the most differing bases allowed between a rare sequence and the more "
+            "abundant parent it is merged into; 0 disables (default: 1)"
+        ),
     )
     denoising.add_argument(
         "--global-denoise-distance",
@@ -5474,12 +5559,16 @@ def _add_generate_command(subparsers) -> None:
         choices=(0, 1, 2),
         default=1,
         help=(
-            "pooled same-allele fold: an evidence-failing sequence within this edit distance of a protected "
-            "parent that carries the same target allele joins it in every sample; 0 disables (default: 1)"
+            "pooled same-allele merge: a sequence that failed the evidence rules and differs at no more "
+            "than this many bases from a protected parent carrying the same target allele is merged into "
+            "it in every sample; 0 disables (default: 1)"
         ),
     )
     denoising.add_argument(
-        "--denoise-alpha", type=float, default=2.0, help="UNOISE-style abundance-skew exponent (default: 2.0)"
+        "--denoise-alpha",
+        type=float,
+        default=2.0,
+        help="UNOISE-style abundance-skew exponent: a parent must be at least 2^(alpha*d + 1) times more abundant (default: 2.0)",
     )
 
     output = generate.add_argument_group("output (stages 6-7)")
@@ -5490,21 +5579,24 @@ def _add_generate_command(subparsers) -> None:
         choices=("on", "off"),
         default="on",
         help=(
-            "annotate every row in two never-computed statistics columns and a sidecar: PICSnp becomes "
+            "annotate every row in two otherwise unused statistics columns and a sidecar file: PICSnp becomes "
             "Variants (the row's events against the Ref tag in 1-based tag coordinates, e.g. "
             "55:C>CAAAA;91:A>T;clip=4), AvgPIC becomes MarkerType ('.', 'snp', 'indel' or 'both' relative "
             "to the nearest canonical), and OUTPUT.variants.csv lists one event per line; 'off' keeps the "
             "exact vendor header and writes no sidecar (default: on)"
         ),
     )
-    output.add_argument("--number-match-ids", action="store_true", help="append stable per-file serials to Match IDs")
+    output.add_argument(
+        "--number-match-ids",
+        action="store_true",
+        help="append a stable serial to each RefMatch/AltMatch/Other ID (e.g. |RefMatch_0001) so every AlleleID is unique",
+    )
     output.add_argument(
         "--dart-preamble",
         action="store_true",
         help=(
-            "prepend the vendor-style seven-row starred preamble (service label, plate rows, and the "
-            "targetid row carrying the FASTQ-derived sample ids) so preamble-expecting consumers such as "
-            "HapApp accept the file"
+            "prepend the vendor-style seven-row starred preamble (service label, plate rows, and a "
+            "targetid row with the FASTQ-derived sample ids) that HapApp expects"
         ),
     )
     output.add_argument(
@@ -5515,16 +5607,46 @@ def _add_generate_command(subparsers) -> None:
 
 
 def _add_validate_command(subparsers) -> None:
-    validate = subparsers.add_parser("validate", help="compare generated and expected MADC tables")
-    validate.add_argument("--generated", required=True)
-    validate.add_argument("--expected", required=True)
-    validate.add_argument("--report", help="optional JSON report to write")
+    validate = subparsers.add_parser(
+        "validate",
+        help="compare a generated MADC with a reference MADC",
+        description=(
+            "Compare a generated MADC with a reference MADC, usually the vendor's delivery for the same "
+            "FASTQs: row precision and recall by allele category, classification agreement on shared rows, "
+            "and count agreement across shared cells. The report is printed as JSON. The reference MADC is "
+            "used only for this comparison."
+        ),
+    )
+    validate.add_argument("--generated", required=True, help="MADC table written by generate")
+    validate.add_argument(
+        "--expected",
+        required=True,
+        help="reference MADC to compare against, with or without the vendor's starred preamble rows",
+    )
+    validate.add_argument("--report", help="also write the JSON report to this file")
     validate.set_defaults(func=run_validate)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate and validate MADC-compatible microhaplotype read-count tables from primer-started FASTQ files."
+        prog="madcats",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "MADCATS (Marker-Anchored Discovery and Counting of Alleles from Targeted\n"
+            "Sequencing) turns targeted-sequencing FASTQs into raw MADC tables: the\n"
+            "microhaplotypes at each marker and their read counts in every sample. It\n"
+            "counts the alleles each panel was designed for and discovers new ones."
+        ),
+        epilog=(
+            "typical workflow:\n"
+            "  1. build the panel           design, or infer-design without a primer file\n"
+            "  2. prepare reads if needed   merge-pairs, window-scan, normalize-reads\n"
+            "  3. count                     generate\n"
+            "  4. check (optional)          validate\n"
+            "\n"
+            "Run 'madcats <command> --help' for a command's options.\n"
+            "Documentation: https://madcats.readthedocs.io"
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)

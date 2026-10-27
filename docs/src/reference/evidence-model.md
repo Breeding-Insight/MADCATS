@@ -2,7 +2,7 @@
 
 This page explains how `madcats generate` decides which reads count, which sequences become rows,
 and how sequencing errors are removed. The design rationale and the measurements behind each default
-are in the [Development Reference](../development/reference.md).
+are in the [development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md) on GitHub.
 
 ## Read Assignment
 
@@ -61,8 +61,8 @@ depth route.
 Canonical sequences and sequences that pass the evidence rules are protected: denoising never merges
 them into anything else.
 
-1. Per-sample denoising (UNOISE-style abundance skew). Within each sample, a rare sequence within
-   `--denoise-distance` (1) edits of a more abundant parent is merged into the parent when the
+1. Per-sample denoising (UNOISE-style abundance skew). Within each sample, a rare sequence that differs at
+   no more than `--denoise-distance` (1) bases from a more abundant parent is merged into the parent when the
    parent is at least `2^(alpha·d + 1)` times more abundant (`--denoise-alpha` 2.0). The closest
    parent is chosen first, then the most abundant.
 2. Pooled same-allele merge (`--global-denoise-distance`, 1). A sequence that failed the evidence

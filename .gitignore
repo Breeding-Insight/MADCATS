@@ -184,3 +184,4 @@ docs/book/
 
 # macOS
 .DS_Store
+examples/madcats-demo/results/

@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from madc_pipeline import load_reference_tags
+from madcats import load_reference_tags
 
 
 def parse_args() -> argparse.Namespace:

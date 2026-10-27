@@ -1,17 +1,28 @@
 # Changelog
 
 Notable changes by version. Measurements behind each change are in the
-[Development Reference](reference.md).
+[development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md) on GitHub.
 
-## Unreleased
+## 0.13.0
 
-- Packaged for PyPI: `pip install madcats` installs a `madcats` command.
-- Standalone binaries for Linux and macOS are built for each release.
-- New documentation site; the former README is now the development reference.
-- Licensed under GPL-3.0-or-later.
+- Removed the `madc_pipeline` compatibility module. Import `madcats` instead; the bundled
+  scripts already do.
+- `--partial-read-mode` takes `on`/`off` like the other switches; the old value `assign` still
+  works as `on`, with a warning.
+- Clearer command-line help: every command has a description, every option has help text, and
+  the program is named `madcats` in usage lines.
+- The development record (`docs/DEVELOPMENT.md`) is no longer published on the docs site; it
+  stays in the repository.
+- A small simulated example project, with its true haplotypes and genotypes, is included in
+  `examples/madcats-demo` and attached to each release as `madcats-demo.tar.gz`.
+- The test suite checks that the command reference pages match each command's `--help`.
 
 ## 0.12.1
 
+- Packaged for PyPI: `pip install madcats` installs a `madcats` command.
+- Standalone binaries for Linux and macOS are built for each release.
+- New documentation site; the former README is now the development record, `docs/DEVELOPMENT.md`.
+- Licensed under GPL-3.0-or-later.
 - `generate`'s finalisation (per-sample denoising and the pooled pass) runs across the `--jobs`
   workers. The selection is identical to the sequential passes. On a 44-run rhAmpSeq family the
   pooled pass alone had taken 1,123 s in one process.
@@ -28,7 +39,7 @@ Notable changes by version. Measurements behind each change are in the
 
 ## 0.11.0
 
-- Partial reads (`--partial-read-mode assign`, default): reads shorter than the tag are
+- Partial reads (`--partial-read-mode assign`, now `on`; default): reads shorter than the tag are
   added to an allele that already passed the evidence rules and whose start they match, only when
   this cannot change an allele ratio.
   `--min-partial-length` defaults to tag length − 9. The experimental `extend` mode was removed.
@@ -97,5 +108,5 @@ Notable changes by version. Measurements behind each change are in the
 
 - `infer-design` for panels without a primer file.
 - 0.3.x–0.4.x: quality-gated discovery and the exploratory audits that motivated 0.5.0.
-- The tool was renamed from `madc_pipeline` to MADCATS. `madc_pipeline.py` remains as a
-  compatibility shim.
+- The tool was renamed from `madc_pipeline` to MADCATS, with `madc_pipeline.py` kept as a
+  compatibility shim until 0.13.0.

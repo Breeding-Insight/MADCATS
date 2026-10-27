@@ -28,10 +28,18 @@ indel support, normalization and window freezing, output framing, paired-end mer
 window-scan, gapped alignment, denoising and partial reads. Tests run on every push and pull
 request across Python 3.9–3.13 (`.github/workflows/tests.yml`).
 
+Two tests guard the documentation. `tests/test_docs.py` checks that each page in
+`docs/src/commands/` lists exactly the options that command's `--help` shows, with matching
+choices and defaults, so update the page whenever you add or change an option.
+`tests/test_example.py` runs the example in `examples/madcats-demo` and checks the output against
+its simulated truth. If a change alters the example's numbers, update
+[Try the Example](../getting-started/example.md) to match. To change the example data itself,
+edit and rerun `examples/madcats-demo/make_demo_data.py`.
+
 Changes that touch counting should also be checked against real data. The standard is byte-for-byte:
 a refactor regenerates existing tables identically from cache, and a behaviour change is measured
 against a comparator before it becomes a default. Record those measurements in
-`docs/DEVELOPMENT.md`.
+[`docs/DEVELOPMENT.md`](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md).
 
 ## Code Style
 

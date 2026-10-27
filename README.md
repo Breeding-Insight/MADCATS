@@ -1,4 +1,4 @@
-# MADCATS
+# MADCATS <img src="https://raw.githubusercontent.com/Breeding-Insight/MADCATS/main/docs/src/images/madcats-logo.png" align="right" width="160" alt="MADCATS logo" />
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![PyPI](https://img.shields.io/pypi/v/madcats.svg)](https://pypi.org/project/madcats/)
@@ -81,6 +81,8 @@ pip install .            # or: python3 madcats.py --help (no install needed)
 
 ## Quick Start
 
+To try MADCATS on a small simulated project first, see [Try the Example](https://madcats.readthedocs.io/en/latest/getting-started/example.html).
+
 ```bash
 # 1) Reconstruct each marker's Ref/Alt tags from the DArTag design files
 madcats design \
@@ -131,7 +133,7 @@ Full documentation is available at [madcats.readthedocs.io](https://madcats.read
 - [Evidence Model](https://madcats.readthedocs.io/en/latest/reference/evidence-model.html): how alleles are counted, discovered and denoised
 
 The design rationale and version-by-version measurements behind every default are recorded in the
-[development reference](docs/DEVELOPMENT.md).
+[development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md).
 
 ## Commands
 

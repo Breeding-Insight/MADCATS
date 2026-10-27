@@ -47,5 +47,5 @@ polyploids from messy sequencing data. Genetics 210(3):789-807.
 In your methods section:
 
 > Microhaplotype read counts were generated from the demultiplexed FASTQ files with MADCATS
-> v0.12.1 (Sandercock, 2026), using panel tags reconstructed from the vendor design files and
+> v0.13.0 (Sandercock, 2026), using panel tags reconstructed from the vendor design files and
 > default evidence and denoising settings.

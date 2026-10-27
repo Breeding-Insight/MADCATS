@@ -111,7 +111,7 @@ madcats --version
 ```
 
 ```
-madcats 0.12.1
+madcats 0.13.0
 ```
 
 To run the test suite from a source checkout:
@@ -123,4 +123,5 @@ python3 -m unittest discover -s tests -v
 ## Next Steps
 
 - [Quick Start](quickstart.md): generate your first MADC
+- [Try the Example](example.md): run a small simulated project in seconds
 - [Choosing a Workflow](workflows.md): which commands your data needs

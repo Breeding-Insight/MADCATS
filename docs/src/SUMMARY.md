@@ -6,6 +6,7 @@
 
 - [Installation](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)
+- [Try the Example](getting-started/example.md)
 - [Choosing a Workflow](getting-started/workflows.md)
 - [Input Formats](getting-started/input-formats.md)
 
@@ -39,7 +40,6 @@
 - [Architecture](development/architecture.md)
 - [Contributing](development/contributing.md)
 - [Changelog](development/changelog.md)
-- [Development Reference](development/reference.md)
 
 -----------
 

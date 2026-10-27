@@ -55,7 +55,7 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 | `--sample-lookup <FILE>` | none | Two-column CSV/TSV mapping FASTQ-derived ids to sample names. Every run sample must be mapped |
 | `--tag-length <INT>` | 81 | Tag length |
 
-## Read Assignment (stage 2; these settings key the cache)
+## Read Assignment (stage 2)
 
 | Option | Default | Description |
 |--------|---------|-------------|

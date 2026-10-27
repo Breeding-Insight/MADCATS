@@ -13,6 +13,9 @@ Notable changes by version. Measurements behind each change are in the
   the program is named `madcats` in usage lines.
 - The development record (`docs/DEVELOPMENT.md`) is no longer published on the docs site; it
   stays in the repository.
+- A small simulated example project, with its true haplotypes and genotypes, is included in
+  `examples/madcats-demo` and attached to each release as `madcats-demo.tar.gz`.
+- The test suite checks that the command reference pages match each command's `--help`.
 
 ## 0.12.1
 

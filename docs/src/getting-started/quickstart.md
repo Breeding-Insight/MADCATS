@@ -89,6 +89,7 @@ See [Output Formats](../reference/output-formats.md) for details.
 
 ## Next Steps
 
+- [Try the Example](example.md): run these steps on a small simulated project and check the output
 - [Choosing a Workflow](workflows.md): routes for other platforms and inputs
 - [madcats generate](../commands/generate.md): every option, grouped by pipeline stage
 - [Evidence Model](../reference/evidence-model.md): when a new sequence is reported as a row

@@ -81,6 +81,8 @@ pip install .            # or: python3 madcats.py --help (no install needed)
 
 ## Quick Start
 
+To try MADCATS on a small simulated project first, see [Try the Example](https://madcats.readthedocs.io/en/latest/getting-started/example.html).
+
 ```bash
 # 1) Reconstruct each marker's Ref/Alt tags from the DArTag design files
 madcats design \

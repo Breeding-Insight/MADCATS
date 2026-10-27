@@ -108,6 +108,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
 
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Package example data
+        run: tar -czf madcats-demo.tar.gz --exclude=results -C source/examples madcats-demo
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -133,4 +140,5 @@ jobs:
             madcats-linux-x86_64/*.tar.gz
             madcats-macos-x86_64/*.tar.gz
             madcats-macos-aarch64/*.tar.gz
+            madcats-demo.tar.gz
             dist/*

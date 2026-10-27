@@ -1,0 +1,51 @@
+# Citation
+
+If MADCATS is useful in your research, please cite the implementation.
+
+## Citing MADCATS
+
+```
+Sandercock, A.M. (2026). MADCATS: Marker-Anchored Discovery and Counting of Alleles
+from Targeted Sequencing. GitHub repository: https://github.com/Breeding-Insight/MADCATS
+```
+
+BibTeX:
+```bibtex
+@software{sandercock2026madcats,
+  author = {Sandercock, Alexander M.},
+  title = {MADCATS: Marker-Anchored Discovery and Counting of Alleles from Targeted Sequencing},
+  year = {2026},
+  url = {https://github.com/Breeding-Insight/MADCATS}
+}
+```
+
+> **Note:** A formal publication with DOI is planned. This section will be updated when available.
+
+## AI Assistance
+
+MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1 (Anthropic), which
+helped write its code and documentation. The authors directed the work, reviewed and tested the
+results, and are ultimately responsible for the application.
+
+## Related Resources
+
+- Breeding Insight, [MADC file format](https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/)
+- Breeding Insight, [MADC data processing](https://breeding-insight.github.io/BIGr_documentation/posts/madc-data-processing/)
+- Breeding Insight, [BIGapp-PanelHub](https://github.com/Breeding-Insight/BIGapp-PanelHub): public panel metadata and design Ref/Alt tags
+- Breeding Insight, [dartag_alleles](https://github.com/Breeding-Insight/dartag_alleles): the reference-BLAST / paralog audit pattern
+- The sweetpotato DArTag panel publication: [PMC11354173](https://pmc.ncbi.nlm.nih.gov/articles/PMC11354173/)
+
+If you call dosages from MADCATS output with updog, please also cite:
+
+```
+Gerard, D., Ferrão, L.F.V., Garcia, A.A.F., & Stephens, M. (2018). Genotyping
+polyploids from messy sequencing data. Genetics 210(3):789-807.
+```
+
+## Example Acknowledgment
+
+In your methods section:
+
+> Microhaplotype read counts were generated from the demultiplexed FASTQ files with MADCATS
+> v0.12.1 (Sandercock, 2026), using panel tags reconstructed from the vendor design files and
+> default evidence and denoising settings.

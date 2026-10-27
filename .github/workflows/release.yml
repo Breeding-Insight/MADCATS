@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check tag matches madcats.__version__
+        run: |
+          version=$(python -c "import madcats; print(madcats.__version__)")
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match madcats.__version__ (${version})"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  dist:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install build==1.6.1 twine==7.0.0
+          python -m build
+          twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    needs: dist
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/madcats
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  binaries:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x86_64
+          - os: macos-15-intel
+            name: macos-x86_64
+          - os: macos-latest
+            name: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build binary
+        run: |
+          python -m pip install pyinstaller==6.22.3
+          pyinstaller --onefile --name madcats --paths . packaging/pyinstaller_entry.py
+
+      - name: Smoke test
+        run: python packaging/smoke_test.py dist/madcats
+
+      - name: Package binary
+        run: tar -czvf madcats-${{ matrix.name }}.tar.gz -C dist madcats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madcats-${{ matrix.name }}
+          path: madcats-${{ matrix.name }}.tar.gz
+
+  release:
+    needs: [dist, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: MADCATS ${{ github.ref_name }}
+          body: |
+            Install from PyPI:
+            ```bash
+            pip install madcats
+            ```
+
+            Or download the standalone binary for your platform and extract it:
+            ```bash
+            tar -xzf madcats-*.tar.gz
+            ./madcats --help
+            ```
+
+            **macOS users:** If you see "developer cannot be verified", run:
+            ```bash
+            xattr -d com.apple.quarantine madcats
+            ```
+          files: |
+            madcats-linux-x86_64/*.tar.gz
+            madcats-macos-x86_64/*.tar.gz
+            madcats-macos-aarch64/*.tar.gz
+            dist/*

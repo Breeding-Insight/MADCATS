@@ -1,0 +1,12 @@
+.footer {
+    font-size: 0.85em;
+    text-align: center;
+    padding: 1.5em 0;
+    margin-top: 2em;
+    border-top: 1px solid var(--quote-border);
+    color: var(--inline-code-color);
+}
+
+.footer a {
+    color: var(--links);
+}

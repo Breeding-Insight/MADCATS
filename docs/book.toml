@@ -1,0 +1,40 @@
+[book]
+authors = ["Alexander Sandercock"]
+language = "en"
+src = "src"
+title = "MADCATS Documentation"
+description = "Marker-Anchored Discovery and Counting of Alleles from Targeted Sequencing"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "navy"
+additional-css = ["theme/footer.css"]
+additional-js = ["theme/footer.js"]
+git-repository-url = "https://github.com/Breeding-Insight/MADCATS"
+edit-url-template = "https://github.com/Breeding-Insight/MADCATS/edit/main/docs/{path}"
+site-url = "/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+editable = false
+copyable = true
+copy-js = true
+line-numbers = true
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+copy-js = true

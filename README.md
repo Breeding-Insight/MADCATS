@@ -131,7 +131,7 @@ Full documentation is available at [madcats.readthedocs.io](https://madcats.read
 - [Evidence Model](https://madcats.readthedocs.io/en/latest/reference/evidence-model.html): how alleles are counted, discovered and denoised
 
 The design rationale and version-by-version measurements behind every default are recorded in the
-[development reference](docs/DEVELOPMENT.md).
+[development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md).
 
 ## Commands
 

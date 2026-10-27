@@ -31,7 +31,7 @@ request across Python 3.9–3.13 (`.github/workflows/tests.yml`).
 Changes that touch counting should also be checked against real data. The standard is byte-for-byte:
 a refactor regenerates existing tables identically from cache, and a behaviour change is measured
 against a comparator before it becomes a default. Record those measurements in
-`docs/DEVELOPMENT.md`.
+[`docs/DEVELOPMENT.md`](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md).
 
 ## Code Style
 

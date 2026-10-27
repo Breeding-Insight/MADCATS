@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from madc_pipeline import QUALITY_THRESHOLDS, allele_type, hamming_distance, read_madc
+from madcats import QUALITY_THRESHOLDS, allele_type, hamming_distance, read_madc
 
 
 def parse_args() -> argparse.Namespace:

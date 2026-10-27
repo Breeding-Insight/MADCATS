@@ -39,7 +39,6 @@
 - [Architecture](development/architecture.md)
 - [Contributing](development/contributing.md)
 - [Changelog](development/changelog.md)
-- [Development Reference](development/reference.md)
 
 -----------
 

@@ -197,7 +197,7 @@ class MadcPipelineTests(unittest.TestCase):
         updated, summary = mp.apply_partial_reads(
             [result],
             [locus],
-            mode="assign",
+            mode="on",
             rule=rule(clean_reads=5),
         )
         self.assertEqual(summary["reads_unmapped"], 5)
@@ -233,7 +233,7 @@ class MadcPipelineTests(unittest.TestCase):
             partial_quality_support={(0, partial): (n, n, n, n) for partial, n in partials.items()},
             qc={},
         )
-        return mp.apply_partial_reads([result], [locus], mode="assign", rule=rule(clean_reads=5))
+        return mp.apply_partial_reads([result], [locus], mode="on", rule=rule(clean_reads=5))
 
     def test_partial_assign_locus_guard_drops_both_alleles_when_a_tail_variant_exists(self):
         # Ref, Alt and a RefMatch differing from Ref only at positions 107-109:
@@ -277,7 +277,9 @@ class MadcPipelineTests(unittest.TestCase):
     def test_partial_defaults_resolve_from_tag_length(self):
         parser = mp.build_parser()
         args = parser.parse_args(["generate", "--fastq-dir", "x", "--reference-tags", "y", "--tag-length", "109", "--output", "z"])
-        self.assertEqual(args.partial_read_mode, "assign")
+        self.assertEqual(args.partial_read_mode, "on")
+        legacy = parser.parse_args(["generate", "--fastq-dir", "x", "--reference-tags", "y", "--output", "z", "--partial-read-mode", "assign"])
+        self.assertEqual(legacy.partial_read_mode, "on")
         self.assertIsNone(args.min_partial_length)
         self.assertEqual(max(1, args.tag_length - mp.PARTIAL_TAIL_DEFAULT), 100)
 

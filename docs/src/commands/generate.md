@@ -1,6 +1,6 @@
 # madcats generate
 
-Generate a MADC-compatible microhaplotype count table from per-sample FASTQs and a panel.
+Generate a MADC microhaplotype count table from per-sample FASTQs and a panel.
 
 ## Synopsis
 
@@ -64,7 +64,7 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 | `--primer-mismatches {0,1}` | 1 | Mismatches allowed while assigning a primer/anchor. With `0`, reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost |
 | `--gapped-rescue {on,off}` | `on` | Give reads that fail substitution-only identity one gapped alignment, so undesigned indels are counted |
 | `--max-indel-length <INT>` | 10 | Widest gap (alignment band) a gapped alignment may use |
-| `--partial-read-mode {off,assign}` | `assign` | Add a read shorter than the tag to the one full-length allele (already passing the evidence rules) whose start it matches, only when it is longer than every prefix shared between that locus's alleles. `off` drops such reads |
+| `--partial-read-mode {on,off}` | `on` | Add a read shorter than the tag to the one full-length allele (already passing the evidence rules) whose start it matches, only when it is longer than every prefix shared between that locus's alleles. `off` drops such reads |
 | `--min-partial-length <INT>` | tag length − 9 | Minimum length of a credited partial read |
 | `--cache-dir <DIR>` | none | Reusable per-sample count cache |
 | `--jobs <INT>` | up to 4 | Samples processed in parallel (also parallelizes denoising) |
@@ -85,8 +85,8 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--denoise-distance {0,1,2}` | 1 | Per-sample abundance-skew denoising distance |
-| `--global-denoise-distance {0,1,2}` | 1 | Edit distance for the pooled same-allele merge; `0` disables |
+| `--denoise-distance {0,1,2}` | 1 | Per-sample denoising: the most differing bases allowed between a rare sequence and its parent; `0` disables |
+| `--global-denoise-distance {0,1,2}` | 1 | Most differing bases allowed in the pooled same-allele merge; `0` disables |
 | `--denoise-alpha <FLOAT>` | 2.0 | UNOISE-style abundance-skew exponent |
 
 ## Output (stages 6–7)

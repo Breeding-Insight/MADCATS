@@ -2,7 +2,7 @@
 
 MADCATS has been validated on five platforms, each against the best independent comparison available
 for that dataset. This page summarizes the results. The full record, including every
-version-to-version comparison, is in the [Development Reference](../development/reference.md).
+version-to-version comparison, is in the [development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md) on GitHub.
 
 ## Performance at a Glance
 

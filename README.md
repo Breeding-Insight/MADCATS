@@ -1,4 +1,4 @@
-# MADCATS <img src="https://raw.githubusercontent.com/Breeding-Insight/MADCATS/main/docs/src/images/madcats-logo.png" align="right" width="160" alt="MADCATS logo" />
+# MADCATS <img src="https://raw.githubusercontent.com/Breeding-Insight/MADCATS/main/docs/src/images/madcats-logo.png" align="right" width="250" alt="MADCATS logo" />
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![PyPI](https://img.shields.io/pypi/v/madcats.svg)](https://pypi.org/project/madcats/)

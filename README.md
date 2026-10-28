@@ -20,22 +20,22 @@ each run writes a JSON file recording its parameters and read counts.
 
 ## Highlights
 
-- **Validated against vendor MADCs**: count correlation r = 0.9997 on DArTag sweetpotato, and
-  95–99% dosage agreement across five DArTag panels
-- **Three ways to define a panel**: from vendor design files (`madcats design`), from the probe
-  design plus reads when the primer file is withheld (`madcats infer-design`), or from any
-  hand-curated Ref/Alt tag CSV
-- **Evidence-based allele discovery**: a new microhaplotype is reported only when it recurs across
-  samples, reaches high depth in one sample, or (optionally) has enough high-quality reads.
-  UNOISE-style denoising then removes sequencing errors without changing any sample's Ref/Alt dosage
-- **Indel-aware**: designed indels are supported, and undesigned indels are recovered with a gapped
-  alignment that caps the number of substitutions and gaps
-- **Non-primer-started platforms**: `madcats normalize-reads` orients and windows AgriSeq-style
-  reads, and `madcats merge-pairs` handles paired-end data
-- **HapApp-ready output**: raw MADC tables with an optional vendor-style preamble for HapApp, which
-  prepares them for BIGr and other downstream tools, plus per-row `Variants` / `MarkerType`
-  annotations
-- **Pure Python, no dependencies**, with parallel processing (`--jobs`) and a reusable per-sample cache
+- Closely matches vendor output: read counts correlate at r = 0.9997 with the vendor MADC on a
+  sweetpotato DArTag panel, and dosage calls agree 95–99% across five DArTag panels.
+- Designed to be platform independent, with testing performed on DArTag, GT-Seq, rhAmpSeq, Flex-Seq, and AgriSeq.
+- Builds the panel from vendor design files (`madcats design`), from the probe design and the reads
+  when there is no primer file (`madcats infer-design`), or from your own Ref/Alt tag CSV.
+- Reports a new microhaplotype only when several samples carry it, one sample has many reads of it,
+  or (optionally) it has enough high-quality reads.
+- Merges sequencing errors back into the alleles they came from, without changing any sample's
+  Ref/Alt dosage.
+- Handles indels, including ones the panel was not designed for.
+- Works with AgriSeq-style reads that don't start at a primer (`madcats normalize-reads`) and with
+  paired-end reads (`madcats merge-pairs`).
+- Writes raw MADC tables for HapApp, which prepares them for BIGr and other tools. Each row also
+  lists its variants and marker type.
+- Pure Python with no dependencies. Runs samples in parallel and caches per-sample results, so
+  reruns are fast.
 
 ## Installation
 

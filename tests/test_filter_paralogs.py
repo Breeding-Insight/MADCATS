@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest import mock
 
@@ -32,12 +33,13 @@ def hit(contig, start, end, score=162, strand=1):
 
 class FakeAligner:
     """Stands in for GenomeAligner: genome-wide hits are given up front, and the
-    site realignment scans each marker site ungapped on both strands."""
+    window realignment scans the window ungapped on both strands."""
 
     def __init__(self, genome, hits):
         self.genome = genome
         self.contigs = frozenset(genome)
         self._hits = hits
+        self.windows = []  # every window realigned against, in order
 
     def new_buffer(self):
         return None
@@ -48,25 +50,23 @@ class FakeAligner:
     def fetch(self, contig, start, end):
         return self.genome[contig][start:end]
 
-    def site_index(self, segments):
-        return FakeSiteIndex(segments)
+    def window(self, contig, start, end):
+        self.windows.append((contig, start, end))
+        return FakeWindow(contig, start, self.fetch(contig, start, end))
 
 
-class FakeSiteIndex:
-    def __init__(self, segments):
-        self.segments = segments
+class FakeWindow:
+    def __init__(self, contig, start, sequence):
+        self.contig, self.start, self.sequence = contig, start, sequence
 
-    def new_buffer(self):
-        return None
-
-    def hits(self, sequence, buffer):
+    def hits(self, sequence, buffer=None):
         found = []
-        for number, segment in enumerate(self.segments):
-            for query in (sequence, mp.reverse_complement(sequence)):
-                for start in range(len(segment) - len(query) + 1):
-                    mismatches = sum(a != b for a, b in zip(query, segment[start:]))
-                    if mismatches <= 6:
-                        found.append((number, 2 * (len(query) - mismatches) - 8 * mismatches))
+        for strand, query in ((1, sequence), (-1, mp.reverse_complement(sequence))):
+            for offset in range(len(self.sequence) - len(query) + 1):
+                mismatches = sum(a != b for a, b in zip(query, self.sequence[offset:]))
+                if mismatches <= 6:
+                    score = 2 * (len(query) - mismatches) - 8 * mismatches
+                    found.append(fp.GenomeHit(self.contig, self.start + offset, self.start + offset + len(query), strand, score))
         return found
 
 
@@ -100,6 +100,12 @@ def mutate(sequence, position, base):
     return sequence[:position] + base + sequence[position + 1 :]
 
 
+def changed(sequence, *positions):
+    for position in positions:
+        sequence = mutate(sequence, position, "A" if sequence[position] != "A" else "C")
+    return sequence
+
+
 class HitScoreTests(unittest.TestCase):
     def test_score_matches_minimap2_short_read_scoring(self):
         # (CIGAR, NM, matching bases, block length) as mappy reports them.
@@ -120,6 +126,15 @@ class HitScoreTests(unittest.TestCase):
         self.assertEqual([site.score for site in placement.sites], [162, 162, 150])
         self.assertEqual(fp.summarize_hits([]).sites, ())
 
+    def test_adjacent_tandem_copies_stay_distinct(self):
+        # 81-base tags on adjacent copies of an 80-base repeat share one base: two loci, not one.
+        ref = fp.summarize_hits([hit("chr1", 500, 581), hit("chr1", 580, 661)], keep=None)
+        self.assertEqual(len(ref.sites), 2)
+        marker = fp.place_marker("chr1_540", ref, {"chr1"}, 81)
+        self.assertEqual((marker.source, marker.ref_tag_sites, marker.sites), ("ref_tag+clone_id", 2, ref.sites[:1]))
+        variant = fp.summarize_hits([hit("chr1", 500, 581, score=152), hit("chr1", 580, 661, score=152)])
+        self.assertEqual(fp.genome_label(variant, marker).label, "ambiguous")
+
 
 class PlacementTests(unittest.TestCase):
     contigs = {"Chr1", "Chr2", "scaffold_12"}
@@ -132,10 +147,30 @@ class PlacementTests(unittest.TestCase):
 
     def test_unique_ref_tag_is_cross_checked_against_the_clone_id(self):
         ref = fp.GenomePlacement((hit("Chr1", 1000, 1081),))
-        self.assertEqual(fp.place_marker("Chr1_1060", ref, self.contigs, 81).clone_check, "agree")
-        placed = fp.place_marker("Chr2_1060", ref, self.contigs, 81)
-        self.assertEqual((placed.source, placed.clone_check), ("ref_tag", "disagree"))
-        self.assertEqual(placed.sites, ref.best)  # the alignment wins a disagreement
+        placed = fp.place_marker("Chr1_1060", ref, self.contigs, 81)
+        self.assertEqual((placed.source, placed.clone_check, placed.sites), ("ref_tag", "agree", ref.best))
+
+    def test_disagreeing_clone_id_is_checked_in_its_own_window(self):
+        # The Ref tag's best genome-wide site is on Chr2 (the search missed the design site, or this assembly
+        # carries the Alt allele there and a Ref-like copy on Chr2); the CloneID names Chr1:1043.
+        ref = fp.GenomePlacement((hit("Chr2", 7000, 7081, score=96),))
+        windows = []
+
+        def align_ref_tag(*window):
+            windows.append(window)
+            return [hit("Chr1", 900, 981), hit("Chr1", 1000, 1081, score=156)]
+
+        placed = fp.place_marker("Chr1_1043", ref, self.contigs, 81, align_ref_tag=align_ref_tag)
+        self.assertEqual(windows, [("Chr1", 1043 - 1 - 81 - fp.SITE_PAD, 1043 + 81 + fp.SITE_PAD)])
+        self.assertEqual((placed.source, placed.ref_tag_sites, placed.clone_check), ("clone_id_site", 1, "disagree"))
+        self.assertEqual(placed.sites, (hit("Chr1", 1000, 1081, score=156),))  # the alignment covering the position
+        # A multi-copy Ref tag none of whose sites covers the position is checked the same way.
+        copies = fp.GenomePlacement((hit("Chr2", 7000, 7081), hit("Chr2", 9000, 9081)))
+        tied = fp.place_marker("Chr1_1043", copies, self.contigs, 81, align_ref_tag=align_ref_tag)
+        self.assertEqual((tied.source, tied.ref_tag_sites, tied.sites[0].contig), ("clone_id_site", 2, "Chr1"))
+        # Where the Ref tag does not align over the CloneID position, the marker is unplaced, so it keeps its rows.
+        lost = fp.place_marker("Chr1_1043", ref, self.contigs, 81, align_ref_tag=lambda *window: [hit("Chr1", 900, 981)])
+        self.assertEqual((lost.source, lost.sites, lost.ref_tag_sites, lost.clone_check), ("unplaced", (), 1, "disagree"))
 
     def test_multicopy_ref_tag_resolved_by_clone_id_or_left_unresolved(self):
         ref = fp.GenomePlacement((hit("Chr1", 1000, 1081), hit("Chr2", 5000, 5081)))
@@ -187,14 +222,26 @@ class PlacementTests(unittest.TestCase):
         )
         self.assertEqual(fp.genome_label(fp.summarize_hits([hit("Chr1", 1000, 1081)]), multicopy).label, "ambiguous")
 
+    def test_target_score_is_the_better_of_both_searches(self):
+        marker = fp.MarkerPlacement((hit("Chr1", 1000, 1081),), "ref_tag", 1, "agree")
+        off = hit("Chr2", 7000, 7081, score=122)
+        weaker = fp.genome_label(fp.summarize_hits([hit("Chr1", 1010, 1081, score=112), off]), marker, 132)
+        absent = fp.genome_label(fp.summarize_hits([off]), marker, 132)
+        self.assertEqual(weaker, absent)  # a weaker genome-wide hit at the site changes nothing
+        self.assertEqual((weaker.label, weaker.target_score, weaker.target_from), ("on_target", 132, "site"))
+        stronger = fp.genome_label(fp.summarize_hits([hit("Chr1", 1000, 1081, score=142), off]), marker, 132)
+        self.assertEqual((stronger.label, stronger.target_score, stronger.target_from), ("on_target", 142, "genome"))
+        tied = fp.genome_label(fp.summarize_hits([hit("Chr1", 1000, 1081, score=132), off]), marker, 132)
+        self.assertEqual((tied.target_score, tied.target_from), (132, "genome"))
+
 
 class FilterTests(unittest.TestCase):
     """filter_paralogs on synthetic MADCs with preset genome-wide hits.
 
     One marker, tag at Chr1:1001-1081.  The genome-wide search finds the
     paralog's exact copy on Chr2 and an equal-scoring copy of the ambiguous
-    haplotype; it misses the diverged allele at its own site, which the site
-    realignment then scores.
+    haplotype; it misses the diverged allele at its own site, which the
+    realignment to the marker's site then scores.
     """
 
     clone = "Chr1_001040"
@@ -260,7 +307,10 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(rows["by_label"]["ambiguous"], {"rows": 1, "reads": 3})
         self.assertEqual(rows["by_outcome"]["dropped"], {"rows": 2, "reads": 15})
         self.assertEqual(rows["by_category"]["RefMatch"]["paralog"]["rows"], 1)
-        self.assertEqual(summary["haplotypes"]["realigned_at_site"], {"haplotypes": 1, "found_at_site": 1})
+        self.assertEqual(
+            summary["haplotypes"]["realigned_at_site"], {"haplotypes": 6, "found_at_site": 6, "target_from_site": 1}
+        )
+        self.assertEqual(self.aligner.windows.count(("Chr1", 980, 1101)), 1)  # the marker's site, indexed once
         labels = {row["AlleleSequence"]: row for row in read_dicts(self.dir / "labels.csv")}
         self.assertEqual(len(labels), 6)  # dropped rows keep a record
         paralog = labels[self.paralog]
@@ -275,6 +325,55 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(markers[0]["Placement"], "ref_tag")
         self.assertEqual(markers[0]["CloneIDCheck"], "agree")
         self.assertEqual(markers[0]["Sites"], "Chr1:1001-1081(+)")
+
+    def test_weaker_genome_wide_hit_at_the_site_does_not_hide_the_realignment(self):
+        # The genome-wide search aligns the diverged allele only partly at its site (112), below its Chr2
+        # hit (122); realigned at the site it scores 132, so it is kept.
+        self.aligner._hits[self.diverged] = [hit("Chr2", 5000, 5081, score=122), hit("Chr1", 1010, 1081, score=112)]
+        madc = self.dir / "in.csv"
+        write_madc(madc, self.rows)
+        self.run_filter(madc)
+        diverged = {row["AlleleSequence"]: row for row in read_dicts(self.dir / "labels.csv")}[self.diverged]
+        self.assertEqual(
+            (diverged["Label"], diverged["TargetScore"], diverged["TargetFrom"], diverged["OffTargetScore"]),
+            ("on_target", "132", "site", "122"),
+        )
+
+    def test_ref_tag_site_missing_from_the_genome_wide_hits(self):
+        # The genome-wide search returns only a weaker Chr2 site for the Ref tag.  Aligned in the window
+        # around its CloneID position, the tag finds Chr1:1001-1081, which becomes the marker's site.
+        self.aligner._hits[self.ref] = [hit("Chr2", 6000, 6081, score=96)]
+        madc = self.dir / "in.csv"
+        write_madc(madc, self.rows)
+        output, summary = self.run_filter(madc)
+        marker = read_dicts(self.dir / "markers.csv")[0]
+        self.assertEqual(
+            (marker["Placement"], marker["RefTagSites"], marker["CloneIDCheck"], marker["Sites"]),
+            ("clone_id_site", "1", "disagree", "Chr1:1001-1081(+)"),
+        )
+        self.assertEqual(summary["markers"]["clone_id_disagreements"], [self.clone])
+        self.assertEqual(read_rows(output)[1:], [self.rows[0], self.rows[1], self.rows[4], self.rows[5]])
+        # Ignored, the CloneID cannot move the marker: it stays on Chr2, and the real AltMatch allele is dropped.
+        output, _ = self.run_filter(madc, clone_positions="ignore")
+        marker = read_dicts(self.dir / "markers.csv")[0]
+        self.assertEqual((marker["Placement"], marker["Sites"]), ("ref_tag", "Chr2:6001-6081(+)"))
+        labels = {row["AlleleSequence"]: row["Label"] for row in read_dicts(self.dir / "labels.csv")}
+        self.assertEqual(labels[self.true_match], "paralog")
+
+    def test_ninth_equal_best_ref_tag_site(self):
+        # Nine exact copies of the Ref tag, and the one the CloneID names sorts after the eight a haplotype keeps.
+        self.aligner._hits[self.ref] = [hit("Chr1", start, start + 81) for start in range(0, 800, 100)] + [
+            hit("Chr1", 1000, 1081)
+        ]
+        madc = self.dir / "in.csv"
+        write_madc(madc, self.rows)
+        output, _ = self.run_filter(madc)
+        marker = read_dicts(self.dir / "markers.csv")[0]
+        self.assertEqual(
+            (marker["Placement"], marker["RefTagSites"], marker["CloneIDCheck"], marker["Sites"]),
+            ("ref_tag+clone_id", "9", "agree", "Chr1:1001-1081(+)"),
+        )
+        self.assertEqual(read_rows(output)[1:], [self.rows[0], self.rows[1], self.rows[4], self.rows[5]])
 
     def test_canonical_rows_are_never_dropped(self):
         # The genome-wide search places this marker's Alt tag elsewhere, better than at its site.
@@ -580,6 +679,138 @@ class GenomeAlignerTests(unittest.TestCase):
         self.assertEqual(labels, {sequence: row["Label"] for sequence, row in self.labels.items()})
         qc = json.loads(output.with_suffix(".csv.qc.json").read_text())
         self.assertEqual(qc["parameters"]["clone_positions"], "ignore")
+
+
+@unittest.skipUnless(HAS_MAPPY, "mappy not installed (pip install 'madcats[genome]')")
+class ReviewCaseTests(unittest.TestCase):
+    """Counterexamples from an external review (docs/reviews), each on a tiny genome with the real aligner."""
+
+    def setUp(self):
+        self.rng = random.Random(34)
+        self.temporary = tempfile.TemporaryDirectory()
+        self.dir = Path(self.temporary.name)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def dna(self, length):
+        return "".join(self.rng.choice("ACGT") for _ in range(length))
+
+    def aligner(self, contigs, name="genome"):
+        fasta = self.dir / f"{name}.fa"
+        fasta.write_text("".join(f">{contig}\n{sequence}\n" for contig, sequence in contigs.items()))
+        with contextlib.redirect_stderr(io.StringIO()):
+            return fp.GenomeAligner.open(fasta, None, 1)
+
+    def run_filter(self, aligner, rows):
+        madc = self.dir / "in.csv"
+        write_madc(madc, rows)
+        with contextlib.redirect_stderr(io.StringIO()):
+            fp.filter_paralogs(madc, self.dir / "out.csv", aligner, self.dir / "labels.csv", self.dir / "markers.csv")
+        labels = {row["AlleleSequence"]: row for row in read_dicts(self.dir / "labels.csv")}
+        return labels, read_dicts(self.dir / "markers.csv")
+
+    def test_assembly_carrying_the_alt_allele_at_the_target(self):
+        # chr1 is the design site but carries the Alt allele; a paralog on chr2 carries Ref.  The Ref tag
+        # aligns better on chr2, yet the marker is placed where its CloneID says.
+        ref = self.dna(81)
+        alt = changed(ref, 40)
+        allele = changed(alt, 65)  # one SNP from the target, two from the paralog
+        aligner = self.aligner({"chr1": self.dna(500) + alt + self.dna(500), "chr2": self.dna(500) + ref + self.dna(500)})
+        specs = [("Ref", ref, [5, 5, 5]), ("Alt", alt, [5, 5, 5]), ("AltMatch", allele, [3, 3, 3])]
+        labels, markers = self.run_filter(aligner, [madc_row("chr1_000540", *spec) for spec in specs])
+        self.assertEqual(
+            (markers[0]["Placement"], markers[0]["CloneIDCheck"], markers[0]["Sites"]),
+            ("clone_id_site", "disagree", "chr1:501-581(+)"),
+        )
+        found = labels[allele]
+        self.assertEqual(
+            (found["Label"], found["Action"], found["TargetScore"], found["OffTargetScore"]), ("on_target", "kept", "152", "142")
+        )
+        # A CloneID position where the Ref tag does not align leaves the marker unplaced, keeping every row.
+        labels, markers = self.run_filter(aligner, [madc_row("chr1_000900", *spec) for spec in specs])
+        self.assertEqual((markers[0]["Placement"], markers[0]["CloneIDCheck"]), ("unplaced", "disagree"))
+        self.assertEqual({(row["Label"], row["Action"]) for row in labels.values()}, {("unplaced", "kept")})
+
+    def test_markers_sharing_a_site_do_not_crowd_each_other_out(self):
+        # The allele has no 21-base seed at its own site, and its genome-wide hit is a 50-base partial copy.
+        ref = self.dna(81)
+        allele = changed(ref, 10, 30, 50, 70)
+        aligner = self.aligner({"target": self.dna(500) + ref + self.dna(500), "off": self.dna(500) + allele[:50] + self.dna(500)})
+        for copies in (1, 30):  # more markers on one site than the short-read preset returns hits
+            rows = [
+                row for number in range(copies)
+                for row in (madc_row(f"m{number}", "Ref", ref, [9, 9, 9]), madc_row(f"m{number}", "RefMatch", allele, [3, 3, 3]))
+            ]
+            write_madc(self.dir / "in.csv", rows)
+            with contextlib.redirect_stderr(io.StringIO()):
+                fp.filter_paralogs(
+                    self.dir / "in.csv", self.dir / "out.csv", aligner, self.dir / "labels.csv", self.dir / "markers.csv"
+                )
+            found = Counter(
+                (row["Label"], row["TargetScore"], row["OffTargetScore"])
+                for row in read_dicts(self.dir / "labels.csv") if row["AlleleID"].endswith("|RefMatch")
+            )
+            self.assertEqual(found, {("on_target", "122", "100"): copies})
+
+    def test_adjacent_tandem_copies(self):
+        repeat = self.dna(80)
+        ref = repeat + repeat[0]
+        allele = changed(ref, 40)  # one SNP from both copies
+        aligner = self.aligner({"chr1": self.dna(500) + repeat + repeat + repeat[0] + self.dna(500)})
+        labels, markers = self.run_filter(
+            aligner, [madc_row("chr1_000540", "Ref", ref, [5, 5, 5]), madc_row("chr1_000540", "RefMatch", allele, [3, 3, 3])]
+        )
+        self.assertEqual(
+            (markers[0]["Placement"], markers[0]["RefTagSites"], markers[0]["Sites"]), ("ref_tag+clone_id", "2", "chr1:501-581(+)")
+        )
+        found = labels[allele]
+        self.assertEqual(
+            (found["Label"], found["TargetScore"], found["OffTargetScore"], found["OffTargetHit"]),
+            ("ambiguous", "152", "152", "chr1:581-661(+)"),
+        )
+
+    def test_multipart_index_is_refused(self):
+        import mappy
+
+        parts = []
+        for number in (1, 2):
+            fasta = self.dir / f"part{number}.fa"
+            fasta.write_text(f">chr{number}\n{self.dna(1000)}\n")
+            parts.append(self.dir / f"part{number}.mmi")
+            mappy.Aligner(str(fasta), preset="sr", fn_idx_out=str(parts[-1]))
+        joined = self.dir / "joined.mmi"  # what minimap2 -I writes for a genome larger than its batch
+        joined.write_bytes(parts[0].read_bytes() + parts[1].read_bytes())
+        self.assertEqual(fp._index_parts(parts[0]), [["chr1"]])
+        self.assertEqual(fp._index_parts(joined), [["chr1"], ["chr2"]])
+        self.assertIsNone(fp._index_parts(self.dir / "part1.fa"))
+        truncated = self.dir / "truncated.mmi"
+        truncated.write_bytes(parts[0].read_bytes()[:-5])
+        with self.assertRaises(mp.MadcError):
+            fp._index_parts(truncated)
+        madc = self.dir / "in.csv"
+        write_madc(madc, [madc_row("chr1_000100", "Ref", self.dna(81), [1, 1, 1])])
+        output = self.dir / "out.csv"
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(mp.MadcError) as caught:
+            fp.run_filter_paralogs(mp.build_parser().parse_args(
+                ["filter-paralogs", "--madc", str(madc), "--genome-index", str(joined), "--output", str(output)]
+            ))
+        self.assertIn("in 2 parts", str(caught.exception))
+        self.assertFalse(output.exists())
+
+    def test_label_change_between_assemblies_without_a_copy_change(self):
+        # Both assemblies have the target and one other copy; only the other copy's sequence differs.  The
+        # label changes, so a label change alone does not show that a copy was gained or lost.
+        ref = self.dna(81)
+        allele = changed(ref, 40)
+        flanks = [self.dna(500) for _ in range(4)]
+        labels = []
+        for name, copy in (("a", changed(ref, 20, 50)), ("b", allele)):
+            aligner = self.aligner({"target": flanks[0] + ref + flanks[1], "copy": flanks[2] + copy + flanks[3]}, name)
+            ref_placement = fp.summarize_hits(aligner.hits(ref, aligner.new_buffer()), keep=None)
+            marker = fp.place_marker("marker", ref_placement, aligner.contigs, 81, use_clone_position=False)
+            labels.append(fp.genome_label(fp.summarize_hits(aligner.hits(allele, aligner.new_buffer())), marker).label)
+        self.assertEqual(labels, ["on_target", "paralog"])
 
 
 if __name__ == "__main__":

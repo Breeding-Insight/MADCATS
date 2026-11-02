@@ -1464,22 +1464,31 @@ Design:
   mappy reports neither AS nor XS, so each hit's DP score is recomputed from
   CIGAR, NM, matching bases and block length with the pinned short-read
   scoring (+2/−8, gaps 12+2 or 24+1, ambiguous −1). Ties are exact.
-- **Marker placement.** Each marker's Ref tag is aligned. The CloneID
-  `CHROM_POS` is a cross-check, picks among equal-best Ref-tag sites, and
-  stands in (±tag length) when the Ref tag does not align. When the two
-  disagree, the alignment wins. `--clone-positions ignore` turns all three
-  uses off, for a genome other than the one the CloneIDs refer to. On the
-  lettuce vendor MADC against v8 it changes 10 markers: the 9 fallback
-  windows become `unplaced`, keeping 1,032 rows labelled `paralog`, and 1
-  tie stays multi-copy. The id95 output does not change, and the default
-  (`use`) output is byte-identical to the runs before the option existed.
+- **Marker placement.** Each marker's Ref tag is aligned, and every
+  equal-best site the search returns is kept. The CloneID `CHROM_POS` is
+  read as a position on the genome given: it picks among equal-best Ref-tag
+  sites and stands in (±tag length) when the Ref tag does not align. When no
+  equal-best site covers it, the Ref tag is realigned to a k=11 index of the
+  window around the position (±tag length + 20 bp), and an alignment
+  covering the position becomes the marker's site (`clone_id_site`), even
+  when the tag scores better elsewhere; without one the marker is
+  `unplaced`. `--clone-positions ignore` turns these uses off, for a genome
+  other than the one the CloneIDs refer to. On the lettuce vendor MADC
+  against v8 it changes 11 markers: the 9 fallback windows become
+  `unplaced`, keeping 1,032 rows labelled `paralog`; 1 tie stays
+  multi-copy; and `Chr2_001081815` goes back to Chr4, dropping 11 rows that
+  `use` keeps. The id95 labels do not change.
 - **Labels.** Each haplotype gets its best score at its marker's site and
   its best score elsewhere: higher at the marker is `on_target`, higher
-  elsewhere is `paralog`, a tie is `ambiguous`. A haplotype the genome-wide
-  search finds nowhere near its marker is realigned to a k=11 index of the
-  marker sites (±20 bp). Without that realignment, 18% of id95 haplotypes
-  had no hit at their own marker, and 326 that bwa places on target were
-  unmapped.
+  elsewhere is `paralog`, a tie is `ambiguous`. Every haplotype is also
+  realigned to a k=11 index of its own marker's sites (±20 bp), and the site
+  score is the higher of that and the genome-wide hit there. Without that
+  realignment, 18% of id95 haplotypes had no hit at their own marker, and
+  326 that bwa places on target were unmapped. Each marker's sites get an
+  index of their own, so markers sharing a site never compete for the
+  preset's hit limit. Hits are one locus when they share at least half of
+  the shorter interval, both when a sequence's hits are merged and when a
+  hit is matched to its marker's site.
 - **Actions.** Paralog and ambiguous rows are dropped by default or flagged
   in the `PICRef` column, renamed `GenomeLabel`. Canonical rows are never
   dropped. Every input row, dropped or kept, gets a line in the labels
@@ -1491,7 +1500,7 @@ Measurements (lettuce v8 genome, 2.4 Gb; 12-core laptop):
 |---|---|---|
 | Rows / distinct sequences | 17,847 / 17,846 | 732,534 / 732,154 |
 | Run time, prebuilt index | 12 s (8 threads) | 2 min 15 s (8 threads), 9.4 GB |
-| Rows kept | 12,695 | 113,655 |
+| Rows kept | 12,695 | 113,667 |
 | Reads in paralog rows | 16.0% | 63.3% |
 | Keep/drop agreement with bwa-mem labels | 98.2% | 94.9% |
 | Keep/drop agreement with the bwa prototype's output, rows / reads | 98.2% / 99.7% | 94.9% / 99.4% |
@@ -1525,6 +1534,31 @@ leading `Code_version`, every tenth row's counts as floats) gets the same
 label, action and scores for all 17,847 rows as the raw MADC, and the same
 QC totals. Moving the command into its own module left the id95 output, both
 sidecars included, byte-identical.
+
+Review fixes. An external review of the first version (cd2d7cb) gave a
+counterexample for each of the defects below; each is now a test
+(`ReviewCaseTests`, and `FilterTests` with the fake aligner). Effects on
+the lettuce MADCs, default `use` mode:
+
+| Fix | Effect |
+|---|---|
+| Ref tag realigned at its CloneID position on disagreement | `Chr2_001081815`: the genome-wide search returned 51 hits, best on Chr4 (96), none at its Chr2 design site (156). Placed on Chr2, 11 of its 14 dropped DArT rows become `on_target` |
+| Every haplotype scored at its own site; the higher of the two scores kept | 530 DArT rows that the shared site index had crowded out get a site score; 1 row (`Chr5_323370531`, genome-wide 86 at the site, 88 elsewhere, 94 realigned) becomes `on_target` |
+| One locus rule for merging hits and for target membership | No label changes; 850 DArT sequences had adjacent hits merged before |
+| Every equal-best Ref-tag site kept for placement | No lettuce Ref tag has more than 8 |
+| Multi-part `.mmi` refused | The lettuce index is one part; reading its layout takes 0.03 s |
+
+Together, 12 DArT rows (994 reads) go from dropped to kept and none the
+other way. Keep/drop agreement with bwa-mem on the 726,693 DArT Match/Other
+rows with bwa labels rises from 94.8128% to 94.8136% (+6 rows); id95
+labels do not change (97.3484% on 11,842 rows). The DArT run took 76 s,
+against 78 s for cd2d7cb in the same session.
+For `Chr2_001081815`, both the hit limit and the ambiguity codes matter: the
+vendor tag, or the tag with R and M read as N, misses the design site at
+`best_n` 50, 200 and 1,000 and finds it at 5,000; with the codes resolved to
+bases it is found at `best_n` 50. bwa agreement is concordance, not truth:
+source-known fixtures for both errors (target evidence removed, paralog
+evidence kept) are still to be built.
 
 ## Downstream fixed allele IDs
 

@@ -39,10 +39,10 @@ The module is laid out in the order a read travels. Each section opens with a ba
 | 9. Commands and command line | One `run_*` per subcommand, `build_parser`, `main` |
 
 `madcats_paralogs.py` follows the same order on a smaller scale: scoring and alignment
-(`GenomeAligner`, `SiteIndex`), marker placement and labels (`place_marker`, `genome_label`), the
-two-pass table filter (`filter_paralogs`), then its command line. It imports the MADC helpers it
-shares with `validate` from `madcats`, so `build_parser` imports it when the parser is built rather
-than at the top of `madcats.py`.
+(`GenomeAligner`, `WindowIndex`), marker placement and labels (`place_marker`, `score_at_sites`,
+`genome_label`), the two-pass table filter (`filter_paralogs`), then its command line. It imports
+the MADC helpers it shares with `validate` from `madcats`, so `build_parser` imports it when the
+parser is built rather than at the top of `madcats.py`.
 
 ## The `generate` Pipeline
 

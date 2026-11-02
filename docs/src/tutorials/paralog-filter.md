@@ -82,7 +82,7 @@ madcats filter-paralogs \
   --jobs 8
 ```
 
-The lettuce vendor MADC (732,534 rows, 376 samples) took 2 min 15 s and 9.4 GB of memory. 113,655
+The lettuce vendor MADC (732,534 rows, 376 samples) took 2 min 15 s and 9.4 GB of memory. 113,667
 rows were kept, with 36% of the reads. Genotype agreement with the published realignment VCF rose
 from 89.9% to 98.5%. That figure was measured with the bwa-mem prototype of this filter; this
 command keeps the same rows for 99.4% of the reads.
@@ -150,12 +150,14 @@ the same label as in the raw MADC.
 ## How the Labels Are Decided
 
 Each marker is placed by aligning its Ref tag. The CloneID's `CHROM_POS` checks the placement and
-breaks ties between equal-best sites. Every distinct haplotype is then aligned genome-wide. A
-haplotype with no hit near its marker is realigned to the marker sites alone with short seeds:
-real alleles that differ from the reference by several SNPs are too diverged for the genome-wide
-seeds, and would otherwise be judged only by their paralogs. The haplotype's best score at its
-marker is then compared with its best score anywhere else: higher at the marker is `on_target`,
-higher elsewhere is `paralog`, and a tie is `ambiguous`.
+breaks ties between equal-best sites. Where the Ref tag's best sites are all away from the CloneID
+position, the tag is aligned again near that position, and the marker is placed there if it aligns
+(otherwise it is left `unplaced`). Every distinct haplotype is then aligned genome-wide, and again
+at its own marker's site alone with short seeds: real alleles that differ from the reference by
+several SNPs are too diverged for the genome-wide seeds, and would otherwise be judged only by
+their paralogs. The haplotype's best score at its marker is then compared with its best score
+anywhere else: higher at the marker is `on_target`, higher elsewhere is `paralog`, and a tie is
+`ambiguous`.
 
 Labels were checked against an independent bwa-mem classification of the same lettuce haplotypes.
 The drop or keep decision agreed for 98.2% of the rows of the MADCATS MADC and 94.9% of the vendor

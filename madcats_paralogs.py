@@ -15,26 +15,28 @@ runs without it.  The MADC reading helpers it shares with ``validate``
 check) stay in ``madcats``.
 
 Reading map: scoring and alignment (``hit_score``, ``GenomeAligner``,
-``SiteIndex``, ``map_sequences``); marker placement and labels
-(``place_marker``, ``genome_label``); the two-pass table filter
-(``filter_paralogs``); the command line (``add_filter_paralogs_command``,
-``run_filter_paralogs``).
+``WindowIndex``, ``map_sequences``); marker placement and labels
+(``place_marker``, ``score_at_sites``, ``genome_label``); the two-pass
+table filter (``filter_paralogs``); the command line
+(``add_filter_paralogs_command``, ``run_filter_paralogs``).
 """
 
 from __future__ import annotations
 
 import argparse
-import bisect
 import concurrent.futures
 import csv
 import datetime as dt
+import functools
+import os
 import re
+import struct
 import sys
 import threading
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 from madcats import (
     ALLELE_TYPE_ORDER,
@@ -46,6 +48,7 @@ from madcats import (
     allele_type,
     is_madc_header,
     madc_identity_columns,
+    madc_read_counts,
     madc_sample_start,
     open_text,
     positive_int,
@@ -61,10 +64,10 @@ SR_SCORING = (2, 8, 12, 2, 24, 1, 1)
 # hits, so an 81-bp allele with several SNPs still finds its copies.  On lettuce this lifted
 # drop/keep agreement with bwa mem from 97.3% to 98.2%.
 SR_MAP_OPTIONS = {"min_cnt": 1, "min_chain_score": 20, "best_n": 50}
-GENOME_SITES_KEPT = 8              # distinct genome sites remembered per sequence, best first
+GENOME_SITES_KEPT = 8              # distinct genome sites remembered per haplotype, best first (Ref tags keep all)
 CLONE_POSITION_SLACK = 10          # a CloneID position this far outside the placed Ref tag still agrees
 CLONE_POSITION_RE = re.compile(r"(.+)_0*(\d+)")
-SITE_PAD = 20                      # genome bases either side of a marker site in the site realignment
+SITE_PAD = 20                      # genome bases either side of a site in the window realignment
 SITE_INDEX_K, SITE_INDEX_W = 11, 3 # the site realignment's seeds: short, so diverged alleles still seed
 GENOME_LABEL_SIDECAR_COLUMNS = [
     "CloneID", "AlleleID", "AlleleSequence", "Label", "Action",
@@ -100,11 +103,13 @@ class MarkerPlacement(NamedTuple):
     ``source``: ``ref_tag`` (the Ref tag has one best site), ``ref_tag+clone_id``
     (several equal-best sites; the CloneID position picks one),
     ``ref_tag_multicopy`` (several, none picked: every site is the marker's),
-    ``clone_id`` (the Ref tag did not align; a window around the CloneID
-    position stands in) or ``unplaced``.  ``clone_check`` compares the CloneID
-    position with the Ref-tag sites: ``agree``, ``disagree``, ``no_position``
-    (the CloneID is not CHROM_POS), ``contig_absent``, ``fallback``, or
-    ``ignored`` (``--clone-positions ignore``).
+    ``clone_id_site`` (no equal-best site covers the CloneID position; the Ref
+    tag's alignment within a window around it), ``clone_id`` (the Ref tag did
+    not align; the window around the CloneID position stands in) or
+    ``unplaced``.  ``clone_check`` compares the CloneID position with the
+    Ref-tag sites: ``agree``, ``disagree``, ``no_position`` (the CloneID is not
+    CHROM_POS), ``contig_absent``, ``fallback``, or ``ignored``
+    (``--clone-positions ignore``).
     """
 
     sites: Tuple[GenomeHit, ...]
@@ -118,7 +123,7 @@ class GenomeLabel(NamedTuple):
 
     label: str
     target_score: Optional[int]       # best alignment at the marker's own site
-    target_from: str                  # genome (the genome-wide search found it), site (realigned there) or '.'
+    target_from: str                  # genome (the genome-wide hit there), site (the realignment there scored higher) or '.'
     off_target_score: Optional[int]   # best alignment anywhere else
     off_target_sites: int             # distinct sites elsewhere at that score
     off_target_hit: Optional[GenomeHit]
@@ -146,17 +151,61 @@ def hit_score(
     return match * matches - mismatch * mismatches - ambiguous * ambiguous_bases - gap_cost
 
 
-def summarize_hits(hits: Iterable[GenomeHit], keep: int = GENOME_SITES_KEPT) -> GenomePlacement:
-    """A sequence's distinct sites, best first.  A hit overlapping a better-scoring
-    one on the genome is the same site (a tandem repeat inside the tag can yield two)."""
+def _sites_overlap(hit: GenomeHit, site: GenomeHit) -> bool:
+    """Same locus: the intervals share at least half of the shorter one.  Adjacent
+    tandem copies, which share a few bases, stay distinct."""
+    if hit.contig != site.contig:
+        return False
+    overlap = min(hit.end, site.end) - max(hit.start, site.start)
+    return overlap > 0 and 2 * overlap >= min(hit.end - hit.start, site.end - site.start)
+
+
+def summarize_hits(hits: Iterable[GenomeHit], keep: Optional[int] = GENOME_SITES_KEPT) -> GenomePlacement:
+    """A sequence's distinct sites, best first, at most ``keep`` (None: all).  A hit at
+    the same locus as a better-scoring one (``_sites_overlap``) is merged into it."""
     sites: List[GenomeHit] = []
     for hit in sorted(hits, key=lambda hit: (-hit.score, hit.contig, hit.start)):
-        if any(site.contig == hit.contig and hit.start < site.end and site.start < hit.end for site in sites):
+        if any(_sites_overlap(hit, site) for site in sites):
             continue
         sites.append(hit)
         if len(sites) == keep:
             break
     return GenomePlacement(tuple(sites))
+
+
+def _index_parts(path: Path) -> Optional[List[List[str]]]:
+    """The contig names in each part of a minimap2 index, read from its layout
+    (``mm_idx_dump``), or None when the file is not one.  minimap2 writes one
+    part per -I bases of genome; mappy loads only the first."""
+    with path.open("rb", buffering=0) as handle:
+        size = os.fstat(handle.fileno()).st_size
+
+        def read(count: int) -> bytes:
+            data = handle.read(count)
+            if len(data) != count:
+                raise MadcError(f"{path} ends inside a minimap2 index part; rebuild the index")
+            return data
+
+        parts: List[List[str]] = []
+        while handle.tell() < size:
+            if read(4) != b"MMI\x02":
+                if not parts:
+                    return None
+                raise MadcError(f"{path} has unreadable data after its first index part; rebuild the index")
+            _, _, bucket_bits, sequences, flag = struct.unpack("<5I", read(20))
+            names, bases = [], 0
+            for _ in range(sequences):
+                names.append(read(read(1)[0]).decode())
+                bases += struct.unpack("<I", read(4))[0]
+            for _ in range(1 << bucket_bits):
+                handle.seek(8 * struct.unpack("<I", read(4))[0], 1)
+                handle.seek(16 * struct.unpack("<I", read(4))[0], 1)
+            if not flag & 2:  # MM_I_NO_SEQ: the packed sequence is left out
+                handle.seek(4 * ((bases + 7) // 8), 1)
+            parts.append(names)
+        if handle.tell() != size:
+            raise MadcError(f"{path} ends inside a minimap2 index part; rebuild the index")
+        return parts
 
 
 def _load_mappy():
@@ -200,6 +249,14 @@ class GenomeAligner:
             raise MadcError(f"Genome file not found: {source}")
         if save is not None:
             save.parent.mkdir(parents=True, exist_ok=True)
+        parts = _index_parts(source) if source == index else None
+        if parts is not None and len(parts) > 1:
+            raise MadcError(
+                f"{source} is a minimap2 index in {len(parts)} parts ({sum(map(len, parts)):,} contigs), and mappy "
+                f"searches only the first ({len(parts[0]):,} contigs), so the rest of the genome would be missed. "
+                "Rebuild it as one part: give --genome and a new --genome-index path, or run minimap2 -x sr "
+                "with -I above the genome size"
+            )
         verb = "Loading index" if source == index else "Indexing genome"
         print(f"{verb} {source}" + (f" (saving {save})" if save else ""), file=sys.stderr)
         aligner = mappy.Aligner(
@@ -228,36 +285,34 @@ class GenomeAligner:
     def fetch(self, contig: str, start: int, end: int) -> str:
         return self._aligner.seq(contig, start, end) or ""
 
-    def site_index(self, segments: Sequence[str]) -> "SiteIndex":
-        return SiteIndex(self._mappy, segments)
+    def window(self, contig: str, start: int, end: int) -> "WindowIndex":
+        return WindowIndex(self._mappy, contig, start, self.fetch(contig, start, end))
 
 
-class SiteIndex:
-    """A sensitive index of the marker sites alone, so an allele too diverged
-    to seed genome-wide (k=21) is still scored at its own marker.  Segments
-    are joined with N spacers; hits come back as (segment number, score)."""
+class WindowIndex:
+    """A sensitive index (short seeds) of one genome window, so a tag too
+    diverged to seed genome-wide (k=21) still aligns at a site it belongs to.
+    Each window is its own index, so windows never compete for hits; hits
+    come back in genome coordinates."""
 
-    def __init__(self, mappy_module, segments: Sequence[str]) -> None:
-        spacer = "N" * 100
-        self._mappy = mappy_module
-        self._starts: List[int] = []
-        offset = 0
-        for segment in segments:
-            self._starts.append(offset)
-            offset += len(segment) + len(spacer)
-        self._aligner = mappy_module.Aligner(
-            seq=spacer.join(segments) or "N", preset="sr", k=SITE_INDEX_K, w=SITE_INDEX_W, scoring=list(SR_SCORING)
+    def __init__(self, mappy_module, contig: str, start: int, sequence: str) -> None:
+        self._contig, self._start = contig, start
+        self._aligner = (
+            mappy_module.Aligner(seq=sequence, preset="sr", k=SITE_INDEX_K, w=SITE_INDEX_W, scoring=list(SR_SCORING))
+            if sequence
+            else None
         )
 
-    def new_buffer(self):
-        return self._mappy.ThreadBuffer()
-
-    def hits(self, sequence: str, buffer) -> List[Tuple[int, int]]:
-        found = []
-        for hit in self._aligner.map(sequence, buf=buffer):
-            segment = bisect.bisect_right(self._starts, hit.r_st) - 1
-            found.append((segment, hit_score(hit.cigar, hit.NM, hit.mlen, hit.blen)))
-        return found
+    def hits(self, sequence: str, buffer=None) -> List[GenomeHit]:
+        if self._aligner is None:
+            return []
+        return [
+            GenomeHit(
+                self._contig, self._start + hit.r_st, self._start + hit.r_en, hit.strand,
+                hit_score(hit.cigar, hit.NM, hit.mlen, hit.blen),
+            )
+            for hit in self._aligner.map(sequence, buf=buffer)
+        ]
 
 
 def map_sequences(aligner, sequences: Sequence[str], jobs: int = 1, summarize=summarize_hits, batch: int = 2000) -> Dict[str, object]:
@@ -299,16 +354,22 @@ def place_marker(
     contigs: Set[str],
     tag_length: int,
     use_clone_position: bool = True,
+    align_ref_tag: Optional[Callable[[str, int, int], Sequence[GenomeHit]]] = None,
 ) -> MarkerPlacement:
-    """Locate a marker's tag: its Ref tag's alignment first, the CloneID position as cross-check and fallback.
+    """Locate a marker's tag from its Ref tag's equal-best genome sites and its CloneID position.
 
-    Alignment wins a disagreement, since CloneID coordinates may come from
-    another assembly version; the disagreement is reported.  A Ref tag with
-    several equal-best sites is resolved by the CloneID position when exactly
-    one site covers it; otherwise all its sites count as the marker's own.
-    Without ``use_clone_position`` (a genome other than the one the CloneIDs
-    refer to) the position is never read: an unaligned Ref tag leaves the
-    marker unplaced, and equal-best sites stay multi-copy.
+    With ``use_clone_position`` the CloneID position is taken to be on this
+    genome.  It picks one of several equal-best sites, and a window around it
+    stands in for a Ref tag that does not align.  When no equal-best site
+    covers it, ``align_ref_tag(contig, start, end)`` aligns the Ref tag within
+    a window around the position, and an alignment covering the position
+    becomes the marker's site even if the tag aligns better elsewhere: the
+    assembly may carry the Alt allele at the target and a Ref-like copy
+    elsewhere, or the genome-wide search may have missed the site.  With no
+    such alignment the marker is unplaced.  Either way the disagreement is
+    reported.  Without ``use_clone_position`` (a genome other than the one the
+    CloneIDs refer to) the position is never read: an unaligned Ref tag leaves
+    the marker unplaced, and equal-best sites stay multi-copy.
     """
     position, status = clone_position(clone_id, contigs) if use_clone_position else (None, "ignored")
     copies = ref_placement.best if ref_placement is not None and ref_placement.sites else ()
@@ -318,21 +379,54 @@ def place_marker(
         contig, base = position
         window = GenomeHit(contig, max(0, base - 1 - tag_length), base + tag_length, 0, 0)
         return MarkerPlacement((window,), "clone_id", 0, "fallback")
-    agreeing = [site for site in copies if position is not None and _site_covers(site, *position)]
-    check = status if position is None else ("agree" if agreeing else "disagree")
-    if len(copies) == 1:
-        return MarkerPlacement(copies, "ref_tag", 1, check)
+    if position is None:
+        return MarkerPlacement(copies, "ref_tag" if len(copies) == 1 else "ref_tag_multicopy", len(copies), status)
+    agreeing = [site for site in copies if _site_covers(site, *position)]
     if len(agreeing) == 1:
-        return MarkerPlacement(tuple(agreeing), "ref_tag+clone_id", len(copies), check)
-    return MarkerPlacement(copies, "ref_tag_multicopy", len(copies), check)
+        source = "ref_tag" if len(copies) == 1 else "ref_tag+clone_id"
+        return MarkerPlacement(tuple(agreeing), source, len(copies), "agree")
+    if agreeing:
+        return MarkerPlacement(copies, "ref_tag_multicopy", len(copies), "agree")
+    contig, base = position
+    window = (contig, max(0, base - 1 - tag_length - SITE_PAD), base + tag_length + SITE_PAD)
+    covering = [hit for hit in (align_ref_tag(*window) if align_ref_tag else ()) if _site_covers(hit, contig, base)]
+    if covering:
+        return MarkerPlacement((max(covering, key=lambda hit: hit.score),), "clone_id_site", len(copies), "disagree")
+    return MarkerPlacement((), "unplaced", len(copies), "disagree")
 
 
-def _sites_overlap(hit: GenomeHit, site: GenomeHit) -> bool:
-    """Same locus: the intervals share at least half of the shorter one."""
-    if hit.contig != site.contig:
-        return False
-    overlap = min(hit.end, site.end) - max(hit.start, site.start)
-    return overlap > 0 and 2 * overlap >= min(hit.end - hit.start, site.end - site.start)
+def score_at_sites(
+    aligner, markers: Mapping[str, MarkerPlacement], haplotypes: Iterable[Tuple[str, str]], jobs: int = 1
+) -> Dict[Tuple[str, str], int]:
+    """Each (CloneID, sequence) pair's best score within its own marker's sites (each padded by SITE_PAD).
+
+    Every placed marker's sites are indexed on their own with short seeds,
+    so a real allele carrying several SNPs, which the genome-wide search
+    misses or aligns only partly at home, is still scored there, whatever
+    other markers the panel has.
+    """
+    by_marker: Dict[str, Set[str]] = defaultdict(set)
+    for clone, sequence in haplotypes:
+        if markers[clone].sites:
+            by_marker[clone].add(sequence)
+
+    def score(clone: str) -> Dict[Tuple[str, str], int]:
+        windows = [
+            aligner.window(site.contig, max(0, site.start - SITE_PAD), site.end + SITE_PAD) for site in markers[clone].sites
+        ]
+        buffer = aligner.new_buffer()
+        found = {}
+        for sequence in by_marker[clone]:
+            scores = [hit.score for window in windows for hit in window.hits(sequence, buffer)]
+            if scores:
+                found[(clone, sequence)] = max(scores)
+        return found
+
+    results: Dict[Tuple[str, str], int] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        for found in pool.map(score, list(by_marker)):
+            results.update(found)
+    return results
 
 
 def genome_label(
@@ -346,8 +440,9 @@ def genome_label(
     site, or a marker whose own Ref tag is multi-copy and unresolved.
     ``unmapped``: no alignment.  ``unplaced``: the marker itself could not be
     located, so the haplotype cannot be judged.  ``site_score`` is the
-    sensitive realignment at the marker's site, used when the genome-wide
-    search found no hit there.
+    sensitive realignment at the marker's site (``score_at_sites``).  The
+    target score is the higher of it and the genome-wide hit at the site, so
+    the label does not depend on which search found the site.
     """
     sites = placement.sites if placement is not None else ()
     if not marker.sites:
@@ -356,10 +451,10 @@ def genome_label(
     else:
         target = [hit for hit in sites if any(_sites_overlap(hit, site) for site in marker.sites)]
         off = tuple(hit for hit in sites if hit not in target)
-        if target:
-            target_score, target_from = target[0].score, "genome"
-        elif site_score is not None:
+        if site_score is not None and (not target or site_score > target[0].score):
             target_score, target_from = site_score, "site"
+        elif target:
+            target_score, target_from = target[0].score, "genome"
         else:
             target_score, target_from = None, "."
     off_score = off[0].score if off else None
@@ -378,24 +473,6 @@ def genome_label(
     return GenomeLabel(label, *detail)
 
 
-def _site_segments(aligner, markers: Mapping[str, MarkerPlacement]) -> Tuple[List[str], Dict[str, List[int]]]:
-    """The genome sequence around every marker site, and each marker's segment numbers."""
-    segments: List[str] = []
-    owned: Dict[str, List[int]] = defaultdict(list)
-    for clone, marker in markers.items():
-        for site in marker.sites:
-            owned[clone].append(len(segments))
-            segments.append(aligner.fetch(site.contig, max(0, site.start - SITE_PAD), site.end + SITE_PAD))
-    return segments, owned
-
-
-def _best_by_segment(hits: Iterable[Tuple[int, int]]) -> Dict[int, int]:
-    best: Dict[int, int] = {}
-    for segment, score in hits:
-        best[segment] = max(score, best.get(segment, score))
-    return best
-
-
 def _madc_stream(handle, path: Path):
     """(preamble rows, header row, reader positioned at the first data row) of an open MADC."""
     reader = csv.reader(handle)
@@ -405,19 +482,6 @@ def _madc_stream(handle, path: Path):
             return preamble, row, reader
         preamble.append(row)
     raise MadcError(f"Could not find an AlleleID header row in MADC file: {path}")
-
-
-def _row_counts(cells: Sequence[str], path: Path) -> List[int]:
-    try:
-        return list(map(int, cells))
-    except ValueError:
-        counts = []
-        for value in cells:
-            try:
-                counts.append(int(float(value or 0)))
-            except ValueError as exc:
-                raise MadcError(f"Non-numeric read count {value!r} in {path}") from exc
-        return counts
 
 
 def _format_site(site: GenomeHit) -> str:
@@ -440,19 +504,19 @@ def filter_paralogs(
     """Label every MADC haplotype by where the genome places it; drop or flag paralogous rows.
 
     Pass 1 reads only row identities.  Every distinct haplotype is aligned to
-    the genome once; each marker is located from its Ref row's tag
-    (``place_marker``); haplotypes with no genome-wide hit at their marker are
-    realigned to the marker sites alone (``SiteIndex``), and each haplotype
-    is labelled by ``genome_label``.  Pass 2 streams the table again and
+    the genome once; each marker is located from its Ref row's tag, all of
+    whose equal-best sites are kept (``place_marker``); every haplotype is
+    realigned to its own marker's sites (``score_at_sites``) and labelled by
+    ``genome_label``.  Pass 2 streams the table again and
     writes the kept rows unchanged, so a vendor MADC keeps its preamble,
     statistics and column layout, and a HapApp fixed-allele-ID MADC keeps its
     Code_version column.  Canonical Ref and Alt rows are never dropped, since
     downstream dosage tools need both designed alleles; they are reported as
     ``protected`` instead.  In flag mode the PICRef column becomes
     ``GenomeLabel`` on every row.  The labels sidecar has one line per input
-    row, dropped rows included.  ``clone_positions="ignore"`` keeps CloneID
-    coordinates out of marker placement, for a genome other than the one they
-    refer to.
+    row, dropped rows included.  ``clone_positions="use"`` takes CloneID
+    coordinates to be on this genome; ``"ignore"`` keeps them out of marker
+    placement, for a genome other than the one they refer to.
     """
     actions = {"paralog": paralog_action, "ambiguous": ambiguous_action}
     flagging = "flag" in actions.values()
@@ -494,29 +558,30 @@ def filter_paralogs(
     print(f"Aligning {len(sequences):,} distinct haplotype sequences on {jobs} thread(s)", file=sys.stderr)
     started = time.time()
     placements = map_sequences(aligner, sequences, jobs)
+    # Ref tags keep every equal-best site, so a capped list cannot hide the one the CloneID names.
+    ref_placements = map_sequences(
+        aligner, sorted({query(ref) for ref in ref_tags.values()}), jobs, functools.partial(summarize_hits, keep=None)
+    )
     markers: Dict[str, MarkerPlacement] = {}
     for clone in tag_lengths:
         ref = ref_tags.get(clone)
-        markers[clone] = place_marker(
-            clone, placements.get(query(ref)) if ref is not None else None, aligner.contigs, tag_lengths[clone],
-            use_clone_position=clone_positions == "use",
-        )
-    labels = {key: genome_label(placements.get(query(key[1])), markers[key[0]]) for key in haplotypes}
 
-    # Realign, at the marker sites alone, every haplotype the genome-wide search found nowhere near its marker.
-    missing = [key for key, result in labels.items() if result.target_score is None and markers[key[0]].sites]
-    rescued = 0
-    if missing:
-        segments, owned = _site_segments(aligner, markers)
-        site_hits = map_sequences(
-            aligner.site_index(segments), sorted({query(sequence) for _, sequence in missing}), jobs, _best_by_segment
+        def align_ref_tag(contig: str, start: int, end: int) -> List[GenomeHit]:
+            return aligner.window(contig, start, end).hits(query(ref))
+
+        markers[clone] = place_marker(
+            clone, ref_placements.get(query(ref)) if ref is not None else None, aligner.contigs, tag_lengths[clone],
+            use_clone_position=clone_positions == "use", align_ref_tag=align_ref_tag if ref is not None else None,
         )
-        for clone, sequence in missing:
-            scores = site_hits[query(sequence)]
-            own = [scores[segment] for segment in owned[clone] if segment in scores]
-            if own:
-                labels[(clone, sequence)] = genome_label(placements.get(query(sequence)), markers[clone], max(own))
-                rescued += 1
+
+    # Realign every haplotype at its own marker's sites, and label it by the better of the two scores there.
+    site_scores = score_at_sites(aligner, markers, {(clone, query(sequence)) for clone, sequence in haplotypes}, jobs)
+    labels = {
+        (clone, sequence): genome_label(
+            placements.get(query(sequence)), markers[clone], site_scores.get((clone, query(sequence)))
+        )
+        for clone, sequence in haplotypes
+    }
     alignment_seconds = round(time.time() - started, 1)
 
     markers_path.parent.mkdir(parents=True, exist_ok=True)
@@ -568,7 +633,7 @@ def filter_paralogs(
                 outcome = "protected" if category in ("Ref", "Alt") else "dropped"
             else:
                 outcome = "flagged" if action == "flag" else "kept"
-            counts = _row_counts(row[sample_start:], madc_path)
+            counts = madc_read_counts(row[sample_start:], madc_path)
             overflow.add(clone, counts)
             reads = sum(counts)
             for bucket in (totals["input"], by_label[result.label], by_outcome[outcome], by_category[category][result.label]):
@@ -595,9 +660,10 @@ def filter_paralogs(
     checked = checks["agree"] + checks["disagree"]
     if checked and checks["disagree"] > 0.1 * checked:
         print(
-            f"warning: CloneID positions disagree with the Ref-tag placement for {checks['disagree']:,} of "
-            f"{checked:,} markers, so they may refer to another assembly. If they do, rerun with "
-            "--clone-positions ignore so they are not used to place markers",
+            f"warning: CloneID positions disagree with the Ref tag's best genome sites for {checks['disagree']:,} "
+            f"of {checked:,} markers, so they may refer to another assembly. Those markers were placed at their "
+            "CloneID position, or left unplaced where the Ref tag does not align there. If the positions refer "
+            "to another assembly, rerun with --clone-positions ignore",
             file=sys.stderr,
         )
     if markers and not sources.keys() - {"unplaced"}:
@@ -615,7 +681,11 @@ def filter_paralogs(
             "distinct": len(haplotypes),
             "distinct_sequences": len(sequences),
             "labels": dict(Counter(result.label for result in labels.values())),
-            "realigned_at_site": {"haplotypes": len(missing), "found_at_site": rescued},
+            "realigned_at_site": {
+                "haplotypes": sum(bool(markers[clone].sites) for clone, _ in haplotypes),
+                "found_at_site": sum((clone, query(sequence)) in site_scores for clone, sequence in haplotypes),
+                "target_from_site": sum(result.target_from == "site" for result in labels.values()),
+            },
             "alignment_seconds": alignment_seconds,
         },
         "rows": {
@@ -715,8 +785,8 @@ def add_filter_paralogs_command(subparsers) -> None:
     filtering.add_argument(
         "--genome-index",
         help=(
-            "minimap2 index (.mmi) built with -x sr; loaded when it exists, otherwise built from --genome and "
-            "saved here for the next run"
+            "minimap2 index (.mmi) built with -x sr, in one part; loaded when it exists, otherwise built from "
+            "--genome and saved here for the next run"
         ),
     )
     filtering.add_argument(
@@ -724,9 +794,10 @@ def add_filter_paralogs_command(subparsers) -> None:
         choices=("use", "ignore"),
         default="use",
         help=(
-            "CHROM_POS CloneIDs: use them to check placements, choose between equal-best Ref-tag sites and stand "
-            "in for Ref tags that do not align, or ignore them when they refer to another assembly than the "
-            "genome given (default: use)"
+            "CHROM_POS CloneIDs: use them as positions on the genome given, to choose between equal-best Ref-tag "
+            "sites, stand in for Ref tags that do not align, and place a marker whose Ref tag aligns better "
+            "elsewhere at its CloneID position (or leave it unplaced if the tag does not align there); or ignore "
+            "them when they refer to another assembly (default: use)"
         ),
     )
     filtering.add_argument("--output", required=True, help="cleaned MADC to write")

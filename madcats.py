@@ -3332,6 +3332,20 @@ def madc_sample_start(header: Sequence[str]) -> int:
     return header.index("AlleleSequence") + 1
 
 
+def madc_read_counts(cells: Sequence[str], path: Path) -> List[int]:
+    """A MADC row's per-sample counts.  Blank cells are 0; HapApp writes counts of merged rows as floats (12.0)."""
+    try:
+        return list(map(int, cells))
+    except ValueError:
+        counts = []
+        for value in cells:
+            try:
+                counts.append(int(float(value or 0)))
+            except ValueError as exc:
+                raise MadcError(f"Non-numeric read count {value!r} in {path}") from exc
+        return counts
+
+
 class CountOverflowCheck:
     """Signed 8-bit overflow in a MADC's counts.
 
@@ -3409,12 +3423,7 @@ def read_madc(path: Path):
         if not row or not row[allele_index].strip():
             continue
         padded = list(row) + [""] * max(0, len(header) - len(row))
-        counts = []
-        for value in padded[sample_start : sample_start + len(sample_names)]:
-            try:
-                counts.append(int(float(value or 0)))
-            except ValueError as exc:
-                raise MadcError(f"Non-numeric read count {value!r} in {path}") from exc
+        counts = madc_read_counts(padded[sample_start : sample_start + len(sample_names)], path)
         overflow.add(padded[clone_index], counts)
         records.append(
             {

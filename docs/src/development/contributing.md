@@ -46,7 +46,7 @@ against a comparator before it becomes a default. Record those measurements in
 ## Code Style
 
 - Standard library only. A new dependency needs a strong reason; the optional `mappy` extra for
-  `filter-paralogs` is imported only inside that command.
+  `filter-paralogs` is imported only inside that command's module, `madcats_paralogs.py`.
 - Keep the section layout of `madcats.py` (see [Architecture](architecture.md)).
 - Every analysis threshold is a command-line option with a documented default.
 - Stop with a clear error on inconsistent input instead of writing a table that may be wrong.

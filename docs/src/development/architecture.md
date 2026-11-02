@@ -1,16 +1,17 @@
 # Architecture
 
-MADCATS is a single module, `madcats.py`, that uses only the Python standard library. There is
-nothing to compile and no dependency to pin, and the same file runs as a script (`python3
-madcats.py`), as the installed `madcats` command, or frozen into a standalone binary. The one
-exception is optional: `filter-paralogs` imports the `mappy` aligner when it runs
-(`pip install 'madcats[genome]'`), so no other command depends on it.
+MADCATS is two Python modules. `madcats.py` holds every command but one and uses only the Python
+standard library. `madcats_paralogs.py` holds `filter-paralogs`, the one command with a dependency
+outside it: the `mappy` aligner, imported when the command runs (`pip install 'madcats[genome]'`),
+so no other command depends on it. There is nothing to compile, and the same files run as a script
+(`python3 madcats.py`), as the installed `madcats` command, or frozen into a standalone binary.
 
 ## Repository Layout
 
 | Path | Contents |
 |------|----------|
-| `madcats.py` | The whole tool: library functions and the command line |
+| `madcats.py` | Every command but `filter-paralogs`: library functions and the command line |
+| `madcats_paralogs.py` | `filter-paralogs`: genome alignment, marker placement, labels and the table filter |
 | `tests/` | Unit and end-to-end tests (`unittest`) |
 | `scripts/` | Diagnostic and conversion scripts (e.g. `madc_to_reference_tags.py`, `validate_inferred_design.py`) |
 | `docs/` | This documentation (mdBook), plus `DEVELOPMENT.md`, the long-form development record |
@@ -36,6 +37,12 @@ The module is laid out in the order a read travels. Each section opens with a ba
 | 7. Classification and annotation | `classify_sequence`, `variant_events`, `marker_type_label` |
 | 8. MADC input/output and QC | `read_madc`, `write_madc`, `validate_madc` |
 | 9. Commands and command line | One `run_*` per subcommand, `build_parser`, `main` |
+
+`madcats_paralogs.py` follows the same order on a smaller scale: scoring and alignment
+(`GenomeAligner`, `SiteIndex`), marker placement and labels (`place_marker`, `genome_label`), the
+two-pass table filter (`filter_paralogs`), then its command line. It imports the MADC helpers it
+shares with `validate` from `madcats`, so `build_parser` imports it when the parser is built rather
+than at the top of `madcats.py`.
 
 ## The `generate` Pipeline
 

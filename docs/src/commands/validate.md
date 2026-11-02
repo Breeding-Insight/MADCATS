@@ -17,7 +17,7 @@ agreement on shared rows, and count agreement across shared row × sample cells.
 The reference MADC is used only for this comparison. It has no effect on `generate`.
 
 Either file may carry the vendor's starred preamble rows; the header is located by its `AlleleID`
-cell.
+cell, which need not be the first (HapApp's fixed-allele-ID output starts with `Code_version`).
 
 ## Required Arguments
 
@@ -48,7 +48,7 @@ madcats validate \
 | Section | Contents |
 |---------|----------|
 | `sample_overlap` | Samples in each file and in common |
-| `count_overflow` | Per file: negative count cells, the markers they fall in, and the minimum and maximum count. Negative counts with a maximum of exactly 127 are the signature of signed 8-bit overflow in a vendor file; a warning is printed |
+| `count_overflow` | Per file: negative count cells, the markers they fall in, and the minimum and maximum count. Negative counts with a maximum of exactly 127 point to signed 8-bit overflow in a vendor file; a warning is printed |
 | `allele_rows` | Rows in common, precision, recall, generated-only and expected-only counts, `classification_agreement` on shared rows, category counts, and `by_category` precision/recall |
 | `common_row_count_cells` | Over shared rows × shared samples: exact-match fraction, mean absolute error, Pearson r, and count totals with their ratio |
 | `nonzero_union_count_cells` | The same agreement statistics over cells nonzero in either file |

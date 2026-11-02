@@ -5,17 +5,20 @@ Notable changes by version. Measurements behind each change are in the
 
 ## Unreleased
 
-- New optional command `filter-paralogs`. It cleans a MADC (from `generate`, or a vendor DArT MADC
-  with or without its preamble) against a reference genome. Each marker is placed by its Ref tag
+- New optional command `filter-paralogs`, in its own module, `madcats_paralogs.py`. It cleans a
+  MADC (from `generate`, a vendor DArT MADC with or without its preamble, or HapApp's
+  fixed-allele-ID output) against a reference genome. Each marker is placed by its Ref tag
   and every haplotype is labelled `on_target`, `paralog` or `ambiguous`. Paralog and ambiguous
   rows are dropped (default) or flagged in a `GenomeLabel` column; canonical rows are always kept.
   It writes a labels sidecar, a markers sidecar and a QC JSON. It needs `mappy`
   (`pip install 'madcats[genome]'`), imported only by this command, so MADCATS still has no
   required dependencies. On the lettuce 3K DArTag panel the filtered vendor MADC agreed with a
   bwa-mem-based prototype for 99.4% of reads.
+- The MADC readers find a header row whose `AlleleID` is not the first cell, as in HapApp's
+  fixed-allele-ID output, which starts with `Code_version`.
 - `validate` and `filter-paralogs` warn when a MADC has negative read counts. Some vendor MADCs
   store counts in a signed byte: counts of 128–255 appear as count − 256, and counts of 256 or more
-  wrap silently. A negative count with a maximum of exactly 127 is reported as that signature, and
+  wrap silently. A negative count with a maximum of exactly 127 is reported as this overflow, and
   both QC reports record it. Counts are never corrected, since the wrapped ones cannot be recovered.
   The lettuce 3K vendor MADC has 90,913 such cells across 1,108 markers.
 

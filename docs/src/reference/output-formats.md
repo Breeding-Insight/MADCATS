@@ -90,7 +90,7 @@ command's page.
 ## Genome Labels (filter-paralogs)
 
 [`madcats filter-paralogs`](../commands/filter-paralogs.md) writes a cleaned copy of any MADC. Kept
-rows are copied unchanged. In flag mode (`--paralog-filter flag` or `--ambiguous flag`) a third
+rows are copied unchanged. In flag mode (`--paralogs flag` or `--ambiguous flag`) a third
 statistics column is repurposed, keeping the 16-column layout:
 
 | Column | Contents |

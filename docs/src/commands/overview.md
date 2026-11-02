@@ -51,7 +51,7 @@ Each produces the reference-tag CSV that `generate` consumes.
 
 | Command | Description | Primary Use |
 |---------|-------------|-------------|
-| [`filter-paralogs`](filter-paralogs.md) | Drop or flag haplotypes a reference genome places at another locus; needs `pip install 'madcats[genome]'` | Panels whose co-amplified paralogs inflate heterozygosity; MADCATS or vendor MADCs |
+| [`filter-paralogs`](filter-paralogs.md) | Drop or flag haplotypes a reference genome places at another locus; needs `pip install 'madcats[genome]'` | Panels whose co-amplified paralogs inflate heterozygosity; MADCATS, vendor or HapApp fixed-ID MADCs |
 
 ## Typical Workflows
 

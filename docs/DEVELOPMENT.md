@@ -1445,7 +1445,15 @@ RefMatch/AltMatch row, and `BIGr::madc2vcf_all` sums it into the target SNP,
 so inbred lines look heterozygous. Raising `generate --min-identity` removes
 the diverged copies but not the close ones. `filter-paralogs` is an opt-in
 cleaner for such panels. It reads any MADC, from MADCATS or the vendor, with
-or without the preamble, so it also cleans vendor deliveries.
+or without the preamble, so it also cleans vendor deliveries, and HapApp's
+fixed-allele-ID output (`Code_version`, `AlleleID`, `CloneID`,
+`AlleleSequence`, samples; IDs such as `|Ref_0001`; merged counts written as
+`12.0`). The command lives in `madcats_paralogs.py`, which imports the MADC
+helpers it shares with `validate` from `madcats`; `build_parser` imports it
+when the parser is built. Run as `python3 madcats.py`, the file is
+`__main__`, so it registers itself as `madcats` before the filter module
+imports it; otherwise the module would load a second copy whose `MadcError`
+`main` does not catch.
 
 Design:
 
@@ -1506,6 +1514,12 @@ or more wrap silently. `read_madc` (and so `validate`) and `filter-paralogs`
 now warn and record `count_overflow` in their reports. They never correct
 the counts, since the wrapped ones cannot be told from real small counts.
 The figures in the table above use the counts as stored.
+
+HapApp layout. The id95 MADC rewritten in HapApp's layout (fixed IDs,
+leading `Code_version`, every tenth row's counts as floats) gets the same
+label, action and scores for all 17,847 rows as the raw MADC, and the same
+QC totals. Moving the command into its own module left the id95 output, both
+sidecars included, byte-identical.
 
 ## Downstream fixed allele IDs
 

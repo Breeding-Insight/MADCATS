@@ -31,19 +31,23 @@ to decide where each haplotype comes from:
    | Label | Meaning | Default action |
    |-------|---------|----------------|
    | `on_target` | The marker's site scores strictly best | kept |
-   | `paralog` | Another site scores strictly better, or the haplotype aligns only elsewhere | dropped (`--paralog-filter`) |
+   | `paralog` | Another site scores strictly better, or the haplotype aligns only elsewhere | dropped (`--paralogs`) |
    | `ambiguous` | The marker's site ties with another site, or the marker's own Ref tag is multi-copy and unresolved | dropped (`--ambiguous`) |
    | `unmapped` | No alignment anywhere | kept |
    | `unplaced` | The marker itself could not be placed | kept |
 
-4. **Write the cleaned MADC.** Canonical Ref and Alt rows are never dropped: downstream dosage tools
-   need the designed biallelic axis. A canonical row whose label would have dropped it is counted
-   as `protected`. Kept rows are copied unchanged, including the vendor preamble, the statistics
-   columns and the column order.
+4. **Write the cleaned MADC.** Canonical Ref and Alt rows are never dropped, because downstream
+   dosage tools need both designed alleles. A canonical row whose label would have dropped it is
+   counted as `protected`. Kept rows are copied unchanged, and the output keeps the input's layout:
+   the vendor preamble, the statistics columns, HapApp's `Code_version` column and the column order.
 
 The filter is opt-in, meant for panels known to co-amplify paralogs. Check the share of reads in
 `paralog` rows in the QC JSON: in the lettuce 3K panel it was 63% of all reads in the vendor MADC.
 On panels without the problem the filter removes little and is not needed.
+
+It reads three layouts: a MADC from `generate`, a vendor DArT MADC, and the fixed-allele-ID MADC
+that HapApp writes (`Code_version`, `AlleleID`, `CloneID`, `AlleleSequence`, then the samples, with
+IDs such as `|Ref_0001`). It can therefore run on the raw MADC before HapApp, or on HapApp's output.
 
 Scores use minimap2's short-read scoring (match +2, mismatch −8, gap open −12 and extension −2,
 ambiguous base −1), recomputed from each alignment, so ties are exact.
@@ -52,7 +56,7 @@ ambiguous base −1), recomputed from each alignment, so ties are exact.
 
 | Argument | Description |
 |----------|-------------|
-| `--madc <FILE>` | MADC to clean: from `generate`, or a vendor DArT MADC with or without its starred preamble. Gzipped input is read directly |
+| `--madc <FILE>` | MADC to clean: from `generate`, a vendor DArT MADC (with or without its starred preamble), or a HapApp fixed-allele-ID MADC. Gzipped input is read directly |
 | `--output <FILE>` | Cleaned MADC to write (must differ from `--madc`) |
 
 Give `--genome`, `--genome-index`, or both.
@@ -79,7 +83,7 @@ indexing took 50 s and 10.6 GB of memory, and the index file is 5.7 GB.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--paralog-filter {drop,flag}` | `drop` | `paralog` rows: drop them, or keep them labelled in the `GenomeLabel` column |
+| `--paralogs {drop,flag}` | `drop` | `paralog` rows: drop them, or keep them labelled in the `GenomeLabel` column |
 | `--ambiguous {drop,flag,keep}` | `drop` | `ambiguous` rows: drop, keep labelled, or keep unlabelled |
 | `--qc-output <FILE>` | `OUTPUT.qc.json` | QC JSON |
 | `--jobs <INT>` | up to 4 | Alignment threads |
@@ -93,8 +97,11 @@ With either option set to `flag`, the `PICRef` column is renamed `GenomeLabel` a
 carries its label there: `on_target`, `paralog`, `ambiguous`, `unmapped` or `unplaced`. Flagged
 rows are kept. Column positions do not change, so positional consumers still see the 16-column
 layout. In a vendor MADC this overwrites the vendor's `PICRef` statistic. Flag mode needs the
-`PICRef` (or an earlier `GenomeLabel`) column; on a MADC without it, use drop mode and read the
-labels sidecar.
+`PICRef` (or an earlier `GenomeLabel`) column. HapApp's fixed-allele-ID MADC has none, so on that
+layout use drop mode and read the labels sidecar.
+
+A flagged file is for review. Tools that check the vendor's column names, such as HapApp-online's
+upload check, reject `GenomeLabel` in place of `PICRef`; give them the drop-mode output.
 
 ## Outputs
 
@@ -107,7 +114,7 @@ labels sidecar.
 
 Read totals are summed as stored. If the input has negative counts, the command warns and
 `count_overflow` records how many cells and markers carry them. A negative count with a maximum of
-exactly 127 is the signature of signed 8-bit overflow in a vendor file; see the
+exactly 127 points to signed 8-bit overflow in a vendor file; see the
 [FAQ](../reference/faq.md#my-vendor-madc-has-negative-read-counts).
 
 When the input carries a MADCATS provenance cell (`generate --dart-preamble`), the filter's

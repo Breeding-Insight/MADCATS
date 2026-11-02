@@ -4,10 +4,10 @@ Some panels co-amplify paralogous copies of their targets. A paralog read that c
 base lands in the marker's RefMatch or AltMatch rows. Tools that sum every row at the target SNP
 (`BIGr::madc2vcf_all` does) then count those reads as alleles of the target, and homozygous samples
 look heterozygous. This tutorial cleans such a MADC with
-[`madcats filter-paralogs`](../commands/filter-paralogs.md), which asks a reference genome where each
-haplotype comes from.
+[`madcats filter-paralogs`](../commands/filter-paralogs.md), which uses a reference genome to find
+where each haplotype comes from.
 
-The filter is opt-in. Use it when a panel shows the problem, not by default.
+The filter is opt-in: use it on panels that show the problem.
 
 ## Is My Panel Affected?
 
@@ -18,7 +18,7 @@ Signs of co-amplified paralogs:
 - Heterozygosity drops sharply when `generate --min-identity` is raised from 0.80 to 0.95 or 0.97.
   Stricter identity rejects the more diverged copies at read assignment.
 
-The filter's QC JSON answers the question directly: `rows.by_label.paralog.reads` is the number of
+The filter's QC JSON measures it: `rows.by_label.paralog.reads` is the number of
 reads in rows the genome places elsewhere. In the lettuce 3K DArTag panel that was 63% of the reads
 in the vendor MADC and 16% of a MADCATS MADC generated at `--min-identity 0.95`.
 
@@ -103,7 +103,7 @@ Check:
 - `markers.multicopy_ref_tags`: markers whose own Ref tag has several equal-best sites. Their
   canonical rows are kept, but their counts mix copies; consider dropping these markers downstream.
 - `rows.by_outcome.protected`: canonical Ref/Alt rows that the genome would have dropped. They are
-  always kept, so the biallelic axis stays intact.
+  always kept, so dosage tools still see both designed alleles.
 - `rows.by_category`: which allele categories lost reads. Paralogs concentrate in RefMatch and
   AltMatch rows.
 
@@ -113,7 +113,7 @@ To see the labels without removing anything, flag instead of dropping:
 
 ```bash
 madcats filter-paralogs --madc project_MADC.csv --genome-index ref/genome.sr.mmi \
-  --paralog-filter flag --ambiguous flag --output project_MADC_flagged.csv
+  --paralogs flag --ambiguous flag --output project_MADC_flagged.csv
 ```
 
 Every row then carries its label in the `GenomeLabel` column (the `PICRef` position). The
@@ -128,9 +128,22 @@ heterozygous calls at 3.4% of inbred genotypes, against 0.87% when they were dro
 
 ## 6. Continue Downstream
 
-The cleaned file is still a raw MADC. Continue as for any MADCATS or vendor MADC: HapApp or
-HapApp_utils for fixed allele IDs, then `BIGr::madc2vcf_all()` and dosage calling. See
-[Output Formats](../reference/output-formats.md#downstream-processing).
+The cleaned file keeps the layout it came in. A cleaned raw MADC continues as any MADCATS or vendor
+MADC does: HapApp or HapApp_utils for fixed allele IDs, then `BIGr::madc2vcf_all()` and dosage
+calling. See [Output Formats](../reference/output-formats.md#downstream-processing).
+
+The filter also reads HapApp's fixed-allele-ID output, so it can run after HapApp instead:
+
+```bash
+madcats filter-paralogs \
+  --madc project_MADC_rename_v1.csv \
+  --genome-index ref/genome.sr.mmi \
+  --output project_MADC_rename_v1_filtered.csv
+```
+
+The fixed allele IDs and the column layout are kept, so the cleaned file goes wherever HapApp's
+output would have gone. On the lettuce MADCATS MADC, rewritten in HapApp's layout, every row got
+the same label as in the raw MADC.
 
 ## How the Labels Are Decided
 

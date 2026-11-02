@@ -1,4 +1,5 @@
-"""filter-paralogs: genome labels, placement, MADC rewriting, and the optional mappy aligner.
+"""filter-paralogs (madcats_paralogs.py): genome labels, placement, MADC
+rewriting, and the optional mappy aligner.
 
 Most tests use a fake aligner with preset hits, so they run without mappy.
 GenomeAlignerTests builds a tiny synthetic genome and runs the real command;
@@ -10,6 +11,7 @@ import importlib.util
 import io
 import json
 import random
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,13 +19,15 @@ from pathlib import Path
 from unittest import mock
 
 import madcats as mp
+import madcats_paralogs as fp
 
 HAS_MAPPY = importlib.util.find_spec("mappy") is not None
+REPOSITORY = Path(__file__).resolve().parents[1]
 SAMPLES = ["S1", "S2", "S3"]
 
 
 def hit(contig, start, end, score=162, strand=1):
-    return mp.GenomeHit(contig, start, end, strand, score)
+    return fp.GenomeHit(contig, start, end, strand, score)
 
 
 class FakeAligner:
@@ -99,59 +103,59 @@ def mutate(sequence, position, base):
 class HitScoreTests(unittest.TestCase):
     def test_score_matches_minimap2_short_read_scoring(self):
         # (CIGAR, NM, matching bases, block length) as mappy reports them.
-        self.assertEqual(mp.hit_score([[81, 0]], 0, 81, 81), 162)
-        self.assertEqual(mp.hit_score([[81, 0]], 1, 80, 81), 80 * 2 - 8)
+        self.assertEqual(fp.hit_score([[81, 0]], 0, 81, 81), 162)
+        self.assertEqual(fp.hit_score([[81, 0]], 1, 80, 81), 80 * 2 - 8)
         # An ambiguous base is outside the block, inside NM, and costs 1.
-        self.assertEqual(mp.hit_score([[81, 0]], 1, 80, 80), 80 * 2 - 1)
+        self.assertEqual(fp.hit_score([[81, 0]], 1, 80, 80), 80 * 2 - 1)
         # A 1-base insertion costs 12 + 2; the inserted base is not a mismatch.
-        self.assertEqual(mp.hit_score([[40, 0], [1, 1], [40, 0]], 1, 80, 81), 160 - 14)
+        self.assertEqual(fp.hit_score([[40, 0], [1, 1], [40, 0]], 1, 80, 81), 160 - 14)
         # A long deletion takes the cheaper long-gap piece: min(12 + 2*20, 24 + 20) = 44.
-        self.assertEqual(mp.hit_score([[40, 0], [20, 2], [41, 0]], 20, 81, 101), 162 - 44)
+        self.assertEqual(fp.hit_score([[40, 0], [20, 2], [41, 0]], 20, 81, 101), 162 - 44)
 
     def test_summarize_keeps_distinct_sites_best_first(self):
-        placement = mp.summarize_hits([
+        placement = fp.summarize_hits([
             hit("chrB", 500, 581), hit("chrA", 100, 181), hit("chrA", 103, 184), hit("chrC", 0, 81, score=150),
         ])
         self.assertEqual([site.contig for site in placement.best], ["chrA", "chrB"])
         self.assertEqual([site.score for site in placement.sites], [162, 162, 150])
-        self.assertEqual(mp.summarize_hits([]).sites, ())
+        self.assertEqual(fp.summarize_hits([]).sites, ())
 
 
 class PlacementTests(unittest.TestCase):
     contigs = {"Chr1", "Chr2", "scaffold_12"}
 
     def test_clone_position_parsing(self):
-        self.assertEqual(mp.clone_position("Chr1_000333995", self.contigs), (("Chr1", 333995), "agree"))
-        self.assertEqual(mp.clone_position("scaffold_12_000345", self.contigs), (("scaffold_12", 345), "agree"))
-        self.assertEqual(mp.clone_position("marker7", self.contigs), (None, "no_position"))
-        self.assertEqual(mp.clone_position("Chr9_100", self.contigs), (None, "contig_absent"))
+        self.assertEqual(fp.clone_position("Chr1_000333995", self.contigs), (("Chr1", 333995), "agree"))
+        self.assertEqual(fp.clone_position("scaffold_12_000345", self.contigs), (("scaffold_12", 345), "agree"))
+        self.assertEqual(fp.clone_position("marker7", self.contigs), (None, "no_position"))
+        self.assertEqual(fp.clone_position("Chr9_100", self.contigs), (None, "contig_absent"))
 
     def test_unique_ref_tag_is_cross_checked_against_the_clone_id(self):
-        ref = mp.GenomePlacement((hit("Chr1", 1000, 1081),))
-        self.assertEqual(mp.place_marker("Chr1_1060", ref, self.contigs, 81).clone_check, "agree")
-        placed = mp.place_marker("Chr2_1060", ref, self.contigs, 81)
+        ref = fp.GenomePlacement((hit("Chr1", 1000, 1081),))
+        self.assertEqual(fp.place_marker("Chr1_1060", ref, self.contigs, 81).clone_check, "agree")
+        placed = fp.place_marker("Chr2_1060", ref, self.contigs, 81)
         self.assertEqual((placed.source, placed.clone_check), ("ref_tag", "disagree"))
         self.assertEqual(placed.sites, ref.best)  # the alignment wins a disagreement
 
     def test_multicopy_ref_tag_resolved_by_clone_id_or_left_unresolved(self):
-        ref = mp.GenomePlacement((hit("Chr1", 1000, 1081), hit("Chr2", 5000, 5081)))
-        resolved = mp.place_marker("Chr2_5040", ref, self.contigs, 81)
+        ref = fp.GenomePlacement((hit("Chr1", 1000, 1081), hit("Chr2", 5000, 5081)))
+        resolved = fp.place_marker("Chr2_5040", ref, self.contigs, 81)
         self.assertEqual((resolved.source, resolved.ref_tag_sites), ("ref_tag+clone_id", 2))
         self.assertEqual([site.contig for site in resolved.sites], ["Chr2"])
-        unresolved = mp.place_marker("marker7", ref, self.contigs, 81)
+        unresolved = fp.place_marker("marker7", ref, self.contigs, 81)
         self.assertEqual((unresolved.source, len(unresolved.sites)), ("ref_tag_multicopy", 2))
 
     def test_unaligned_ref_tag_falls_back_to_the_clone_id_window(self):
-        fallback = mp.place_marker("Chr1_2000", mp.GenomePlacement(()), self.contigs, 81)
+        fallback = fp.place_marker("Chr1_2000", fp.GenomePlacement(()), self.contigs, 81)
         self.assertEqual((fallback.source, fallback.clone_check), ("clone_id", "fallback"))
         self.assertEqual(fallback.sites[0][:3], ("Chr1", 2000 - 1 - 81, 2000 + 81))
-        self.assertEqual(mp.place_marker("marker7", None, self.contigs, 81).source, "unplaced")
+        self.assertEqual(fp.place_marker("marker7", None, self.contigs, 81).source, "unplaced")
 
     def test_labels(self):
-        marker = mp.place_marker("Chr1_1060", mp.GenomePlacement((hit("Chr1", 1000, 1081),)), self.contigs, 81)
+        marker = fp.place_marker("Chr1_1060", fp.GenomePlacement((hit("Chr1", 1000, 1081),)), self.contigs, 81)
 
         def label(*hits, site_score=None):
-            return mp.genome_label(mp.summarize_hits(hits), marker, site_score).label
+            return fp.genome_label(fp.summarize_hits(hits), marker, site_score).label
 
         self.assertEqual(label(hit("Chr1", 1000, 1081)), "on_target")
         self.assertEqual(label(hit("Chr1", 1004, 1081, score=150)), "on_target")  # clipped, same locus
@@ -163,14 +167,14 @@ class PlacementTests(unittest.TestCase):
         # A diverged allele the genome-wide search missed, scored by the site realignment.
         self.assertEqual(label(hit("Chr2", 7000, 7081, score=112), site_score=132), "on_target")
         self.assertEqual(label(hit("Chr2", 7000, 7081, score=132), site_score=112), "paralog")
-        result = mp.genome_label(mp.summarize_hits([hit("Chr2", 7000, 7081, score=112)]), marker, 132)
+        result = fp.genome_label(fp.summarize_hits([hit("Chr2", 7000, 7081, score=112)]), marker, 132)
         self.assertEqual((result.target_score, result.target_from, result.off_target_score), (132, "site", 112))
-        unplaced = mp.place_marker("marker7", None, self.contigs, 81)
-        self.assertEqual(mp.genome_label(mp.summarize_hits([hit("Chr1", 0, 81)]), unplaced).label, "unplaced")
-        multicopy = mp.place_marker(
-            "marker7", mp.GenomePlacement((hit("Chr1", 1000, 1081), hit("Chr2", 5000, 5081))), self.contigs, 81
+        unplaced = fp.place_marker("marker7", None, self.contigs, 81)
+        self.assertEqual(fp.genome_label(fp.summarize_hits([hit("Chr1", 0, 81)]), unplaced).label, "unplaced")
+        multicopy = fp.place_marker(
+            "marker7", fp.GenomePlacement((hit("Chr1", 1000, 1081), hit("Chr2", 5000, 5081))), self.contigs, 81
         )
-        self.assertEqual(mp.genome_label(mp.summarize_hits([hit("Chr1", 1000, 1081)]), multicopy).label, "ambiguous")
+        self.assertEqual(fp.genome_label(fp.summarize_hits([hit("Chr1", 1000, 1081)]), multicopy).label, "ambiguous")
 
 
 class FilterTests(unittest.TestCase):
@@ -226,7 +230,7 @@ class FilterTests(unittest.TestCase):
     def run_filter(self, madc, **options):
         output = self.dir / "out_MADC.csv"
         with contextlib.redirect_stderr(io.StringIO()):
-            summary = mp.filter_paralogs(
+            summary = fp.filter_paralogs(
                 madc, output, self.aligner, self.dir / "labels.csv", self.dir / "markers.csv", **options
             )
         return output, summary
@@ -289,7 +293,7 @@ class FilterTests(unittest.TestCase):
         # Filtering an already-flagged table rewrites the column in place.
         again = self.dir / "again.csv"
         with contextlib.redirect_stderr(io.StringIO()):
-            mp.filter_paralogs(output, again, self.aligner, self.dir / "l2.csv", self.dir / "m2.csv", paralog_action="flag")
+            fp.filter_paralogs(output, again, self.aligner, self.dir / "l2.csv", self.dir / "m2.csv", paralog_action="flag")
         self.assertEqual(read_rows(again), rows[:4] + rows[5:])  # ambiguous now dropped, nothing else changed
 
     def test_vendor_madc_keeps_preamble_and_statistics(self):
@@ -312,8 +316,8 @@ class FilterTests(unittest.TestCase):
         preamble = [["* MADCATS v0.13.0 tag_length=81"] + ["*"] * 15 + ["proj"] * 3]
         madc = self.dir / "in.csv"
         write_madc(madc, self.rows, preamble=preamble)
-        output, _ = self.run_filter(madc, provenance="filter-paralogs paralog_filter=drop")
-        self.assertEqual(read_rows(output)[0][0], "* MADCATS v0.13.0 tag_length=81 | filter-paralogs paralog_filter=drop")
+        output, _ = self.run_filter(madc, provenance="filter-paralogs paralogs=drop")
+        self.assertEqual(read_rows(output)[0][0], "* MADCATS v0.13.0 tag_length=81 | filter-paralogs paralogs=drop")
 
     def test_flag_mode_needs_the_picref_column(self):
         madc = self.dir / "short.csv"
@@ -325,6 +329,32 @@ class FilterTests(unittest.TestCase):
             self.run_filter(madc, paralog_action="flag")
         output, summary = self.run_filter(madc)  # drop mode works on the short layout
         self.assertEqual(summary["rows"]["output"], {"rows": 1, "reads": 6})
+
+    def test_hapapp_fixed_allele_id_madc(self):
+        # HapApp writes a leading Code_version column, then AlleleID, CloneID, AlleleSequence and the
+        # samples, with fixed IDs such as |Ref_0001; counts of rows it merged come out as floats.
+        self.aligner._hits[self.alt] = [hit("Chr2", 3000, 3081)]  # the Alt tag aligns better elsewhere
+        fixed = {"Ref": "Ref_0001", "Alt": "Alt_0002"}
+        rows = [
+            ["v1", f"{self.clone}|{fixed.get(category, f'{category}_{serial:04d}')}", self.clone, sequence]
+            + [f"{count}.0" for count in counts]
+            for serial, (category, sequence, counts) in enumerate(self.specs, 1)
+        ]
+        madc = self.dir / "hapapp.csv"
+        with madc.open("w", newline="") as handle:
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(["Code_version", "AlleleID", "CloneID", "AlleleSequence"] + SAMPLES)
+            writer.writerows(rows)
+        output, summary = self.run_filter(madc)
+        self.assertEqual(read_rows(output), [read_rows(madc)[0], rows[0], rows[1], rows[4], rows[5]])
+        self.assertEqual(summary["rows"]["input"], {"rows": 6, "reads": 50})
+        self.assertEqual(set(summary["rows"]["by_category"]), {"Ref", "Alt", "RefMatch", "AltMatch", "Other"})
+        self.assertEqual(summary["rows"]["by_outcome"]["protected"], {"rows": 1, "reads": 14})
+        with self.assertRaises(mp.MadcError):  # no PICRef column to carry a flag
+            self.run_filter(madc, paralog_action="flag")
+        parsed = mp.read_madc(madc)  # validate reads it too
+        self.assertEqual(parsed["samples"], SAMPLES)
+        self.assertEqual(parsed["records"][0]["counts"], [10, 0, 5])
 
 
 class CountOverflowTests(unittest.TestCase):
@@ -354,7 +384,7 @@ class CountOverflowTests(unittest.TestCase):
             self.assertEqual(parsed["count_overflow"]["negative_cells"], 1)
             aligner = FakeAligner({"Chr1": "A" * 2000}, {})
             with contextlib.redirect_stderr(io.StringIO()) as log:
-                summary = mp.filter_paralogs(
+                summary = fp.filter_paralogs(
                     madc, Path(temporary) / "out.csv", aligner, Path(temporary) / "l.csv", Path(temporary) / "m.csv"
                 )
             self.assertIn("signed 8-bit overflow", log.getvalue())
@@ -365,7 +395,7 @@ class CommandTests(unittest.TestCase):
     def test_missing_mappy_names_the_extra(self):
         with mock.patch.dict(sys.modules, {"mappy": None}):
             with self.assertRaises(mp.MadcError) as caught:
-                mp.GenomeAligner.open(Path("genome.fa"), None, 1)
+                fp.GenomeAligner.open(Path("genome.fa"), None, 1)
         self.assertIn("madcats[genome]", str(caught.exception))
 
     def test_needs_a_genome_or_an_index(self):
@@ -376,10 +406,24 @@ class CommandTests(unittest.TestCase):
                 mp.main(["filter-paralogs", "--madc", str(madc), "--output", str(Path(temporary) / "out.csv")])
         self.assertEqual(caught.exception.code, 2)
 
+    def test_script_run_shares_madc_error_with_the_filter_module(self):
+        # python3 madcats.py runs the file as __main__; an error raised in madcats_paralogs must still
+        # be reported as "error: ..." with exit code 2, not a traceback.
+        with tempfile.TemporaryDirectory() as temporary:
+            madc = Path(temporary) / "in.csv"
+            madc.write_text("AlleleID,CloneID,AlleleSequence\n")
+            result = subprocess.run(
+                [sys.executable, str(REPOSITORY / "madcats.py"), "filter-paralogs", "--madc", str(madc),
+                 "--output", str(Path(temporary) / "out.csv")],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("error: filter-paralogs needs --genome", result.stderr)
+
     def test_other_commands_do_not_import_mappy(self):
         with mock.patch.dict(sys.modules, {"mappy": None}):
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(mp.build_parser().parse_args(["filter-paralogs", "--madc", "x", "--output", "y"]).paralog_filter, "drop")
+                self.assertEqual(mp.build_parser().parse_args(["filter-paralogs", "--madc", "x", "--output", "y"]).paralogs, "drop")
 
 
 @unittest.skipUnless(HAS_MAPPY, "mappy not installed (pip install 'madcats[genome]')")
@@ -442,7 +486,7 @@ class GenomeAlignerTests(unittest.TestCase):
         cls.index = cls.dir / "genome.mmi"
         cls.output = cls.dir / "out_MADC.csv"
         with contextlib.redirect_stderr(io.StringIO()):
-            mp.run_filter_paralogs(mp.build_parser().parse_args([
+            fp.run_filter_paralogs(mp.build_parser().parse_args([
                 "filter-paralogs", "--madc", str(cls.madc), "--genome", str(cls.genome),
                 "--genome-index", str(cls.index), "--output", str(cls.output), "--jobs", "2",
             ]))
@@ -484,7 +528,7 @@ class GenomeAlignerTests(unittest.TestCase):
         self.assertTrue(self.index.is_file())
         output = self.dir / "from_index_MADC.csv"
         with contextlib.redirect_stderr(io.StringIO()) as log:
-            mp.run_filter_paralogs(mp.build_parser().parse_args(
+            fp.run_filter_paralogs(mp.build_parser().parse_args(
                 ["filter-paralogs", "--madc", str(self.madc), "--genome-index", str(self.index), "--output", str(output)]
             ))
         self.assertIn("Loading index", log.getvalue())

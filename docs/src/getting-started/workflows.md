@@ -74,7 +74,7 @@ See [Paired-End Reads and Tiling](../tutorials/paired-end.md).
 ## Optional: Clean Paralogs With a Genome
 
 If co-amplified paralogous copies inflate heterozygosity in your panel, clean the finished MADC
-(from `generate` or from the vendor) against a reference genome:
+(from `generate`, from the vendor, or from HapApp) against a reference genome:
 
 ```bash
 madcats filter-paralogs --madc MADC.csv --genome genome.fa --genome-index genome.sr.mmi --output MADC_filtered.csv

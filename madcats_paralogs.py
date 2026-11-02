@@ -103,7 +103,8 @@ class MarkerPlacement(NamedTuple):
     ``clone_id`` (the Ref tag did not align; a window around the CloneID
     position stands in) or ``unplaced``.  ``clone_check`` compares the CloneID
     position with the Ref-tag sites: ``agree``, ``disagree``, ``no_position``
-    (the CloneID is not CHROM_POS), ``contig_absent`` or ``fallback``.
+    (the CloneID is not CHROM_POS), ``contig_absent``, ``fallback``, or
+    ``ignored`` (``--clone-positions ignore``).
     """
 
     sites: Tuple[GenomeHit, ...]
@@ -293,7 +294,11 @@ def _site_covers(site: GenomeHit, contig: str, position: int) -> bool:
 
 
 def place_marker(
-    clone_id: str, ref_placement: Optional[GenomePlacement], contigs: Set[str], tag_length: int
+    clone_id: str,
+    ref_placement: Optional[GenomePlacement],
+    contigs: Set[str],
+    tag_length: int,
+    use_clone_position: bool = True,
 ) -> MarkerPlacement:
     """Locate a marker's tag: its Ref tag's alignment first, the CloneID position as cross-check and fallback.
 
@@ -301,8 +306,11 @@ def place_marker(
     another assembly version; the disagreement is reported.  A Ref tag with
     several equal-best sites is resolved by the CloneID position when exactly
     one site covers it; otherwise all its sites count as the marker's own.
+    Without ``use_clone_position`` (a genome other than the one the CloneIDs
+    refer to) the position is never read: an unaligned Ref tag leaves the
+    marker unplaced, and equal-best sites stay multi-copy.
     """
-    position, status = clone_position(clone_id, contigs)
+    position, status = clone_position(clone_id, contigs) if use_clone_position else (None, "ignored")
     copies = ref_placement.best if ref_placement is not None and ref_placement.sites else ()
     if not copies:
         if position is None:
@@ -427,6 +435,7 @@ def filter_paralogs(
     ambiguous_action: str = "drop",
     jobs: int = 1,
     provenance: str = "",
+    clone_positions: str = "use",
 ) -> Dict[str, object]:
     """Label every MADC haplotype by where the genome places it; drop or flag paralogous rows.
 
@@ -441,7 +450,9 @@ def filter_paralogs(
     downstream dosage tools need both designed alleles; they are reported as
     ``protected`` instead.  In flag mode the PICRef column becomes
     ``GenomeLabel`` on every row.  The labels sidecar has one line per input
-    row, dropped rows included.
+    row, dropped rows included.  ``clone_positions="ignore"`` keeps CloneID
+    coordinates out of marker placement, for a genome other than the one they
+    refer to.
     """
     actions = {"paralog": paralog_action, "ambiguous": ambiguous_action}
     flagging = "flag" in actions.values()
@@ -487,7 +498,8 @@ def filter_paralogs(
     for clone in tag_lengths:
         ref = ref_tags.get(clone)
         markers[clone] = place_marker(
-            clone, placements.get(query(ref)) if ref is not None else None, aligner.contigs, tag_lengths[clone]
+            clone, placements.get(query(ref)) if ref is not None else None, aligner.contigs, tag_lengths[clone],
+            use_clone_position=clone_positions == "use",
         )
     labels = {key: genome_label(placements.get(query(key[1])), markers[key[0]]) for key in haplotypes}
 
@@ -584,7 +596,8 @@ def filter_paralogs(
     if checked and checks["disagree"] > 0.1 * checked:
         print(
             f"warning: CloneID positions disagree with the Ref-tag placement for {checks['disagree']:,} of "
-            f"{checked:,} markers; is this the assembly the panel was designed on?",
+            f"{checked:,} markers, so they may refer to another assembly. If they do, rerun with "
+            "--clone-positions ignore so they are not used to place markers",
             file=sys.stderr,
         )
     if markers and not sources.keys() - {"unplaced"}:
@@ -636,11 +649,13 @@ def run_filter_paralogs(args: argparse.Namespace) -> int:
     labels_path = output.with_suffix(output.suffix + ".genome_labels.csv")
     markers_path = output.with_suffix(output.suffix + ".genome_markers.csv")
     provenance = (
-        f"filter-paralogs v{__version__} paralogs={args.paralogs} ambiguous={args.ambiguous}"
+        f"filter-paralogs v{__version__} paralogs={args.paralogs} ambiguous={args.ambiguous} "
+        f"clone_positions={args.clone_positions}"
     )
     summary = filter_paralogs(
         madc, output, aligner, labels_path, markers_path,
         paralog_action=args.paralogs, ambiguous_action=args.ambiguous, jobs=args.jobs, provenance=provenance,
+        clone_positions=args.clone_positions,
     )
     qc_path = Path(args.qc_output) if args.qc_output else output.with_suffix(output.suffix + ".qc.json")
     qc = {
@@ -653,7 +668,10 @@ def run_filter_paralogs(args: argparse.Namespace) -> int:
             "genome": str(genome.resolve()) if genome else None,
             "genome_index": str(index.resolve()) if index else None,
         },
-        "parameters": {"paralogs": args.paralogs, "ambiguous": args.ambiguous, "jobs": args.jobs},
+        "parameters": {
+            "paralogs": args.paralogs, "ambiguous": args.ambiguous, "clone_positions": args.clone_positions,
+            "jobs": args.jobs,
+        },
         "aligner": aligner.description,
         "outputs": {"madc": str(output.resolve()), "labels": str(labels_path), "markers": str(markers_path)},
         "elapsed_seconds": round(time.time() - started, 1),
@@ -699,6 +717,16 @@ def add_filter_paralogs_command(subparsers) -> None:
         help=(
             "minimap2 index (.mmi) built with -x sr; loaded when it exists, otherwise built from --genome and "
             "saved here for the next run"
+        ),
+    )
+    filtering.add_argument(
+        "--clone-positions",
+        choices=("use", "ignore"),
+        default="use",
+        help=(
+            "CHROM_POS CloneIDs: use them to check placements, choose between equal-best Ref-tag sites and stand "
+            "in for Ref tags that do not align, or ignore them when they refer to another assembly than the "
+            "genome given (default: use)"
         ),
     )
     filtering.add_argument("--output", required=True, help="cleaned MADC to write")

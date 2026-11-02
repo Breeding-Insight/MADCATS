@@ -1467,7 +1467,12 @@ Design:
 - **Marker placement.** Each marker's Ref tag is aligned. The CloneID
   `CHROM_POS` is a cross-check, picks among equal-best Ref-tag sites, and
   stands in (±tag length) when the Ref tag does not align. When the two
-  disagree, the alignment wins.
+  disagree, the alignment wins. `--clone-positions ignore` turns all three
+  uses off, for a genome other than the one the CloneIDs refer to. On the
+  lettuce vendor MADC against v8 it changes 10 markers: the 9 fallback
+  windows become `unplaced`, keeping 1,032 rows labelled `paralog`, and 1
+  tie stays multi-copy. The id95 output does not change, and the default
+  (`use`) output is byte-identical to the runs before the option existed.
 - **Labels.** Each haplotype gets its best score at its marker's site and
   its best score elsewhere: higher at the marker is `on_target`, higher
   elsewhere is `paralog`, a tie is `ambiguous`. A haplotype the genome-wide

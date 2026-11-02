@@ -14,6 +14,8 @@ Notable changes by version. Measurements behind each change are in the
   (`pip install 'madcats[genome]'`), imported only by this command, so MADCATS still has no
   required dependencies. On the lettuce 3K DArTag panel the filtered vendor MADC agreed with a
   bwa-mem-based prototype for 99.4% of reads.
+- `filter-paralogs --clone-positions ignore` keeps CloneID coordinates out of marker placement, for
+  a genome other than the one the CloneIDs refer to.
 - The MADC readers find a header row whose `AlleleID` is not the first cell, as in HapApp's
   fixed-allele-ID output, which starts with `Code_version`.
 - `validate` and `filter-paralogs` warn when a MADC has negative read counts. Some vendor MADCs

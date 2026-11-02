@@ -21,7 +21,9 @@ to decide where each haplotype comes from:
 1. **Place each marker.** Its Ref tag is aligned to the genome. A CloneID of the form `CHROM_POS`
    (zero padding allowed, e.g. `Chr1_000333995`) is a cross-check. When the Ref tag has several
    equal-best sites, the CloneID position picks one; if it cannot, the marker is reported as
-   multi-copy. When the Ref tag does not align, a window around the CloneID position is used.
+   multi-copy. When the Ref tag does not align, a window around the CloneID position is used. Both
+   uses assume the CloneID refers to the genome given; see
+   [Using Another Assembly](#using-another-assembly).
 2. **Align every distinct haplotype.** Each haplotype gets two scores: its best alignment at its
    marker's site, and its best alignment anywhere else. A haplotype the genome-wide search found
    nowhere near its marker is realigned to the marker sites alone with short seeds, so a real allele
@@ -67,6 +69,7 @@ Give `--genome`, `--genome-index`, or both.
 |--------|---------|-------------|
 | `--genome <FASTA>` | none | Reference genome FASTA, optionally gzipped |
 | `--genome-index <MMI>` | none | minimap2 index. Loaded when it exists; otherwise built from `--genome` and saved here for the next run |
+| `--clone-positions {use,ignore}` | `use` | `CHROM_POS` CloneIDs: `use` them to check placements, choose between equal-best Ref-tag sites and stand in for Ref tags that do not align, or `ignore` them when they refer to another assembly than the genome given |
 
 Indexing a large genome is slow and memory-heavy, so build the index once and reuse it. The first
 run with both options writes it:
@@ -143,12 +146,56 @@ A perfect 81-base match scores 162 and each mismatch costs 10, so `TargetScore` 
 | `CloneID` | Marker |
 | `Placement` | `ref_tag`, `ref_tag+clone_id` (multi-copy Ref tag resolved by the CloneID position), `ref_tag_multicopy` (unresolved), `clone_id` (Ref tag did not align) or `unplaced` |
 | `RefTagSites` | Equal-best genome sites of the Ref tag (0 when it did not align) |
-| `CloneIDCheck` | `agree`, `disagree`, `no_position` (CloneID is not `CHROM_POS`), `contig_absent` or `fallback` |
+| `CloneIDCheck` | `agree`, `disagree`, `no_position` (CloneID is not `CHROM_POS`), `contig_absent`, `fallback` or `ignored` (`--clone-positions ignore`) |
 | `Sites` | The marker's site(s), 1-based, `;`-separated |
 
 When the alignment and the CloneID disagree, the alignment wins, since CloneID coordinates may come
-from another assembly version. The command warns when more than 10% of markers disagree, which
-usually means the genome is not the assembly the panel was designed on.
+from another assembly version. The command warns when more than 10% of markers disagree. Either the
+genome is not the one you meant to use, or the CloneIDs refer to another assembly, in which case
+rerun with `--clone-positions ignore`.
+
+## Using Another Assembly
+
+Any genome that contains the panel's target loci can be used, not only the one the panel was
+designed on, because markers are placed by aligning their Ref tags. A second assembly, such as
+another cultivar's or a newer version, can show copies the first one lacks: a haplotype that is
+`on_target` against one genome and `paralog` against another points to a copy only the second
+genome has.
+
+CloneID positions refer to the design assembly, so against another assembly use
+`--clone-positions ignore`. Otherwise, where the chromosome names match, a CloneID position is read
+in the new genome's coordinates. A marker whose Ref tag does not align is then judged at the wrong
+place, and its non-canonical rows are dropped as paralogs. With `ignore`, such a marker is
+`unplaced` and keeps every row, and a Ref tag with several equal-best sites stays multi-copy, so
+its rows are `ambiguous`. Where the chromosome names differ, CloneID positions go unused anyway
+(`contig_absent`).
+
+Keep the default on the design assembly. On the lettuce vendor MADC, CloneID positions decide the
+site of 10 of 2,987 markers: 9 whose Ref tag does not align and 1 tie. With `ignore`, those 9
+markers are `unplaced`, and 1,032 rows that the design assembly labels `paralog` are kept.
+
+Each genome needs its own index:
+
+```bash
+madcats filter-paralogs --madc MADC.csv --genome-index v8.sr.mmi --output MADC_v8.csv
+madcats filter-paralogs --madc MADC.csv --genome other.fa --genome-index other.sr.mmi \
+  --clone-positions ignore --output MADC_other.csv
+```
+
+To compare the two runs, join their labels sidecars on `CloneID` and `AlleleSequence`:
+
+```python
+import pandas as pd
+
+key = ["CloneID", "AlleleSequence"]
+design = pd.read_csv("MADC_v8.csv.genome_labels.csv")
+other = pd.read_csv("MADC_other.csv.genome_labels.csv")
+both = design.merge(other, on=key, suffixes=("_v8", "_other"))
+print(pd.crosstab(both.Label_v8, both.Label_other))
+```
+
+Rows that are `on_target` against the design assembly and `paralog` against the other are
+haplotypes of a copy that only the other assembly has.
 
 ## Example
 
@@ -166,10 +213,11 @@ It kept 113,655 rows, with 35.7% of the reads. See the
 
 ## Limitations
 
-- The genome must be the assembly the panel's tags come from, or one close to it. Markers whose
-  region is missing or collapsed in the assembly cannot be judged.
+- The genome must contain the panel's target loci: the assembly the panel was designed on, or one
+  close to it. Markers whose region is missing or collapsed in the assembly cannot be judged.
 - A copy that exists in your germplasm but not in the reference assembly cannot be seen; its
-  haplotypes look like diverged alleles of the target.
+  haplotypes look like diverged alleles of the target. A second assembly that has the copy can
+  show it (see [Using Another Assembly](#using-another-assembly)).
 - minimap2 finds fewer distant copies than bwa mem, so a haplotype far from every genome copy is
   judged on the hits it has. Labels agreed with a bwa-mem classification for 98.2% of rows of a
   MADCATS MADC and 94.9% of a vendor MADC, whose rows are more diverged.

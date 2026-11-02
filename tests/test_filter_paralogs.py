@@ -151,6 +151,17 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(fallback.sites[0][:3], ("Chr1", 2000 - 1 - 81, 2000 + 81))
         self.assertEqual(fp.place_marker("marker7", None, self.contigs, 81).source, "unplaced")
 
+    def test_clone_positions_can_be_ignored(self):
+        def place(clone, *hits):
+            return fp.place_marker(clone, fp.GenomePlacement(hits), self.contigs, 81, use_clone_position=False)
+
+        unique = place("Chr2_1060", hit("Chr1", 1000, 1081))
+        self.assertEqual((unique.source, unique.clone_check), ("ref_tag", "ignored"))
+        tied = place("Chr2_5040", hit("Chr1", 1000, 1081), hit("Chr2", 5000, 5081))
+        self.assertEqual((tied.source, len(tied.sites)), ("ref_tag_multicopy", 2))  # no CloneID tie-break
+        unaligned = place("Chr1_2000")
+        self.assertEqual((unaligned.source, unaligned.sites, unaligned.clone_check), ("unplaced", (), "ignored"))
+
     def test_labels(self):
         marker = fp.place_marker("Chr1_1060", fp.GenomePlacement((hit("Chr1", 1000, 1081),)), self.contigs, 81)
 
@@ -330,6 +341,25 @@ class FilterTests(unittest.TestCase):
         output, summary = self.run_filter(madc)  # drop mode works on the short layout
         self.assertEqual(summary["rows"]["output"], {"rows": 1, "reads": 6})
 
+    def test_clone_position_from_another_assembly(self):
+        # The Ref tag does not align, and the CloneID names Chr2:500, where this genome has no copy of the
+        # locus (as when CloneIDs carry another assembly's coordinates).  Used, that position becomes the
+        # marker's site and the real AltMatch allele, aligning only at Chr1:1001, is dropped as a paralog.
+        self.aligner._hits[self.ref] = []
+        clone = "Chr2_000500"
+        rows = [madc_row(clone, *spec) for spec in self.specs]
+        madc = self.dir / "in.csv"
+        write_madc(madc, rows)
+        _, used = self.run_filter(madc)
+        self.assertEqual(read_dicts(self.dir / "markers.csv")[0]["Placement"], "clone_id")
+        labels = {row["AlleleSequence"]: row for row in read_dicts(self.dir / "labels.csv")}
+        self.assertEqual((labels[self.true_match]["Label"], labels[self.true_match]["Action"]), ("paralog", "dropped"))
+        output, ignored = self.run_filter(madc, clone_positions="ignore")
+        self.assertEqual(ignored["markers"]["placement"], {"unplaced": 1})
+        self.assertEqual(ignored["markers"]["clone_id_check"], {"ignored": 1})
+        self.assertEqual(read_rows(output)[1:], rows)  # an unplaced marker keeps every row
+        self.assertEqual({row["Label"] for row in read_dicts(self.dir / "labels.csv")}, {"unplaced"})
+
     def test_hapapp_fixed_allele_id_madc(self):
         # HapApp writes a leading Code_version column, then AlleleID, CloneID, AlleleSequence and the
         # samples, with fixed IDs such as |Ref_0001; counts of rows it merged come out as floats.
@@ -423,7 +453,8 @@ class CommandTests(unittest.TestCase):
     def test_other_commands_do_not_import_mappy(self):
         with mock.patch.dict(sys.modules, {"mappy": None}):
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(mp.build_parser().parse_args(["filter-paralogs", "--madc", "x", "--output", "y"]).paralogs, "drop")
+                args = mp.build_parser().parse_args(["filter-paralogs", "--madc", "x", "--output", "y"])
+        self.assertEqual((args.paralogs, args.ambiguous, args.clone_positions), ("drop", "drop", "use"))
 
 
 @unittest.skipUnless(HAS_MAPPY, "mappy not installed (pip install 'madcats[genome]')")
@@ -533,6 +564,22 @@ class GenomeAlignerTests(unittest.TestCase):
             ))
         self.assertIn("Loading index", log.getvalue())
         self.assertEqual(read_rows(output), read_rows(self.output))
+
+    def test_clone_positions_ignored(self):
+        # Marker C's Ref tag has equal-best copies on chr1 and chr3; only its CloneID picked chr1.
+        output = self.dir / "ignored_MADC.csv"
+        with contextlib.redirect_stderr(io.StringIO()):
+            fp.run_filter_paralogs(mp.build_parser().parse_args([
+                "filter-paralogs", "--madc", str(self.madc), "--genome-index", str(self.index),
+                "--output", str(output), "--clone-positions", "ignore",
+            ]))
+        markers = {row["CloneID"]: row for row in read_dicts(output.with_suffix(".csv.genome_markers.csv"))}
+        self.assertEqual((markers["chr1_005541"]["Placement"], markers["chr1_005541"]["Sites"].count(";")), ("ref_tag_multicopy", 1))
+        self.assertEqual({row["CloneIDCheck"] for row in markers.values()}, {"ignored"})
+        labels = {row["AlleleSequence"]: row["Label"] for row in read_dicts(output.with_suffix(".csv.genome_labels.csv"))}
+        self.assertEqual(labels, {sequence: row["Label"] for sequence, row in self.labels.items()})
+        qc = json.loads(output.with_suffix(".csv.qc.json").read_text())
+        self.assertEqual(qc["parameters"]["clone_positions"], "ignore")
 
 
 if __name__ == "__main__":

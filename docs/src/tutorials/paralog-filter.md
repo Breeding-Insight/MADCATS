@@ -32,8 +32,10 @@ This adds `mappy`, minimap2's Python binding. No other command needs it.
 
 ## 2. Index the Genome Once
 
-Use the assembly the panel was designed on, or one close to it. The first run with both
-`--genome` and `--genome-index` builds the index and saves it. Later runs load it in seconds:
+Use the assembly the panel was designed on, or one close to it. To compare against another
+assembly, see [Using Another Assembly](../commands/filter-paralogs.md#using-another-assembly). The
+first run with both `--genome` and `--genome-index` builds the index and saves it. Later runs load
+it in seconds:
 
 ```bash
 madcats filter-paralogs \

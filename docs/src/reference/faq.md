@@ -17,7 +17,19 @@ too little support in the project's own reads to pass any within-project evidenc
 
 ### What dependencies does it need?
 
-None beyond Python 3.9+. The standalone binaries need nothing at all.
+None beyond Python 3.9+. The standalone binaries need nothing at all. The optional
+[`filter-paralogs`](../commands/filter-paralogs.md) command also needs the `mappy` aligner:
+`pip install 'madcats[genome]'`.
+
+### My vendor MADC has negative read counts
+
+Some vendor MADCs store counts in a signed 8-bit field. Counts of 128–255 appear as the count minus
+256 (so −128 to −1), and counts of 256 or more wrap silently to small positive numbers. The lettuce
+3K delivery has 90,913 negative cells across 1,108 markers, and its largest count is exactly 127.
+Adding 256 to the negatives recovers the 128–255 band, but the wrapped larger counts cannot be told
+apart from real small ones. `validate` and `filter-paralogs` warn and record this in their reports
+but use the counts as stored. Regenerate the table from the FASTQs with `madcats generate`, or ask
+the vendor for a corrected file.
 
 ## Running
 

@@ -1437,6 +1437,76 @@ are a separate class: their target sits at position 110, one base past the
 109-bp window (the vendor's SNP report lists them without a position, and
 the 110th base segregates in the plates whose reads are longer than 109 bp).
 
+## Genome paralog filter (`filter-paralogs`, unreleased)
+
+On the public lettuce 3K DArTag data about two thirds of the reads come from
+paralogous copies. A paralog read that carries the target base becomes a
+RefMatch/AltMatch row, and `BIGr::madc2vcf_all` sums it into the target SNP,
+so inbred lines look heterozygous. Raising `generate --min-identity` removes
+the diverged copies but not the close ones. `filter-paralogs` is an opt-in
+cleaner for such panels. It reads any MADC, from MADCATS or the vendor, with
+or without the preamble, so it also cleans vendor deliveries.
+
+Design:
+
+- **Aligner.** minimap2 through `mappy`, an optional extra imported only by
+  this command; MADCATS still has no required dependency. The index is a
+  standard `-x sr` index (k=21, w=11). At map time single-seed chains
+  (`min_cnt=1`, `min_chain_score=20`) and 50 hits (`best_n`) are allowed.
+  mappy reports neither AS nor XS, so each hit's DP score is recomputed from
+  CIGAR, NM, matching bases and block length with the pinned short-read
+  scoring (+2/−8, gaps 12+2 or 24+1, ambiguous −1). Ties are exact.
+- **Marker placement.** Each marker's Ref tag is aligned. The CloneID
+  `CHROM_POS` is a cross-check, picks among equal-best Ref-tag sites, and
+  stands in (±tag length) when the Ref tag does not align. When the two
+  disagree, the alignment wins.
+- **Labels.** Each haplotype gets its best score at its marker's site and
+  its best score elsewhere: higher at the marker is `on_target`, higher
+  elsewhere is `paralog`, a tie is `ambiguous`. A haplotype the genome-wide
+  search finds nowhere near its marker is realigned to a k=11 index of the
+  marker sites (±20 bp). Without that realignment, 18% of id95 haplotypes
+  had no hit at their own marker, and 326 that bwa places on target were
+  unmapped.
+- **Actions.** Paralog and ambiguous rows are dropped by default or flagged
+  in the `PICRef` column, renamed `GenomeLabel`. Canonical rows are never
+  dropped. Every input row, dropped or kept, gets a line in the labels
+  sidecar.
+
+Measurements (lettuce v8 genome, 2.4 Gb; 12-core laptop):
+
+| | id95 MADCATS MADC | DArT vendor MADC |
+|---|---|---|
+| Rows / distinct sequences | 17,847 / 17,846 | 732,534 / 732,154 |
+| Run time, prebuilt index | 12 s (8 threads) | 2 min 15 s (8 threads), 9.4 GB |
+| Rows kept | 12,695 | 113,655 |
+| Reads in paralog rows | 16.0% | 63.3% |
+| Keep/drop agreement with bwa-mem labels | 98.2% | 94.9% |
+| Keep/drop agreement with the bwa prototype's output, rows / reads | 98.2% / 99.7% | 94.9% / 99.4% |
+| Het rate (proxy): unfiltered → prototype → `filter-paralogs` | 12.6% → 6.44% → 6.40% | 19.9% → 6.79% → 7.02% |
+
+Indexing took 50 s and 10.6 GB at peak; the `.mmi` is 5.7 GB. The het
+proxy sums Ref+RefMatch and Alt+AltMatch reads per marker and sample, calls
+cells with ≥10 reads, and counts het where the minor allele has ≥10%. The
+bwa-mem labels came from aligning the same haplotypes with `bwa mem -T 20`
+(AS > XS unique). Variants tried and rejected:
+
+- Default sr chaining: keep/drop agreement on id95 was 97.3%, against
+  98.2% with single-seed chains and `best_n` 50.
+- A k=15, w=10 index: DArT agreement 94.4%, against 94.9% with k=21, and
+  slower mapping.
+- Also dropping site-realigned DArT haplotypes with ≥6 mismatches:
+  het proxy 6.93%, against 7.02%. The rest of the gap to bwa is minimap2
+  finding fewer distant copies of highly diverged vendor haplotypes.
+
+Count overflow. The lettuce vendor MADC stores counts in a signed byte:
+90,913 cells across 1,108 markers are negative (minimum −128) and the
+largest count is exactly 127. Counts of 128–255 appear as count − 256
+(adding 256 matches MADCATS's counts for the same cells), and counts of 256
+or more wrap silently. `read_madc` (and so `validate`) and `filter-paralogs`
+now warn and record `count_overflow` in their reports. They never correct
+the counts, since the wrapped ones cannot be told from real small counts.
+The figures in the table above use the counts as stored.
+
 ## Downstream fixed allele IDs
 
 This pipeline's responsibility ends with generation of the raw MADC-like

@@ -84,7 +84,22 @@ design (e.g. `46:C>G`).
 - row counts by category, by evidence route, and by `marker_types`
 - the variants sidecar path
 
-`normalize-reads`, `infer-design` and `window-scan` write their own QC JSONs; see each command's page.
+`normalize-reads`, `infer-design`, `window-scan` and `filter-paralogs` write their own QC JSONs; see each
+command's page.
+
+## Genome Labels (filter-paralogs)
+
+[`madcats filter-paralogs`](../commands/filter-paralogs.md) writes a cleaned copy of any MADC. Kept
+rows are copied unchanged. In flag mode (`--paralog-filter flag` or `--ambiguous flag`) a third
+statistics column is repurposed, keeping the 16-column layout:
+
+| Column | Contents |
+|--------|----------|
+| `PICRef` → **`GenomeLabel`** | `on_target`, `paralog`, `ambiguous`, `unmapped` or `unplaced`: where the reference genome places the row's haplotype |
+
+It also writes `OUTPUT.genome_labels.csv` (one line per input row, dropped rows included, with
+the row's score at its marker and its best score elsewhere) and `OUTPUT.genome_markers.csv` (where
+each marker was placed). The command page describes both.
 
 ## Vendor-Style Preamble (HapApp)
 

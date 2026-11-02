@@ -48,6 +48,7 @@ madcats validate \
 | Section | Contents |
 |---------|----------|
 | `sample_overlap` | Samples in each file and in common |
+| `count_overflow` | Per file: negative count cells, the markers they fall in, and the minimum and maximum count. Negative counts with a maximum of exactly 127 are the signature of signed 8-bit overflow in a vendor file; a warning is printed |
 | `allele_rows` | Rows in common, precision, recall, generated-only and expected-only counts, `classification_agreement` on shared rows, category counts, and `by_category` precision/recall |
 | `common_row_count_cells` | Over shared rows × shared samples: exact-match fraction, mean absolute error, Pearson r, and count totals with their ratio |
 | `nonzero_union_count_cells` | The same agreement statistics over cells nonzero in either file |

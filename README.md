@@ -34,7 +34,9 @@ each run writes a JSON file recording its parameters and read counts.
   paired-end reads (`madcats merge-pairs`).
 - Writes raw MADC tables for HapApp, which prepares them for BIGr and other tools. Each row also
   lists its variants and marker type.
-- Pure Python with no dependencies. Runs samples in parallel and caches per-sample results, so
+- Optional genome-based paralog filter (`madcats filter-paralogs`, needs `pip install 'madcats[genome]'`)
+  for panels where co-amplified paralogous copies inflate heterozygosity; works on vendor MADCs too.
+- Pure Python with no dependencies for everything else. Runs samples in parallel and caches per-sample results, so
   reruns are fast.
 
 ## Installation

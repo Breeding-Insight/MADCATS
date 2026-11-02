@@ -1,7 +1,7 @@
 # Command Overview
 
-MADCATS is a single executable with seven subcommands. Each handles one stage: defining the panel,
-adapting reads, counting, or checking the result.
+MADCATS is a single executable with eight subcommands. Each handles one stage: defining the panel,
+adapting reads, counting, cleaning, or checking the result.
 
 ## Command Structure
 
@@ -47,6 +47,12 @@ Each produces the reference-tag CSV that `generate` consumes.
 | [`generate`](generate.md) | Build the MADC count table | Every workflow ends here |
 | [`validate`](validate.md) | Compare a generated MADC with a reference MADC | Checking against a vendor delivery |
 
+### Cleaning Command (Optional)
+
+| Command | Description | Primary Use |
+|---------|-------------|-------------|
+| [`filter-paralogs`](filter-paralogs.md) | Drop or flag haplotypes a reference genome places at another locus; needs `pip install 'madcats[genome]'` | Panels whose co-amplified paralogs inflate heterozygosity; MADCATS or vendor MADCs |
+
 ## Typical Workflows
 
 ### DArTag
@@ -55,6 +61,13 @@ Each produces the reference-tag CSV that `generate` consumes.
 madcats design --primers primers.csv --probe-design probes.txt --output tags.csv
 madcats generate --fastq-dir fastqs/ --reference-tags tags.csv --jobs 8 --output MADC.csv
 madcats validate --generated MADC.csv --expected vendor_MADC.csv --report validation.json
+```
+
+### Paralog-heavy panel (optional genome filter)
+
+```bash
+madcats generate --fastq-dir fastqs/ --reference-tags tags.csv --min-identity 0.95 --output MADC.csv
+madcats filter-paralogs --madc MADC.csv --genome genome.fa --genome-index genome.sr.mmi --output MADC_filtered.csv
 ```
 
 ### AgriSeq

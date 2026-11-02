@@ -15,7 +15,9 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-No other dependencies are needed to develop or test.
+No other dependencies are needed to develop or test. The `filter-paralogs` tests that align to a
+synthetic genome run only when `mappy` is installed (`pip install -e '.[genome]'`); without it they
+are skipped.
 
 ## Running Tests
 
@@ -43,7 +45,8 @@ against a comparator before it becomes a default. Record those measurements in
 
 ## Code Style
 
-- Standard library only. A new dependency needs a strong reason.
+- Standard library only. A new dependency needs a strong reason; the optional `mappy` extra for
+  `filter-paralogs` is imported only inside that command.
 - Keep the section layout of `madcats.py` (see [Architecture](architecture.md)).
 - Every analysis threshold is a command-line option with a documented default.
 - Stop with a clear error on inconsistent input instead of writing a table that may be wrong.

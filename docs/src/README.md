@@ -40,7 +40,10 @@ The name also reflects the tool's origins as a FASTQ-to-MADC workflow, where MAD
 - **Indel-aware**: designed indel markers are fully supported, and undesigned indels are recovered
   with a gapped alignment that caps the number of substitutions and gaps
 - **No dependencies**: pure Python 3 standard library, with parallel workers and a reusable
-  per-sample cache
+  per-sample cache. The optional genome paralog filter needs `mappy`
+- **Optional paralog filter**: for panels where co-amplified paralogs inflate heterozygosity,
+  [`filter-paralogs`](commands/filter-paralogs.md) drops or flags haplotypes a reference genome
+  places at another locus
 
 ## A prior MADC is not an input
 

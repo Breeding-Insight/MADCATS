@@ -37,6 +37,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 
+[project.optional-dependencies]
+# filter-paralogs aligns haplotypes to a reference genome with minimap2; every other command
+# needs only the standard library.
+genome = ["mappy>=2.24"]
+
 [project.urls]
 Homepage = "https://github.com/Breeding-Insight/MADCATS"
 Documentation = "https://madcats.readthedocs.io"

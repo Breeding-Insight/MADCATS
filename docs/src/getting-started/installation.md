@@ -1,7 +1,9 @@
 # Installation
 
 MADCATS is a pure-Python tool with no third-party dependencies. Install it from PyPI (recommended),
-download a standalone binary, or run it straight from a clone of the repository.
+download a standalone binary, or run it straight from a clone of the repository. The one optional
+command that aligns to a reference genome, `filter-paralogs`, needs an extra
+([below](#optional-genome-aligner)).
 
 ## From PyPI (Recommended)
 
@@ -26,6 +28,19 @@ pipx install madcats
 ```
 
 Upgrade later with `pip install --upgrade madcats` (or `pipx upgrade madcats`).
+
+### Optional: Genome Aligner
+
+[`madcats filter-paralogs`](../commands/filter-paralogs.md) aligns haplotypes to a reference genome
+with minimap2's Python binding, `mappy`. Install it with the `genome` extra:
+
+```bash
+pip install 'madcats[genome]'
+```
+
+`mappy` compiles minimap2 when no wheel exists for your platform, which needs a C compiler and zlib
+headers. Every other command runs without it, and only `filter-paralogs` imports it. The standalone
+binaries do not include it.
 
 ## Pre-built Binaries
 

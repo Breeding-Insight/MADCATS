@@ -2,7 +2,9 @@
 
 MADCATS is a single module, `madcats.py`, that uses only the Python standard library. There is
 nothing to compile and no dependency to pin, and the same file runs as a script (`python3
-madcats.py`), as the installed `madcats` command, or frozen into a standalone binary.
+madcats.py`), as the installed `madcats` command, or frozen into a standalone binary. The one
+exception is optional: `filter-paralogs` imports the `mappy` aligner when it runs
+(`pip install 'madcats[genome]'`), so no other command depends on it.
 
 ## Repository Layout
 

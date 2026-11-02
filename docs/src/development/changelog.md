@@ -3,6 +3,22 @@
 Notable changes by version. Measurements behind each change are in the
 [development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md) on GitHub.
 
+## Unreleased
+
+- New optional command `filter-paralogs`. It cleans a MADC (from `generate`, or a vendor DArT MADC
+  with or without its preamble) against a reference genome. Each marker is placed by its Ref tag
+  and every haplotype is labelled `on_target`, `paralog` or `ambiguous`. Paralog and ambiguous
+  rows are dropped (default) or flagged in a `GenomeLabel` column; canonical rows are always kept.
+  It writes a labels sidecar, a markers sidecar and a QC JSON. It needs `mappy`
+  (`pip install 'madcats[genome]'`), imported only by this command, so MADCATS still has no
+  required dependencies. On the lettuce 3K DArTag panel the filtered vendor MADC agreed with a
+  bwa-mem-based prototype for 99.4% of reads.
+- `validate` and `filter-paralogs` warn when a MADC has negative read counts. Some vendor MADCs
+  store counts in a signed byte: counts of 128–255 appear as count − 256, and counts of 256 or more
+  wrap silently. A negative count with a maximum of exactly 127 is reported as that signature, and
+  both QC reports record it. Counts are never corrected, since the wrapped ones cannot be recovered.
+  The lettuce 3K vendor MADC has 90,913 such cells across 1,108 markers.
+
 ## 0.13.0
 
 - Removed the `madc_pipeline` compatibility module. Import `madcats` instead; the bundled

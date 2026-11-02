@@ -16,6 +16,7 @@
 - [Panels Without a Primer File](tutorials/primer-free.md)
 - [AgriSeq and Other Non-Primer-Started Reads](tutorials/agriseq.md)
 - [Paired-End Reads and Tiling](tutorials/paired-end.md)
+- [Filtering Paralogs with a Reference Genome](tutorials/paralog-filter.md)
 
 # Command Reference
 
@@ -27,6 +28,7 @@
 - [madcats window-scan](commands/window-scan.md)
 - [madcats generate](commands/generate.md)
 - [madcats validate](commands/validate.md)
+- [madcats filter-paralogs](commands/filter-paralogs.md)
 
 # Reference
 

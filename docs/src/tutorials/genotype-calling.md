@@ -37,8 +37,8 @@ it uses fixed values and says so.
 One record of `results/demo.targets.vcf`, with two of its twelve samples:
 
 ```text
-#CHROM           POS  REF  ALT  INFO                 FORMAT                    Line_01                            Line_02
-Chr01_000412883  34   G    C    TARGET;NS=12;AF=0.5  GT:AD:DP:XD:GQ:DS:GP:PL   0/0:76,0:76:0:48:0:1,0,0:0,51,142  0/1:35,35:70:0:40:1:0.0001,0.9999,0.0001:40,0,40
+#CHROM           POS  REF  ALT  INFO                            FORMAT                       Line_01                              Line_02
+Chr01_000412883  34   G    C    TARGET;NS=12;AF=0.5;PMC=0.0001  GT:AD:DP:XD:GQ:MPP:DS:GP:PL  0/0:76,0:76:0:48:1:0:1,0,0:0,51,142  0/1:35,35:70:0:40:0.9999:1:0.0001,0.9999,0.0001:40,0,40
 ```
 
 `Line_01` has 76 reads of G and none of C, so it is `0/0`. `Line_02` has 35 of each and is `0/1`.
@@ -48,8 +48,10 @@ Chr01_000412883  34   G    C    TARGET;NS=12;AF=0.5  GT:AD:DP:XD:GQ:DS:GP:PL   0
 | `GT` | The genotype, with one allele per chromosome copy: `0/0/0/1` in a tetraploid |
 | `AD`, `DP` | Reads of each allele, and their sum |
 | `GQ` | The model's confidence in `GT`, Phred-scaled: 20 is one chance in 100 of a wrong genotype, 30 one in 1,000 |
+| `MPP` | The same confidence as a probability: the largest value of `GP` |
 | `DS` | The expected number of alternate copies, for analyses that take a dosage |
 | `GP` | The probability of each genotype |
+| `PMC`, in INFO | The share of the marker's samples expected to have a wrong genotype: one minus the mean of `MPP` |
 
 **Coordinates are marker-local.** `CHROM` is the marker and `POS` is a position in its tag, not on
 a genome. The header says so in a `##madcatsCoordinates` line.
@@ -106,6 +108,9 @@ If you come from updog or polyRAD:
 | polyRAD, `IterateHWE` | The defaults. polyRAD's own settings are `--overdispersion 9 --contamination-rate 0.001 --background-rate 0` |
 | polyRAD, `IteratePopStruct` | `--prior structure`. The method differs, and the purpose is the same |
 
+`MPP` and `PMC` are updog's `maxpostprob` and `prop_mis`, named as BIGr's `updog2vcf` names them,
+and `INFO/BIAS` is updog's bias. BIGr's `filterVCF` filters on all three by these names.
+
 ## 5. Write Other Record Types
 
 `--vcf` takes one or more record types, and each goes to its own file:
@@ -120,9 +125,9 @@ madcats call --madc results/demo_MADC.csv --output-prefix results/demo --vcf tar
 | `all` | `PREFIX.all.vcf` | A target, or any other base substitution seen in the tags |
 | `haplotype` | `PREFIX.haplotypes.vcf` | A marker, with whole tag sequences as its alleles |
 
-Records with more than two alleles, which is every haplotype record, carry `MPC` in place of `GQ`.
-It is the lowest probability among the allele dosages called, and `--min-marginal-posterior`
-(default 0.9) is its threshold.
+Records with more than two alleles, which is every haplotype record, carry `MPC` in place of `GQ`
+and `MPP`, and have no `PMC`. `MPC` is the lowest probability among the allele dosages called,
+and `--min-marginal-posterior` (default 0.9) is its threshold.
 
 ## 6. Check the Run
 
@@ -148,6 +153,10 @@ with SNP-array genotypes for every marker:
   separated the markers that disagreed with the array from the rest better than depth, `GQ`, the
   fitted bias or allele frequency. Removing markers with a call rate under 0.9 raised agreement
   with the array from 91.3% to 94.1% on one panel and from 93.3% to 95.0% on the other.
+- **`PMC` finds fewer of them.** Removing markers with a `PMC` of 0.05 or more raised agreement
+  to 92.7% and 94.2%, and every marker it removed had a call rate under 0.9 as well. `PMC` also
+  rises with ploidy and falls with depth, so a cut that suits one data set removes good markers
+  in another.
 - **Raise `--min-gq` to 20 at most.** Beyond that, most of the genotypes lost were right ones.
 - **`INFO/BIAS` is a weak filter.** A strongly biased marker is called right once its bias is
   fitted. Removing markers with a bias outside 0.5 to 2 took out 62 good markers among 162 on one

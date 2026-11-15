@@ -290,6 +290,47 @@ figures are means over the draws.
   for reasons a caller cannot see. A genotype with a `GQ` of 30 or more was wrong 6 to 7 times in
   100 there.
 
+### MPP and PMC
+
+`MPP` and `PMC` are updog's `maxpostprob` and `prop_mis`: the probability of a sample's most
+probable genotype, and one minus its mean over a marker's samples.
+
+- **The same numbers as updog.** With updog's prior, bias and overdispersion, `MPP` was within
+  0.001 of `maxpostprob` for every sample and `PMC` equal to `prop_mis` to four decimals, on 14
+  stored updog fits: diploid, tetraploid and hexaploid, `norm` and Hardy-Weinberg priors, with
+  and without a bias. The tests repeat the comparison.
+- **Samples without reads.** updog keeps a sample given a depth of 0 in the mean, at the largest
+  probability of the prior. In a stored fit with 8 such samples among 100 its `prop_mis` was
+  0.155, and 0.117 with them passed as missing. `call` writes 0.117.
+- **Against known genotypes.** Averaged over a table, `PMC` minus the share of wrong genotypes is
+  the calibration gap above with its sign turned. For one marker of 150 samples it was off by 1.7
+  to 2.7 points on average where the model fits.
+- **As a marker filter.** On two potato panels with array genotypes for every marker, removing
+  the markers with a `PMC` of 0.05 or more (356 of 1,862 and 290 of 2,602) raised agreement with
+  the array from 91.3% to 92.7% and from 93.3% to 94.2%. Removing those with a call rate under
+  0.9 raised it to 94.1% and 95.0%, and took out every marker the `PMC` cut did.
+
+`PMC` minus the share of wrong genotypes, in points, beside updog's `prop_mis` on the same draw
+of each table. Negative is too low. `call` is `--prior hwe --allele-bias auto`:
+
+| Data | `call` | updog `norm` |
+|------|--------|--------------|
+| updog's simulator: tetraploids, 150 reads | −0.3 | −0.6 |
+| updog's simulator: tetraploids, biased, 150 reads | +0.1 | −0.7 |
+| updog's simulator: tetraploids, biased, 25 reads | +0.3 | −2.1 |
+| updog's simulator: hexaploids, biased, 150 reads | −1.5 | −6.2 |
+| updog's simulator: tetraploid F1, biased | −13.4 | −6.9 |
+| polyRAD's simulator: tetraploids, 150 reads | +0.9 | −5.6 |
+| polyRAD's simulator: tetraploids, 25 reads | −0.6 | −8.5 |
+| polyRAD's simulator: hexaploids, 150 reads | −0.4 | −22.8 |
+| polyRAD's simulator: tetraploids, inbreeding 0.5 | −1.9 | −3.8 |
+| Potato clones against the array | −2.3 | −2.3 |
+
+- With `--prior norm`, `call` was 4.7 too low on the F1 table and 0.7 on the partly inbred one.
+- On polyRAD's tables updog's overdispersion, fitted at every marker, read less scatter than was
+  simulated: a median of 41 to 248 on `call`'s scale where 20 was simulated. That makes it surer
+  than the counts warrant. `call` takes one overdispersion from the whole table.
+
 ### Overdispersion and Background Reads
 
 - In simulated diploids and tetraploids with 20 or more reads per sample both values were

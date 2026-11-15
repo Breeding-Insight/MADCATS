@@ -144,8 +144,8 @@ in the QC JSON. The method is MADCATS's own, not a port of polyRAD's.
 ### What the model can and cannot say
 
 With **two alleles**, the dosage of the alternate allele fixes the genotype, so its posterior is
-the genotype posterior. These records carry `GQ`, `GP` and `PL`. `PL` is computed from the
-likelihoods and `GP` from the posteriors, so they differ by the prior.
+the genotype posterior. These records carry `GQ`, `MPP`, `GP` and `PL`, and `PMC` in INFO. `PL` is
+computed from the likelihoods and `GP` from the posteriors, so they differ by the prior.
 
 With **more than two alleles**, there is one posterior per allele, not one over whole genotypes.
 The most probable dosages of the alleles need not add up to the ploidy; when they do not, copies
@@ -390,6 +390,7 @@ madcats call --madc results/panel_MADC.csv --output-prefix results/panel \
 | `DP` | all | Reads used for the call: the sum of `AD` |
 | `XD` | `target`, `all` | Reads left out of `AD` and `DP`: Other rows at a target; elsewhere, rows that do not show the position (a deletion or an insertion removed it from the tag) |
 | `GQ` | two-allele records | Phred-scaled posterior probability that `GT` is wrong, capped at 99 |
+| `MPP` | two-allele records | Posterior probability of the most probable genotype: the largest value of `GP`, and what `GQ` gives on the Phred scale. updog's `maxpostprob` |
 | `DS` | all | Posterior mean number of copies of each alternate allele |
 | `GP` | two-allele records | Posterior probability of each genotype, from 0 to *P* alternate copies |
 | `PL` | two-allele records | Phred-scaled likelihood of each genotype, before the prior |
@@ -399,6 +400,7 @@ madcats call --madc results/panel_MADC.csv --output-prefix results/panel \
 | `INFO/BIASUNUSED` | two-allele records, with `--allele-bias auto` | The record's genotypes were called without its fitted bias, which gained less than the margin or ended at a limit of the search |
 | `INFO/NS` | all | Samples with a called genotype |
 | `INFO/AF` | all | Estimated frequency of each alternate allele |
+| `INFO/PMC` | two-allele records | Estimated proportion of samples with a wrong genotype: one minus the mean of `MPP` over the samples with reads. updog's `prop_mis` |
 
 In the haplotype VCF, rows with the same sequence are added together, and an alternate sequence
 with no reads in any sample is not an allele. An indel haplotype is written as the tag that was
@@ -417,6 +419,37 @@ from all of them. Each tile's target is its own variant. Where a tile's tag hold
 base at another tile's variant, not an ambiguity code, that variant is also written as an
 off-target record of this tile, with the same genotypes as the other tile's target record; and
 the tiles' haplotype records describe the same sequences. Count such a variant once downstream.
+
+### MPP and PMC
+
+`MPP` and `PMC` are updog's `maxpostprob` and `prop_mis`, under the names BIGr's `updog2vcf` gives
+them. BIGr's `filterVCF` filters on these names (`filter.MPP`, `filter.PMC`) and on `INFO/BIAS`.
+
+- `MPP` is the probability the model gives a sample's most probable genotype. `GQ` is the same
+  number on the Phred scale: an `MPP` of 0.9 is a `GQ` of 10, and 0.99 is 20.
+- `PMC` is one minus the mean of `MPP` over a record's samples: the share of them expected to
+  have a wrong genotype.
+
+`PMC` is taken over the samples with reads, and `--min-dp` and `--min-gq` do not change it. updog
+averages over every sample it is given a depth for, and a sample with a depth of 0 enters at the
+largest probability of the prior, which raises the value. `call` writes what updog gives when
+those samples are passed to it as missing.
+
+Both say how sure the model is, and the model is only as right as it fits the samples:
+
+- Where it fits, `PMC` averaged within 0.4 points of the share of wrong genotypes: simulated
+  random mating in diploids, tetraploids and hexaploids, with `--allele-bias off` or `auto`.
+- Where it does not, `PMC` is too low: by 2 to 11 points on biased polyploid panels called
+  without a bias, and by 9 to 15 on a biased F1 family under `--prior hwe`. updog's own value
+  was 7 points too low on that family.
+- `PMC` rises with ploidy and falls with depth. Of simulated tetraploid markers at 20 to 60
+  reads, one in six had a `PMC` under 0.05, the cut updog's documentation gives as an example,
+  and nothing was wrong with the others. In hexaploids at that depth almost none did.
+- Against the potato SNP array `PMC` averaged 1.4% where 3.6% of the genotypes disagreed (updog:
+  1.1% and 3.3%). The reads and the array also differ for reasons outside the model.
+
+[Validation & Accuracy](../reference/validation.md#mpp-and-pmc) has the comparison with updog and
+the measurements.
 
 ## See Also
 

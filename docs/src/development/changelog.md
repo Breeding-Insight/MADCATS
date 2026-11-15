@@ -51,6 +51,13 @@ Notable changes by version. Measurements behind each change are in the
 - The read-model estimate with a bias fitted starts from the estimate made without one. Started
   from a fixed value, its search could stop early: on that hexaploid table it chose an
   overdispersion of 10 where 20 is far more probable.
+- `call` writes `MPP` (per sample) and `PMC` (per record) on two-allele records: updog's
+  `maxpostprob` and `prop_mis`, under the names BIGr's `updog2vcf` gives them. `MPP` is the
+  posterior probability of the most probable genotype, and `PMC` is one minus its mean over the
+  samples with reads, whatever the genotype filters. With updog's prior, bias and overdispersion,
+  `MPP` is within 0.001 of updog 2.1.7's value and `PMC` equal to four decimals, on stored
+  reference fits. updog counts a sample given a depth of 0 at the largest probability of the
+  prior; `call` leaves samples without reads out, as updog does when they are passed as missing.
 - `call` estimates a background-read rate (`--background-rate auto`, the default) together with
   the overdispersion: the share of reads that show an allele they did not come from. It replaces
   polyRAD's contamination rate, which is now 0 unless set, because contamination cannot account for

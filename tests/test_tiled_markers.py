@@ -60,15 +60,24 @@ def madc_rows(path):
     return [(row[0], row[2], [int(value) for value in row[first_sample:]]) for row in rows[header + 1:]]
 
 
+def alternate_dosage(genotype):
+    """The number of alternate alleles in a GT value, or None for a genotype that was not called."""
+    alleles = genotype.replace("|", "/").split("/")
+    return None if "." in alleles else alleles.count("1")
+
+
 def alternate_dosages(vcf_path):
-    """Records of a VCF as {(marker, position): (is the target, alternate dosage per sample)}."""
+    """Records of a VCF as {(marker, position): (is the target, alternate dosage per sample)}.
+
+    A sample without a call has None, so it cannot pass for a homozygous reference call.
+    """
     records = {}
     with open(vcf_path) as handle:
         for line in handle:
             if line.startswith("#"):
                 continue
             fields = line.rstrip("\n").split("\t")
-            dosages = [column.split(":")[0].replace("|", "/").split("/").count("1") for column in fields[9:]]
+            dosages = [alternate_dosage(column.split(":")[0]) for column in fields[9:]]
             records[(fields[0], int(fields[1]))] = ("TARGET" in fields[7].split(";"), dosages)
     return records
 

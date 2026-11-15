@@ -105,8 +105,10 @@ For inbred lines and partly selfing species, `--selfing-rate` adjusts it. A shar
 generation comes from self-fertilisation, which moves prior probability from the intermediate
 dosages to the two homozygous ones (the equilibrium proportions of de Silva et al. 2005, as in
 polyRAD). At 1 only the two homozygous dosages have prior probability, so `call` cannot call a
-heterozygote. Use a value slightly below 1, such as 0.99, to allow residual heterozygosity. It
-applies to samples of even ploidy, while samples of odd ploidy keep random-mating proportions.
+heterozygote. Use a value slightly below 1, such as 0.99, to allow residual heterozygosity. A rate
+below 1 applies to samples of even ploidy, while samples of odd ploidy keep random-mating
+proportions. A rate of 1 applies to every ploidy, so samples of odd ploidy also get only the two
+homozygous dosages.
 
 **`norm`** makes no assumption about mating. Its dosage probabilities are proportional to a normal
 density at the dosages 0 to *P*, so it can be narrower than Hardy-Weinberg proportions (one

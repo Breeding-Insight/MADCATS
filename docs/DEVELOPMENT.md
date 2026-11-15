@@ -3214,6 +3214,165 @@ The real data sets with the rules as built, `--prior hwe`:
 - Rejected at a limit under `auto`: 4 records on the potato clones, 25 on
   the vendor MADC, 10 on smelt and 14 to 23 on the pooled tables.
 
+**`MPP` and `PMC`: updog's two summaries of the posterior.** BIGr's
+`updog2vcf` writes updog's `maxpostprob` for each sample as `MPP` and its
+`prop_mis` for each marker as `PMC`, and its `filterVCF` filters on both.
+`call` writes them under those names on two-allele records. updog 2.1.7 was
+read first for what the two values are:
+
+- `flexdog_full` (`R/ashdog.R`) takes each individual's posterior over the
+  dosages from `get_wik_mat` (`src/flexdog.cpp`): prior times beta-binomial
+  likelihood at the fitted bias, sequencing error and overdispersion,
+  normalised. `geno` is the first dosage with the largest posterior,
+  `maxpostprob` is that posterior, and `prop_mis` is `1 - mean(maxpostprob)`.
+- Individuals with a missing count are removed before the fit and take no
+  part in the mean. Individuals with a depth of 0 stay: their posterior is
+  the prior and their `maxpostprob` its largest probability. `multidog` drops
+  a marker only when every individual has a depth of 0 or is missing.
+- The documentation calls `prop_mis` the posterior proportion of individuals
+  mis-genotyped, and gives as an example discarding markers over 0.05 and
+  individuals with a `maxpostprob` under 0.95. The vignettes use 0.05
+  together with a bias between exp(-1) and exp(1), and call 0.2 a loose cut
+  to start from. Gerard et al.
+  (2018) define the two values and report the estimated minus the true
+  proportion misgenotyped; Gerard and Ferrão (2020) report it by prior.
+- BIGr 0.7.2 writes `maxpostprob` and `prop_mis` unchanged. `filterVCF` sets
+  a genotype to missing where `MPP` is under `filter.MPP` and keeps markers
+  with `PMC` under `filter.PMC`. It reads `PMC` with the pattern
+  `PMC=([0-9.]+)`, which a number written with an exponent does not match,
+  and takes the INFO and FORMAT keys of a file from its first record.
+
+In `call` the posterior of a two-allele record is the same object: prior
+times beta-binomial likelihood, normalised over the dosages
+(`dosage_posterior`), for whichever prior, bias and read model the record was
+called with. `MPP` is the largest value of `GP`, `GQ` is `MPP` on the Phred
+scale, and `PMC` is one minus the mean of `MPP`. Both are written with four
+decimals and no exponent. Three points needed a decision:
+
+- Samples without reads are left out of `PMC` and have no `MPP`. `call`
+  writes no genotype for them, and counting them would mix missing data into
+  a statement about genotypes. This is what updog gives when such samples
+  are passed as missing; passed with a depth of 0 they raise its value.
+- `--min-dp` and `--min-gq` do not enter `PMC`. It describes the model's fit
+  at the marker, as in updog, which filters nothing before computing it.
+- Records with more than two alleles carry neither. They have one posterior
+  per allele, and `MPC` is an upper bound, not the genotype's probability.
+
+*Against updog's own numbers.* `scripts/make_updog_fixture.R` now stores
+`maxpostprob` and `prop_mis` of its 14 fits (regenerating it left every
+earlier value unchanged), and a fit of 100 tetraploids of which 8 have no
+reads. With updog's prior, bias and overdispersion, the record `call` writes:
+
+| Fit | Prior | updog `prop_mis` | `PMC` | Largest difference of `MPP` from `maxpostprob` |
+|---|---|---|---|---|
+| Random-mating tetraploids | norm | 0.11309 | 0.1131 | 0.0003 |
+| One hexaploid family | norm | 0.17282 | 0.1728 | 0.0001 |
+| Inbred diploids | norm | 0.00001 | 0 | 0.0001 |
+| Rare allele, tetraploids | norm | 0.00040 | 0.0004 | 0.0005 |
+| Tetraploids, bias 0.6 | norm, hw | 0.14372, 0.14516 | 0.1437, 0.1451 | 0.0006, 0.0004 |
+| Tetraploids, bias 1.9 | norm, hw | 0.16657, 0.16682 | 0.1666, 0.1668 | 0.0001, 0.0009 |
+| Tetraploids, no bias, bias fitted | norm, hw | 0.10257, 0.09483 | 0.1025, 0.0948 | 0.0010, 0.0010 |
+| Diploids, bias 0.5 | norm, hw | 0.00001, 0.00001 | 0, 0 | 0.0001, 0.0001 |
+| Hexaploid family, bias 1.5 | norm, hw | 0.36025, 0.40599 | 0.3602, 0.4059 | 0.0003, 0.0007 |
+
+In the fit with 8 samples without reads, updog's `prop_mis` is 0.15484 with
+them given a depth of 0 (each at 0.4046, the largest probability of the
+prior) and 0.11653 with them given as missing; `call` writes 0.1165.
+
+*Against known genotypes.* On the replicate tables above, called without
+filters, `PMC` and the share of samples whose most probable dosage is wrong
+were compared marker by marker. Averaged over a table, `PMC` minus that
+share is the calibration gap of the table above with its sign turned: the two
+were computed by different scripts, one from `GQ` and one from `GP`, and
+agree. Mean over the draws, in points, `--prior hwe`; negative is too low:
+
+| Table | `off` | `auto` | `fit` | Mean difference at one marker, `auto` |
+|---|---|---|---|---|
+| 4x random mating | +0.1 | +0.1 | −0.6 | 1.7 |
+| 4x random mating, biased | −2.0 | +0.2 | −1.2 | 3.2 |
+| 4x F1 | +0.3 | −0.3 | −3.0 | 2.3 |
+| 4x two subpopulations | −0.5 | −1.2 | −3.0 | 2.5 |
+| 4x inbred lines | −0.4 | −0.4 | −14.4 | 1.0 |
+| 6x random mating | +0.3 | +0.3 | −4.2 | 2.7 |
+| 6x random mating, biased | −4.7 | −3.8 | −5.1 | 7.0 |
+| updog 4x random mating | −0.3 | −0.3 | −0.4 | 1.1 |
+| updog 4x random mating, biased | −5.4 | +0.5 | −0.5 | 2.0 |
+| updog 6x random mating, biased | −10.9 | −0.1 | −2.3 | 6.5 |
+| updog 4x F1, biased | −8.7 | −11.1 | −14.7 | 13.7 |
+| polyRAD 4x outbred | +0.2 | +0.2 | −0.5 | 1.8 |
+| polyRAD 6x outbred | 0.0 | 0.0 | −1.5 | 2.7 |
+| polyRAD 4x outbred, low depth | −0.1 | −0.1 | −0.5 | 2.2 |
+| polyRAD 2x, 4x and 6x, three groups, 8 reads | −0.8 | −0.8 | −2.2 | 2.5 |
+
+updog's `prop_mis` on the tables it was run on (one draw each), beside
+`call` with `auto` on the same draw:
+
+| Table | `call`, hwe | `call`, norm | updog `norm` |
+|---|---|---|---|
+| updog 4x random mating | −0.3 | | −0.6 |
+| updog 4x random mating, biased | +0.1 | | −0.7 |
+| updog 4x random mating, biased, low depth | +0.3 | | −2.1 |
+| updog 6x random mating, biased | −1.5 | | −6.2 |
+| updog 4x F1, biased | −13.4 | −4.7 | −6.9 |
+| polyRAD 4x outbred | +0.9 | | −5.6 |
+| polyRAD 4x outbred, low depth | −0.6 | | −8.5 |
+| polyRAD 6x outbred | −0.4 | | −22.8 |
+| polyRAD 4x, inbreeding 0.5 | −1.9 | −0.7 | −3.8 |
+| Potato, 85 clones, against the array | −2.3 | | −2.3 |
+
+- Where the model fits the samples, `PMC` is the share of wrong genotypes to
+  within 0.4 points with `off` and `auto`. For one marker of 150 samples it
+  is off by 1.7 to 2.7 points on average.
+- Where the model does not fit, `PMC` is too low: a bias in the data and
+  none fitted (2 to 11 points), a bias fitted on inbred lines (14), a biased
+  F1 family under `hwe` (9 to 15).
+- updog's value is further from the truth than `call`'s on every polyploid
+  table but the F1 one under `hwe`. On polyRAD's tables its overdispersion,
+  fitted at every marker, read less scatter than was simulated: a median of
+  41, 95 and 248 on `call`'s scale in the three tables, for a simulated 20,
+  and in the hexaploid table 23% of markers got a bias beyond 1.5-fold where
+  none was simulated.
+- `PMC` depends on ploidy and depth as much as on the marker. Of the 4x
+  random-mating markers at 20 to 60 reads, 17% have a `PMC` under 0.05, and
+  of the 6x ones under 1%; nothing is wrong with the others.
+
+*As a marker filter.* On the two potato panels of the filter study above,
+called again with the code as committed (`--allele-bias fit`; the figures of
+that study reproduce), where a marker is bad when fewer than 80% of its
+genotypes have the array's dosage. Markers removed, share of them bad, share
+of the bad removed, and agreement of the genotypes that pass the default
+filters at the markers left (91.3% and 93.3% with no marker filter):
+
+| Marker removed when | First panel | Second panel |
+|---|---|---|
+| `PMC` of 0.05 or more | 356; 52%; 57%; 92.7% | 290; 32%; 40%; 94.2% |
+| `PMC` of 0.1 or more | 164; 71%; 36%; 91.8% | 86; 51%; 19%; 93.6% |
+| `PMC` of 0.2 or more | 53; 94%; 15%; 91.3% | 17; 94%; 7%; 93.4% |
+| Call rate under 0.9 | 555; 45%; 77%; 94.1% | 530; 28%; 65%; 95.0% |
+| As many markers as the row above, by highest `PMC` | 555; 40%; 69%; 93.2% | 530; 25%; 58%; 94.7% |
+
+- The call rate under the default filters finds more of the bad markers than
+  `PMC` at an equal number removed. On both panels every marker with a
+  `PMC` of 0.05 or more also has a call rate under 0.9.
+- With `auto` the figures are close: on the first panel a `PMC` of 0.05 or
+  more removes 383 markers and leaves 92.2% agreement (90.9% with no marker
+  filter), and a call rate under 0.9 removes 590 and leaves 93.8%; on the
+  second, 555 and 94.1% (from 93.3%) against 811 and 94.8%.
+- On the 85 potato clones, with `auto`, a `PMC` under 0.05 keeps 1,438 of
+  1,544 markers and raises agreement of all genotypes from 96.4% to 97.0%;
+  updog's `prop_mis` under 0.05 keeps 1,466 of its markers and raises its
+  agreement from 96.7% to 97.4%.
+
+*Read by BIGr.* BIGr could not be installed here (its dependency vcfR is not
+available), so `filterVCF` itself was not run. Its two functions that read
+INFO were copied from its source and run on the potato VCF of `call`: they
+find `PMC` and `BIAS` among the keys of the first record and read all 1,544
+values of each as written. `filter.PMC = 0.05` keeps 1,438 records. `MPP`
+taken by its place in FORMAT, as vcfR's `extract.gt` takes it, is a number in
+131,224 cells and missing in the 16 without reads; `filter.MPP = 0.95` would
+set 2,687 of 126,058 genotypes to missing. In an `all` VCF whose first record
+has more than two alleles, `filterVCF` would not find the two keys.
+
 **The structure prior (`--prior structure`).** polyRAD's `IteratePopStruct`
 gives each sample its own allele frequencies: it runs a principal component
 analysis of the genotype estimates of all markers, regresses every allele on

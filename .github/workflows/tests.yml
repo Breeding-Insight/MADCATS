@@ -31,7 +31,11 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install the optional genome aligner (filter-paralogs tests)
-        run: python -m pip install mappy
+        run: |
+          # mappy has no wheel for this macOS Python, and its source does not compile as the
+          # universal (arm64 + x86_64) binary that setup-python's interpreter asks for.
+          if [ "$RUNNER_OS" = "macOS" ]; then export ARCHFLAGS="-arch $(uname -m)"; fi
+          python -m pip install mappy
 
       - name: Run tests
         run: python -m unittest discover -s tests -v

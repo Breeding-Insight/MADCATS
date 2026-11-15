@@ -42,6 +42,16 @@ pip install 'madcats[genome]'
 headers. Every other command runs without it, and only `filter-paralogs` imports it. The standalone
 binaries do not include it.
 
+On a Mac, the Python that Apple ships and the one from python.org are universal builds, for Apple
+Silicon and Intel at once, and `mappy` does not compile for both. If the install fails while
+compiling, build `mappy` for your machine alone:
+
+```bash
+ARCHFLAGS="-arch $(uname -m)" pip install 'madcats[genome]'
+```
+
+A Python built for one architecture, such as conda's, does not need this.
+
 ## Pre-built Binaries
 
 Standalone executables bundle their own Python interpreter, so they run on machines without Python.

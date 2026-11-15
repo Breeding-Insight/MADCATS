@@ -8,7 +8,7 @@ ignores extra columns.
 One FASTQ per sample, optionally gzipped, in a single folder (`--fastq-dir`). Restrict which files
 MADCATS reads with `--fastq-glob` (default `*`).
 
-- `generate` expects **primer-started single-end reads**, so every read must begin at the
+- `generate` expects primer-started single-end reads, so every read must begin at the
   assignment anchor. `--leading-anchor` handles raw DArT deliveries with a barcode and common
   sequence in front.
 - `normalize-reads` accepts any read that contains a panel window, in either orientation.
@@ -101,7 +101,7 @@ ambiguous, so without tile handling both markers would get zero reads. Instead, 
 to every tile it fits, as DArT's own pipeline does (see the
 [evidence model](../reference/evidence-model.md#tiled-markers)).
 
-Two markers are tiles of one amplicon when they **read the same tag window**. Their tags have the
+Two markers are tiles of one amplicon when they read the same tag window. Their tags have the
 same length, one marker's left primer matches the start of the other's tag, and their Ref tags
 agree, up to IUPAC codes, at every position except the two markers' own variant positions. A tile
 family is a set of markers linked this way. `generate --tile-groups` chooses which links it uses:

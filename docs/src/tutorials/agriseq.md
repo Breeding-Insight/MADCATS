@@ -63,8 +63,8 @@ new. Freezing with `--reuse-tags` raised cross-chip haplotype sharing from 42% t
 
 With `--reuse-tags`, `normalize-reads` still scores the frozen windows against the new run's reads
 and reports `freeze_health` in the QC. It records the read-weighted coverage of the frozen panel
-against what fresh placement would choose today, and the markers losing the most. One line on stderr summarizes
-what freezing costs this run.
+against what fresh placement would choose today, and the markers losing the most. One line on
+stderr summarizes what freezing costs this run.
 
 ## Recommended Production Workflow
 

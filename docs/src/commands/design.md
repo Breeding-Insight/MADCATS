@@ -16,17 +16,17 @@ time. The other panel routes were validated against it.
 
 For each marker it:
 
-1. locates the left primer inside the probe-design target, in either orientation;
+1. locates the left primer inside the probe-design target, in either orientation
 2. keeps only primer-started tag windows that contain the bracketed variant (a primer occurrence
-   in a duplicated flank that never reaches the variant is not a candidate);
+   in a duplicated flank that never reaches the variant is not a candidate)
 3. builds the Ref and Alt tags as the primer sequence verbatim plus the genomic continuation, so
-   degenerate (IUPAC) primer bases persist exactly as the vendor reports them;
-4. checks the result and stops with an error if the files disagree.
+   degenerate (IUPAC) primer bases persist exactly as the vendor reports them
+4. checks the result and stops with an error if the files disagree
 
-SNPs, insertions, deletions and homopolymer-shifted indels are handled by one rule: the variant
-position is where the two full allele expansions first differ.
+One rule handles SNPs, insertions, deletions and homopolymer-shifted indels. The variant position
+is where the two full allele expansions first differ.
 
-> **When to use:** whenever you have both design files. `generate` can also read them directly
+> **When to use.** Use it whenever you have both design files. `generate` can also read them directly
 > (`--primers` + `--probe-design`), but running `design` first gives you a reviewable panel you
 > can reuse without the vendor files.
 
@@ -67,9 +67,9 @@ madcats design \
 
 ## Output Format
 
-A reference-tag CSV with one row per marker; see
-[Input Formats](../getting-started/input-formats.md#reference-tags-csv). The number of definitions
-written is printed to stderr.
+A reference-tag CSV with one row per marker. See
+[Input Formats](../getting-started/input-formats.md#reference-tags-csv). The command prints the
+number of definitions it wrote to stderr.
 
 ## Errors
 
@@ -83,11 +83,11 @@ The run stops, naming the marker, when:
 
 | Panel | Design tags vs vendor canonical rows |
 |-------|--------------------------------------|
-| Blackberry (3,015 markers, 10 indels) | 2,881 identical; all 134 others differ only by vendor IUPAC codes |
-| Pecan 3K | 3,084 identical of 3,100; 16 differ only by vendor IUPAC codes |
+| Blackberry (3,015 markers, 10 indels) | 2,881 identical, and all 134 others differ only by vendor IUPAC codes |
+| Pecan 3K | 3,084 of 3,100 identical, and 16 differ only by vendor IUPAC codes |
 | Sweetpotato | All 6,238 81-bp prefixes of the public PanelHub 109-bp design sequences agree |
 
 ## See Also
 
-- [madcats infer-design](infer-design.md): the same panel without the primer file
-- [madcats generate](generate.md): use the panel
+- [madcats infer-design](infer-design.md) for the same panel without the primer file
+- [madcats generate](generate.md) to use the panel

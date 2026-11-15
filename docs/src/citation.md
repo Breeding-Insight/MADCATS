@@ -19,21 +19,21 @@ BibTeX:
 }
 ```
 
-> **Note:** A formal publication with DOI is planned. This section will be updated when available.
+> The authors plan a formal publication with DOI and will update this section when it is available.
 
 ## AI Assistance
 
 MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1 (Anthropic), which
 helped write its code and documentation. The authors directed the work, reviewed and tested the
-results, and are ultimately responsible for the application.
+results, and are responsible for the application.
 
 ## Related Resources
 
 - Breeding Insight, [MADC file format](https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/)
 - Breeding Insight, [MADC data processing](https://breeding-insight.github.io/BIGr_documentation/posts/madc-data-processing/)
-- Breeding Insight, [BIGapp-PanelHub](https://github.com/Breeding-Insight/BIGapp-PanelHub): public panel metadata and design Ref/Alt tags
-- Breeding Insight, [dartag_alleles](https://github.com/Breeding-Insight/dartag_alleles): the reference-BLAST / paralog audit pattern
-- The sweetpotato DArTag panel publication: [PMC11354173](https://pmc.ncbi.nlm.nih.gov/articles/PMC11354173/)
+- Breeding Insight, [BIGapp-PanelHub](https://github.com/Breeding-Insight/BIGapp-PanelHub), with public panel metadata and design Ref/Alt tags
+- Breeding Insight, [dartag_alleles](https://github.com/Breeding-Insight/dartag_alleles), for the reference-BLAST / paralog audit pattern
+- The sweetpotato DArTag panel publication, [PMC11354173](https://pmc.ncbi.nlm.nih.gov/articles/PMC11354173/)
 
 If you call dosages from MADCATS output with updog, please also cite:
 
@@ -42,7 +42,7 @@ Gerard, D., Ferrão, L.F.V., Garcia, A.A.F., & Stephens, M. (2018). Genotyping
 polyploids from messy sequencing data. Genetics 210(3):789-807.
 ```
 
-If you clean a MADC with `madcats filter-paralogs`, please also cite minimap2, which does its
+If you filter a MADC with `madcats filter-paralogs`, please also cite minimap2, which does its
 alignments:
 
 ```
@@ -53,9 +53,9 @@ Li, H. (2021). New strategies to improve minimap2 alignment accuracy.
 Bioinformatics 37(23):4572-4574. https://doi.org/10.1093/bioinformatics/btab705
 ```
 
-If you call genotypes with `madcats call`, please also cite the methods its model is adapted
-from: polyRAD for the likelihood and the Hardy-Weinberg prior, and updog for the allelic bias
-(`--allele-bias fit`) and the `norm` prior (`--prior norm`):
+If you call genotypes with `madcats call`, please also cite the methods its model adapts.
+The likelihood and the Hardy-Weinberg prior come from polyRAD, and the allelic bias
+(`--allele-bias fit`) and the `norm` prior (`--prior norm`) come from updog:
 
 ```
 Clark, L.V., Lipka, A.E., & Sacks, E.J. (2019). polyRAD: genotype calling with

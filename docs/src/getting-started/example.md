@@ -31,10 +31,10 @@ The same files are in the repository under `examples/madcats-demo`.
 The project has twelve diploid samples, eight markers with 81-bp tags, and about 550 reads per
 sample. Beyond each marker's designed Ref and Alt alleles:
 
-- **Chr02** and **Chr04** carry an extra microhaplotype with a second SNP on the Ref or Alt background.
-- **Chr06** carries a haplotype with an undesigned 1-bp insertion.
-- **Chr08** has no Alt allele in any sample.
-- **Chr03** and **Chr07** have their primer on the reverse strand of the probe-design target.
+- Chr02 and Chr04 carry an extra microhaplotype with a second SNP on the Ref or Alt background.
+- Chr06 carries a haplotype with an undesigned 1-bp insertion.
+- Chr08 has no Alt allele in any sample.
+- Chr03 and Chr07 have their primer on the reverse strand of the probe-design target.
 - Every read has a 0.2% chance per base of a sequencing error, about 8% of reads are shorter than
   the tag, and each sample has a few off-target reads.
 
@@ -106,6 +106,7 @@ madcats validate --generated results/other_MADC.csv --expected results/demo_MADC
 ## Next Steps
 
 - [Choosing a Workflow](workflows.md) to find which commands your own data needs
-- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md) for genotypes and VCFs from this example's MADC
+- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md) for genotypes and VCFs from this
+  example's MADC
 - [Evidence Model](../reference/evidence-model.md) on how MADCATS assigns, discovers and denoises reads
 - [Output Formats](../reference/output-formats.md) for every column of the MADC table

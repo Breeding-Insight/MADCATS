@@ -16,9 +16,9 @@ three curves without external truth:
 
 | Curve | Measures |
 |-------|----------|
-| **Retention** | Fraction of located reads that fully cover the best window. Predicted for a dense grid of lengths from one coverage pass |
-| **Cleanliness** | Assigned reads not merged away by denoising or dropped for failing the evidence rules |
-| **Information** | Evidence-passing novel haplotype rows per 100 markers |
+| Retention | Fraction of located reads that fully cover the best window. Predicted for a dense grid of lengths from one coverage pass |
+| Cleanliness | Assigned reads not merged away by denoising or dropped for failing the evidence rules |
+| Information | Evidence-passing novel haplotype rows per 100 markers |
 
 Each candidate in `--lengths` runs the actual `normalize-reads` and `generate` code on a sample
 subset.
@@ -29,14 +29,14 @@ subset.
 the best survival are eligible. Among them, the most informative length wins, with ties going to the
 shorter length.
 
-Information is not used on its own, because systematic errors (such as Ion homopolymer indels that
+The scan does not use information alone, because systematic errors (such as Ion homopolymer indels that
 recur across samples) pass the reproducibility route and look like extra haplotypes. With this
-rule, the scan picked the length that independent validation favored on every dataset tested:
-41 bp on Ion oyster, 81 bp on GT-seq, and 61 bp on capture.
+rule, the scan picked the length that independent validation favored on every dataset tested. It
+picked 41 bp on Ion oyster, 81 bp on GT-seq, and 61 bp on capture.
 
 ### Seed sensitivity
 
-The recommendation can depend on which samples are scanned. `--scan-draws N` repeats the sweep on N
+The recommendation can depend on which samples the scan uses. `--scan-draws N` repeats the sweep on N
 seeded draws, reports each draw's recommendation, and takes the most-voted length. If the
 recommendation changes between draws, scan more samples or check the choice against external data.
 
@@ -54,7 +54,7 @@ recommendation changes between draws, scan more samples or check the choice agai
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--fastq-glob <GLOB>` | `*` | FASTQ filename glob within `--fastq-dir` |
-| `--scan-samples <INT>` | 6 | Samples per candidate run: the first in sorted order, or a seeded draw |
+| `--scan-samples <INT>` | 6 | Samples per candidate run, taken as the first in sorted order or as a seeded draw |
 | `--scan-seed <INT>` | none | Draw the subset at random with this seed |
 | `--scan-draws <INT>` | 1 | Independent draws to sweep (seeds `--scan-seed`, +1, +2, ...) |
 | `--grid-step <INT>` | 10 | Step for the dense predicted-retention grid |
@@ -93,12 +93,12 @@ madcats window-scan \
 
 | File | Contents |
 |------|----------|
-| `OUT_DIR/window_scan.tsv` | One row per length: predicted and measured retention, assignment, cleanliness, information, survival, eligibility; then the dense retention grid |
+| `OUT_DIR/window_scan.tsv` | One row per length with predicted and measured retention, assignment, cleanliness, information, survival and eligibility, followed by the dense retention grid |
 | `OUT_DIR/window_scan.qc.json` | Parameters, per-length results and `recommended_tag_length`. With several draws, also `recommendation_votes` and `recommendation_stability` |
 | `OUT_DIR/len_<length>/` | Per-candidate run directories (under `OUT_DIR/draw_N/` when `--scan-draws` > 1) |
 
-If tiles cannot be given distinct windows at some length, that length is reported as failed and the
-scan continues.
+If tiles cannot get distinct windows at some length, the scan reports that length as failed and
+continues.
 
 ## Tips
 

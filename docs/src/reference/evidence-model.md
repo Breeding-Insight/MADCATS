@@ -52,14 +52,14 @@ assumes independent markers.
 
 `generate` always writes the canonical Ref and Alt rows, even with zero counts.
 
-Any other sequence becomes a row when it reaches `--min-global-count` reads project-wide **and**
+Any other sequence becomes a row when it reaches `--min-global-count` reads project-wide and
 passes at least one enabled evidence route:
 
 | Route | Default | Rule |
 |-------|---------|------|
-| **Reproducibility** (primary) | on | At least `--reproducible-min-reads` (10) reads in each of at least `--reproducible-min-samples` (2) samples |
-| **Depth** | on | At least `--depth-min-reads` (30) reads within a single sample. Keeps private alleles discoverable in unreplicated designs |
-| **Quality** | off | At least `--quality-min-clean-reads` reads whose every tag base reaches `--discovery-min-quality` (Q20) |
+| Reproducibility (primary) | on | At least `--reproducible-min-reads` (10) reads in each of at least `--reproducible-min-samples` (2) samples |
+| Depth | on | At least `--depth-min-reads` (30) reads within a single sample. Keeps private alleles discoverable in unreplicated designs |
+| Quality | off | At least `--quality-min-clean-reads` reads whose every tag base reaches `--discovery-min-quality` (Q20) |
 
 Routes combine by OR. Identical tag sequences that recur independently across samples are strong
 evidence, even when one base position is systematically low quality, which is why reproducibility
@@ -112,8 +112,8 @@ three stay consistent.
 
 `generate` normally reads the target base at its fixed offset in the tag. When a gapped alignment
 explains the row with fewer edits, stays within the substitution and gap limits, and is confirmed by
-at least 12 bases after its last gap, the target base comes from that alignment instead. A target inside a
-deletion, or pushed past the end of the read, is `Other`.
+at least 12 bases after its last gap, the target base comes from that alignment instead. A target
+inside a deletion, or pushed past the end of the read, is `Other`.
 
 ## IUPAC Codes and N Bases
 
@@ -140,10 +140,10 @@ paralogs.
 
 ## Read Accounting
 
-The QC JSON accounts for every read. It counts FASTQ records, reads assigned at full length, reads assigned
-through a gapped alignment (`reads_assigned_gapped`), partial reads credited, ambiguous or unmapped,
-reads moved by each denoising pass, reads dropped with low-evidence sequences, and per-sample
-`reads_in_emitted_rows`.
+The QC JSON accounts for every read. It counts FASTQ records, reads assigned at full length, reads
+assigned through a gapped alignment (`reads_assigned_gapped`), partial reads credited, ambiguous or
+unmapped, reads moved by each denoising pass, reads dropped with low-evidence sequences, and
+per-sample `reads_in_emitted_rows`.
 
 A read credited to several tiles counts once in `reads_assigned_full_length` (`reads_assigned`
 per sample). The QC JSON counts the further credits separately, as `tile_extra_credits_full_length`

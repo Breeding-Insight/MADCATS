@@ -15,8 +15,9 @@ python3 scripts/madc_to_reference_tags.py \
 ```
 
 The script announces markers that cannot become loci with a `WARNING:` and lists them with their
-reason in `reference_tags.csv.skipped.tsv`. The most common reason is Ref and Alt rows carrying the same
-sequence, which means the variant lies one base past the window or the design is presence/absence.
+reason in `reference_tags.csv.skipped.tsv`. The most common reason is Ref and Alt rows carrying the
+same sequence, which means the variant lies one base past the window or the design is
+presence/absence.
 
 Prefer this route when a vendor MADC is available. It reproduces the vendor's tags, including
 IUPAC curation.

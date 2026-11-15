@@ -22,8 +22,8 @@ Chr01_000123|RefMatch,Chr01_000123,ACGT...,ACGT...,0,...,.,57,0,...
 | `ClusterConsensusSequence` | Canonical rows carry their own sequence. Match/Other rows carry the Ref tag, following vendor convention |
 | `CallRate` | For canonical rows, the fraction of samples with canonical Ref or Alt reads at the locus. For other rows, `0` |
 | `OneRatioRef` … `PICRef` | Vendor downstream statistics, not FASTQ evidence, so emitted as `.` |
-| `PICSnp` → **`Variants`** | With `--annotations on` (default), the row's events against the Ref tag. Otherwise `.` |
-| `AvgPIC` → **`MarkerType`** | With `--annotations on` (default), what the row carries beyond its canonical. Otherwise `.` |
+| `PICSnp` → `Variants` | With `--annotations on` (default), the row's events against the Ref tag. Otherwise `.` |
+| `AvgPIC` → `MarkerType` | With `--annotations on` (default), what the row carries beyond its canonical. Otherwise `.` |
 | `AvgCountRef`, `AvgCountSnp` | For canonical rows, nonzero means of the Ref and Alt counts. For other rows, the row's own nonzero mean, in both columns |
 | `RatioAvgCountRefAvgCountSnp` | `.` |
 | one column per sample | Integer read counts |
@@ -81,13 +81,13 @@ is exactly the design (e.g. `46:C>G`).
 - input paths
 - per-sample read accounting of records read, reads assigned, gapped and partial assignments, reads
   in emitted rows, reads moved by denoising, reads dropped and why
-- the tile families (`tile_families`) and the extra credits they add (`tile_extra_credits_*`, described in
-  [Read Accounting](evidence-model.md#read-accounting))
+- the tile families (`tile_families`) and the extra credits they add (`tile_extra_credits_*`,
+  described in [Read Accounting](evidence-model.md#read-accounting))
 - row counts by category, by evidence route, and by `marker_types`
 - the variants sidecar path
 
-`normalize-reads`, `infer-design`, `window-scan` and `filter-paralogs` write their own QC JSONs. See each
-command's page.
+`normalize-reads`, `infer-design`, `window-scan` and `filter-paralogs` write their own QC JSONs. See
+each command's page.
 
 ## Genome Labels (filter-paralogs)
 
@@ -97,7 +97,7 @@ third statistics column, keeping the 16-column layout:
 
 | Column | Contents |
 |--------|----------|
-| `PICRef` → **`GenomeLabel`** | `on_target`, `paralog`, `ambiguous`, `unmapped` or `unplaced`, depending on where the reference genome places the row's haplotype |
+| `PICRef` → `GenomeLabel` | `on_target`, `paralog`, `ambiguous`, `unmapped` or `unplaced`, depending on where the reference genome places the row's haplotype |
 
 It also writes `OUTPUT.genome_labels.csv` (one line per input row, dropped rows included, with
 the row's score at its marker and its best score elsewhere) and `OUTPUT.genome_markers.csv` (where
@@ -109,8 +109,8 @@ it placed each marker). The command page describes both.
 (the designed variant of each marker), `PREFIX.all.vcf` (targets plus other base substitutions in
 the tags) and `PREFIX.haplotypes.vcf` (whole tag sequences as alleles). It also writes a QC JSON and,
 for the haplotype VCF, a table tying each allele number to its MADC rows. Coordinates are
-marker-local, so `CHROM` is the marker and `POS` a position on its Ref tag. The fields and the model behind them are
-on the [command page](../commands/call.md#outputs).
+marker-local, so `CHROM` is the marker and `POS` a position on its Ref tag. The fields and the
+model behind them are on the [command page](../commands/call.md#outputs).
 
 ## Vendor-Style Preamble (HapApp)
 

@@ -1,7 +1,7 @@
 # Contributing
 
-Contributions are welcome: bug reports, documentation fixes, validation results on new platforms,
-and code.
+Contributions are welcome, such as bug reports, documentation fixes, validation results on new
+platforms, and code.
 
 ## Development Setup
 
@@ -15,9 +15,9 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-No other dependencies are needed to develop or test. The `filter-paralogs` tests that align to a
-synthetic genome run only when `mappy` is installed (`pip install -e '.[genome]'`); without it they
-are skipped.
+Developing and testing need no other dependencies. The `filter-paralogs` tests that align to a
+synthetic genome run only when `mappy` is installed (`pip install -e '.[genome]'`), and the suite
+skips them without it.
 
 ## Running Tests
 
@@ -38,15 +38,15 @@ its simulated truth. If a change alters the example's numbers, update
 [Try the Example](../getting-started/example.md) to match. To change the example data itself,
 edit and rerun `examples/madcats-demo/make_demo_data.py`.
 
-Changes that touch counting should also be checked against real data. The standard is byte-for-byte:
-a refactor regenerates existing tables identically from cache, and a behaviour change is measured
+Also check changes that touch counting against real data. The standard is byte-for-byte. A
+refactor regenerates existing tables identically from cache, and a behaviour change is measured
 against a comparator before it becomes a default. Record those measurements in
 [`docs/DEVELOPMENT.md`](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md).
 
 ## Code Style
 
-- Standard library only. A new dependency needs a strong reason; the optional `mappy` extra for
-  `filter-paralogs` is imported only inside that command's module, `madcats_paralogs.py`.
+- Standard library only. A new dependency needs a strong reason. Only that command's module,
+  `madcats_paralogs.py`, imports the optional `mappy` extra for `filter-paralogs`.
 - Keep the section layout of `madcats.py` (see [Architecture](architecture.md)).
 - Every analysis threshold is a command-line option with a documented default.
 - Stop with a clear error on inconsistent input instead of writing a table that may be wrong.
@@ -64,8 +64,8 @@ mdbook build docs           # static site in docs/book/
 
 ## Releasing
 
-Releases are driven by a version tag. The version lives in one place, `__version__` in
-`madcats.py`; `pyproject.toml` reads it from there.
+A version tag drives each release. The version lives in one place, `__version__` in
+`madcats.py`, and `pyproject.toml` reads it from there.
 
 1. Bump `__version__` in `madcats.py` and add an entry to `docs/src/development/changelog.md`.
 2. Commit, then tag and push:
@@ -98,10 +98,10 @@ pyinstaller --onefile --name madcats --paths . packaging/pyinstaller_entry.py
 
 ### One-time setup
 
-- PyPI: on [pypi.org](https://pypi.org), add a *pending trusted publisher* for project
+- For PyPI, add a *pending trusted publisher* on [pypi.org](https://pypi.org) for project
   `madcats` with owner `Breeding-Insight`, repository `MADCATS`, workflow `release.yml` and
-  environment `pypi`. No API token is stored in GitHub.
-- Read the Docs: import the GitHub repository at
+  environment `pypi`. GitHub stores no API token.
+- For Read the Docs, import the GitHub repository at
   [readthedocs.org](https://readthedocs.org/dashboard/import/) under the project slug
   `madcats`. Builds then run on every push.
 

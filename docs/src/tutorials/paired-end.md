@@ -28,7 +28,8 @@ is needed. Disagreeing overlap bases take the higher-quality call.
 | `pool` | Keep both mates as independent reads |
 | `drop` | Discard the pair |
 
-The merger pairs mates by read ID. Mismatched names or unequal read counts stop the run with an error.
+The merger pairs mates by read ID. Mismatched names or unequal read counts stop the run with an
+error.
 
 On a synthetic paired-end truth set with modeled adapter read-through, 100% of 513,715 pairs merged
 with 98.6% molecular count recovery.
@@ -37,8 +38,8 @@ with 98.6% molecular count recovery.
 
 Dual-anchored capture designs (in Flex-Seq, R1 anchors the left probe and R2 the right) have mates
 covering opposite halves of a fragment neither read spans. The mates cannot be merged, and pooling
-them cannot count a window twice, because the two mates never cover the same window. Concatenate both
-mates into one FASTQ per sample and feed that to `normalize-reads`.
+them cannot count a window twice, because the two mates never cover the same window. Concatenate
+both mates into one FASTQ per sample and feed that to `normalize-reads`.
 
 ## Multi-Window Tiling
 

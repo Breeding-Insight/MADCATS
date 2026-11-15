@@ -54,7 +54,7 @@ pip install madcats
 madcats --help
 ```
 
-To keep it isolated from other Python packages, use [pipx](https://pipx.pypa.io/) and run
+To keep it isolated from other Python packages, use [pipx](https://pipx.pypa.io/):
 `pipx install madcats`.
 
 ### Pre-built Binaries
@@ -230,7 +230,7 @@ For the MADC format, see Breeding Insight's
 
 **AI assistance.** MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1
 (Anthropic), which helped write its code and documentation. The authors directed the work, reviewed
-and tested the results, and are responsible for the application.
+and tested the results, and are ultimately responsible for the application.
 
 ## License
 

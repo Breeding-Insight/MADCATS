@@ -30,8 +30,8 @@ extracts the primer-started tag that carries the bracketed variant, verifies the
 and builds the Alt tag. If the design files disagree with each other, the run stops with an error.
 
 Open the CSV and check that it has one row per marker, with `RefSequence` and `AltSequence` of
-the tag length. This file is now the panel. You can hand it to collaborators or use it on later orders
-without the vendor files.
+the tag length. This file is now the panel. You can hand it to collaborators or use it on later
+orders without the vendor files.
 
 ## 2. Generate the MADC
 
@@ -79,8 +79,8 @@ this project every shared row had identical classification, and shared-cell coun
 0.9997.
 
 Do not expect 100% row recall against a vendor table, because 27.3% of the vendor's positive-count
-rows on this project had fewer than 10 reads in fewer than 2 samples of the vendor's *own* counts, below
-any within-project evidence threshold.
+rows on this project had fewer than 10 reads in fewer than 2 samples of the vendor's *own* counts,
+below any within-project evidence threshold.
 
 ## Tuning
 

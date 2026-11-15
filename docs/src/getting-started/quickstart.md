@@ -70,7 +70,7 @@ madcats validate \
 
 ## Process the Whole Cohort at Once
 
-Run **one** `generate` over every sample whenever novel-allele discovery matters. The
+Run one `generate` over every sample whenever novel-allele discovery matters. The
 reproducibility evidence route counts supporting samples within the run, so splitting a cohort
 into batches weakens discovery in proportion to the split. You can batch expensive upstream stages
 such as `normalize-reads` freely, but feed all of their outputs to a single `generate`.

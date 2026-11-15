@@ -29,7 +29,7 @@ of diploid and tetraploid samples, target genotypes from every row had the dosag
 for 89.1% of 202,143 genotypes. From the exact Ref and Alt rows alone, 82.1% did, with 2% of the
 genotypes left without reads.
 
-Coordinates are **marker-local**. `CHROM` is the marker (its CloneID) and `POS` is a 1-based
+Coordinates are marker-local. `CHROM` is the marker (its CloneID) and `POS` is a 1-based
 position on its Ref tag, so these files are not placed on a genome. The header declares every
 marker as a contig, and a `##madcatsCoordinates` line records that the coordinates are
 marker-local.
@@ -132,7 +132,7 @@ whole table, before it calls any record:
 3. `call` chooses the number of neighbours from 0, 5, 10, 20, 40 and 80 by prediction. The
    neighbours found on one half of the markers predict each sample's shares at the other half, and
    `call` uses the number with the smallest error. If none predicts better than the table's own
-   frequencies, the number is 0, the prior is the `hwe` prior, and `call` prints a note.
+   frequencies, the number is 0 and the prior is the `hwe` prior. `call` prints a note.
 
 `call` then calls records one at a time as with the other priors, each first with the `hwe` prior
 and then with the neighbours. The number of neighbours used and the error of each number tried are
@@ -146,11 +146,11 @@ in the QC JSON. The method is MADCATS's own, not a port of polyRAD's.
 
 ### What the model can and cannot say
 
-With **two alleles**, the dosage of the alternate allele fixes the genotype, so its posterior is
+With two alleles, the dosage of the alternate allele fixes the genotype, so its posterior is
 the genotype posterior. These records carry `GQ`, `MPP`, `GP` and `PL`, and `PMC` in INFO. `call`
 computes `PL` from the likelihoods and `GP` from the posteriors, so they differ by the prior.
 
-With **more than two alleles**, there is one posterior per allele, not one over whole genotypes.
+With more than two alleles, there is one posterior per allele, not one over whole genotypes.
 The most probable dosages of the alleles need not add up to the ploidy. When they do not, `call`
 adds or removes copies one at a time where that costs the least probability (polyRAD's method).
 These records carry `MPC`, the lowest posterior among the called dosages. It is an upper bound on
@@ -158,8 +158,8 @@ the probability that the whole genotype is right, not an estimate of it, which i
 called `GQ`. `call` writes every haplotype record this way, and every `all` record with three or
 more bases.
 
-The model assumes that every copy of a sample's chromosomes can carry any allele (**autopolyploid**
-inheritance), so a hexaploid's dosage runs from 0 to 6. In an **allopolyploid** whose marker
+The model assumes that every copy of a sample's chromosomes can carry any allele (autopolyploid
+inheritance), so a hexaploid's dosage runs from 0 to 6. In an allopolyploid whose marker
 amplifies all subgenomes but varies on one, the dosage can only be 0 to 2 of 6, and `call` has no
 model for that. On the simulated allohexaploid of the polyRAD paper it got 82% of genotypes right
 with `hwe` and 87% with `norm`, where polyRAD, told the three subgenomes, did better. A marker that
@@ -197,7 +197,7 @@ haplotype records and off-target records.
 
 | Argument | Description |
 |----------|-------------|
-| `--madc <FILE>` | MADC to call from, such as one from `generate` or `filter-paralogs`, a vendor DArT MADC, or a HapApp fixed-allele-ID MADC. `call` reads gzipped input directly |
+| `--madc <FILE>` | MADC to call from, written by `generate` or `filter-paralogs`, or a vendor DArT MADC, or a HapApp fixed-allele-ID MADC. `call` reads gzipped input directly |
 | `--output-prefix <PREFIX>` | Path prefix of the outputs |
 
 ## Output Selection
@@ -428,36 +428,37 @@ tiles' haplotype records describe the same sequences. Count such a variant once 
 them. BIGr's `filterVCF` filters on these names (`filter.MPP`, `filter.PMC`) and on `INFO/BIAS`.
 
 - `MPP` is the probability the model gives a sample's most probable genotype. `GQ` is the same
-  number on the Phred scale: an `MPP` of 0.9 is a `GQ` of 10, and 0.99 is 20.
-- `PMC` is one minus the mean of `MPP` over a record's samples: the share of them expected to
-  have a wrong genotype.
+  number on the Phred scale, so an `MPP` of 0.9 is a `GQ` of 10, and 0.99 is 20.
+- `PMC` is one minus the mean of `MPP` over a record's samples, which is the share of them
+  expected to have a wrong genotype.
 
-`PMC` is taken over the samples with reads, and `--min-dp` and `--min-gq` do not change it. updog
-averages over every sample it is given a depth for, and a sample with a depth of 0 enters at the
-largest probability of the prior, which raises the value. `call` writes what updog gives when
-those samples are passed to it as missing.
+`call` takes `PMC` over the samples with reads, and `--min-dp` and `--min-gq` do not change it.
+updog averages over every sample it is given a depth for, and a sample with a depth of 0 enters at
+the largest probability of the prior, which raises the value. `call` writes what updog gives when
+you pass those samples to it as missing.
 
 Both say how sure the model is, and the model is only as right as it fits the samples:
 
-- Where it fits, `PMC` averaged within 0.4 points of the share of wrong genotypes: simulated
-  random mating in diploids, tetraploids and hexaploids, with `--allele-bias off` or `auto`.
-- Where it does not, `PMC` is too low: by 2 to 11 points on biased polyploid panels called
+- Where it fits, `PMC` averaged within 0.4 points of the share of wrong genotypes. This held for
+  simulated random mating in diploids, tetraploids and hexaploids, with `--allele-bias off` or
+  `auto`.
+- Where it does not, `PMC` is too low, by 2 to 11 points on biased polyploid panels called
   without a bias, and by 9 to 15 on a biased F1 family under `--prior hwe`. updog's own value
   was 7 points too low on that family.
 - `PMC` rises with ploidy and falls with depth. Of simulated tetraploid markers at 20 to 60
   reads, one in six had a `PMC` under 0.05, the cut updog's documentation gives as an example,
   and nothing was wrong with the others. In hexaploids at that depth almost none did.
-- Against the potato SNP array `PMC` averaged 1.4% where 3.6% of the genotypes disagreed (updog:
-  1.1% and 3.3%). The reads and the array also differ for reasons outside the model.
+- Against the potato SNP array `PMC` averaged 1.4% where 3.6% of the genotypes disagreed (1.1% and
+  3.3% for updog). The reads and the array also differ for reasons outside the model.
 
 [Validation & Accuracy](../reference/validation.md#mpp-and-pmc) has the comparison with updog and
 the measurements.
 
 ## See Also
 
-- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md): a walkthrough on the example
+- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md) for a tutorial on the example
   project
-- [Validation & Accuracy](../reference/validation.md#genotype-calling-call): what `call` was
+- [Validation & Accuracy](../reference/validation.md#genotype-calling-call) for what `call` was
   checked against
 - [madcats generate](generate.md)
 - [madcats filter-paralogs](filter-paralogs.md)

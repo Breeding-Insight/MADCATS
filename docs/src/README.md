@@ -79,8 +79,10 @@ New to MADCATS? Begin with these pages:
 
 1. [Installation](getting-started/installation.md) with pip or a downloaded binary
 2. [Quick Start](getting-started/quickstart.md) for your first MADC in two commands
-3. [Try the Example](getting-started/example.md) to run a small simulated project and check it against the truth
-4. [Choosing a Workflow](getting-started/workflows.md) to find which commands your platform and inputs need
+3. [Try the Example](getting-started/example.md) to run a small simulated project and check it
+   against the truth
+4. [Choosing a Workflow](getting-started/workflows.md) to find which commands your platform and
+   inputs need
 
 ## Scope
 

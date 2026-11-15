@@ -1,7 +1,7 @@
 # madcats filter-paralogs
 
-Drop or flag MADC haplotypes that a reference genome places at another locus. Optional; needs the
-`mappy` aligner.
+Drop or flag MADC haplotypes that a reference genome places at another locus. It is optional and
+needs the `mappy` aligner.
 
 ## Synopsis
 
@@ -14,23 +14,23 @@ madcats filter-paralogs --madc <FILE> --genome-index <MMI> --output <FILE> [OPTI
 
 In some panels, paralogous copies of a target co-amplify with it, and their reads land in the
 marker's rows. A paralog that differs from the Ref tag only at non-target bases becomes a RefMatch
-or AltMatch row. When counts are summed per target SNP (as `BIGr::madc2vcf_all` does), those rows
+or AltMatch row. When a tool sums counts per target SNP (as `BIGr::madc2vcf_all` does), those rows
 push homozygous samples towards false heterozygous calls. `filter-paralogs` uses a reference genome
 to decide where each haplotype comes from:
 
-1. **Place each marker.** Its Ref tag is aligned to the genome. A CloneID of the form `CHROM_POS`
-   (zero padding allowed, e.g. `Chr1_000333995`) is read as the marker's position on that genome.
-   When the Ref tag has several equal-best sites, the CloneID position picks one; if it cannot, the
-   marker is reported as multi-copy. When the Ref tag does not align, a window around the CloneID
-   position is used. When the Ref tag's best sites are all away from the CloneID position, the tag
-   is aligned again within that window (see [CloneID Positions](#cloneid-positions)). All of these
-   uses assume the CloneID refers to the genome given; see
-   [Using Another Assembly](#using-another-assembly).
-2. **Align every distinct haplotype.** Each haplotype gets two scores: its best alignment at its
-   marker's site, and its best alignment anywhere else. Every haplotype is also realigned to its own
-   marker's site alone with short seeds, and the better of that score and the genome-wide one at
-   the site counts. A real allele carrying several SNPs, which the genome-wide search misses or
-   aligns only partly, is still scored at home.
+1. **Place each marker.** The filter aligns its Ref tag to the genome. It reads a CloneID of the
+   form `CHROM_POS` (zero padding allowed, e.g. `Chr1_000333995`) as the marker's position on that
+   genome. When the Ref tag has several equal-best sites, the CloneID position picks one. If it
+   cannot, the filter reports the marker as multi-copy. When the Ref tag does not align, the filter
+   uses a window around the CloneID position. When the Ref tag's best sites are all away from the
+   CloneID position, it aligns the tag again within that window (see
+   [CloneID Positions](#cloneid-positions)). All of these uses assume the CloneID refers to the
+   genome given. See [Using Another Assembly](#using-another-assembly).
+2. **Align every distinct haplotype.** Each haplotype gets two scores, its best alignment at its
+   marker's site and its best alignment anywhere else. The filter also realigns every haplotype to
+   its own marker's site alone with short seeds, and the better of that score and the genome-wide
+   one at the site counts. A real allele carrying several SNPs, which the genome-wide search misses
+   or aligns only partly, still gets a score at home.
 3. **Label it**:
 
    | Label | Meaning | Default action |
@@ -41,18 +41,20 @@ to decide where each haplotype comes from:
    | `unmapped` | No alignment anywhere | kept |
    | `unplaced` | The marker itself could not be placed | kept |
 
-4. **Write the cleaned MADC.** Canonical Ref and Alt rows are never dropped, because downstream
-   dosage tools need both designed alleles. A canonical row whose label would have dropped it is
-   counted as `protected`. Kept rows are copied unchanged, and the output keeps the input's layout:
-   the vendor preamble, the statistics columns, HapApp's `Code_version` column and the column order.
+4. **Write the filtered MADC.** The filter never drops canonical Ref and Alt rows, because
+   downstream dosage tools need both designed alleles. A canonical row whose label would have
+   dropped it counts as `protected`. The filter copies kept rows unchanged. The output keeps the
+   input's layout, so the vendor preamble, the statistics columns, HapApp's `Code_version` column
+   and the column order stay as they were.
 
 The filter is opt-in, meant for panels known to co-amplify paralogs. Check the share of reads in
-`paralog` rows in the QC JSON: in the lettuce 3K panel it was 63% of all reads in the vendor MADC.
+`paralog` rows in the QC JSON. In the lettuce 3K panel it was 63% of all reads in the vendor MADC.
 On panels without the problem the filter removes little and is not needed.
 
-It reads three layouts: a MADC from `generate`, a vendor DArT MADC, and the fixed-allele-ID MADC
-that HapApp writes (`Code_version`, `AlleleID`, `CloneID`, `AlleleSequence`, then the samples, with
-IDs such as `|Ref_0001`). It can therefore run on the raw MADC before HapApp, or on HapApp's output.
+It reads three layouts. These are a MADC from `generate`, a vendor DArT MADC, and the
+fixed-allele-ID MADC that HapApp writes (`Code_version`, `AlleleID`, `CloneID`, `AlleleSequence`,
+then the samples, with IDs such as `|Ref_0001`). It can therefore run on the raw MADC before
+HapApp, or on HapApp's output.
 
 Scores use minimap2's short-read scoring (match +2, mismatch −8, gap open −12 and extension −2,
 ambiguous base −1), recomputed from each alignment, so ties are exact.
@@ -61,8 +63,8 @@ ambiguous base −1), recomputed from each alignment, so ties are exact.
 
 | Argument | Description |
 |----------|-------------|
-| `--madc <FILE>` | MADC to clean: from `generate`, a vendor DArT MADC (with or without its starred preamble), or a HapApp fixed-allele-ID MADC. Gzipped input is read directly |
-| `--output <FILE>` | Cleaned MADC to write (must differ from `--madc`) |
+| `--madc <FILE>` | MADC to filter, written by `generate`, or a vendor DArT MADC (with or without its starred preamble), or a HapApp fixed-allele-ID MADC. `filter-paralogs` reads gzipped input directly |
+| `--output <FILE>` | Filtered MADC to write (must differ from `--madc`) |
 
 Give `--genome`, `--genome-index`, or both.
 
@@ -71,8 +73,8 @@ Give `--genome`, `--genome-index`, or both.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--genome <FASTA>` | none | Reference genome FASTA, optionally gzipped |
-| `--genome-index <MMI>` | none | minimap2 index. Loaded when it exists; otherwise built from `--genome` and saved here for the next run |
-| `--clone-positions {use,ignore}` | `use` | `CHROM_POS` CloneIDs: `use` them as positions on the genome given, to choose between equal-best Ref-tag sites, stand in for Ref tags that do not align and place markers whose Ref tag aligns better elsewhere (see [CloneID Positions](#cloneid-positions)), or `ignore` them when they refer to another assembly |
+| `--genome-index <MMI>` | none | minimap2 index. The command loads it when it exists, and otherwise builds it from `--genome` and saves it here for the next run |
+| `--clone-positions {use,ignore}` | `use` | For `CHROM_POS` CloneIDs, `use` them as positions on the genome given, to choose between equal-best Ref-tag sites, stand in for Ref tags that do not align and place markers whose Ref tag aligns better elsewhere (see [CloneID Positions](#cloneid-positions)), or `ignore` them when they refer to another assembly |
 
 Indexing a large genome is slow and memory-heavy, so build the index once and reuse it. The first
 run with both options writes it:
@@ -81,13 +83,14 @@ run with both options writes it:
 madcats filter-paralogs --madc MADC.csv --genome genome.fa --genome-index genome.sr.mmi --output MADC_filtered.csv
 ```
 
-Later runs need only `--genome-index`. An index from the minimap2 command line works too, built with
-the short-read preset in one part, with `-I` above the genome size:
+Later runs need only `--genome-index`. An index from the minimap2 command line works too. Build it
+with the short-read preset in one part, with `-I` above the genome size, for example
 `minimap2 -x sr -I 20G -d genome.sr.mmi genome.fa`. minimap2 splits the index of a genome larger
 than `-I` (8 Gb by default) into parts, and mappy searches only the first part, so the command
 refuses a multi-part index rather than miss the rest of the genome. An index the command builds
 itself is always one part. On the 2.4 Gb lettuce genome indexing took 50 s and 10.6 GB of memory,
-and the index file is 5.7 GB; on a 0.8 Gb alfalfa genome, about 40 s and 5.2 GB, with a 2.0 GB file.
+and the index file is 5.7 GB. On a 0.8 Gb alfalfa genome it took about 40 s and 5.2 GB, with a
+2.0 GB file.
 
 The genome should hold each locus once. If the assembly is haplotype-resolved, or carries every
 copy of each chromosome of an autopolyploid, index one set of chromosomes only (see
@@ -97,42 +100,42 @@ copy of each chromosome of an autopolyploid, index one set of chromosomes only (
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--paralogs {drop,flag}` | `drop` | `paralog` rows: drop them, or keep them labelled in the `GenomeLabel` column |
-| `--ambiguous {drop,flag,keep}` | `drop` | `ambiguous` rows: drop, flag, or keep. A kept row still carries its label when `--paralogs flag` adds the `GenomeLabel` column |
+| `--paralogs {drop,flag}` | `drop` | Drop `paralog` rows, or keep them labelled in the `GenomeLabel` column |
+| `--ambiguous {drop,flag,keep}` | `drop` | Drop, flag, or keep `ambiguous` rows. A kept row still carries its label when `--paralogs flag` adds the `GenomeLabel` column |
 | `--qc-output <FILE>` | `OUTPUT.qc.json` | QC JSON |
 | `--jobs <INT>` | up to 4 | Alignment threads |
 
 Dropping ambiguous rows is the default because, on lettuce, keeping them left false heterozygous
-calls at 3.4% of inbred genotypes, against 0.87% when they were dropped.
+calls at 3.4% of inbred genotypes, against 0.87% when the filter dropped them.
 
 ## Flag Mode
 
-With either option set to `flag`, the `PICRef` column is renamed `GenomeLabel` and every row
-carries its label there: `on_target`, `paralog`, `ambiguous`, `unmapped` or `unplaced`. Flagged
-rows are kept. Column positions do not change, so positional consumers still see the 16-column
-layout. In a vendor MADC this overwrites the vendor's `PICRef` statistic. Flag mode needs the
-`PICRef` (or an earlier `GenomeLabel`) column. HapApp's fixed-allele-ID MADC has none, so on that
-layout use drop mode and read the labels sidecar.
+With either option set to `flag`, the filter renames the `PICRef` column to `GenomeLabel`, and
+every row carries its label there, which is `on_target`, `paralog`, `ambiguous`, `unmapped` or
+`unplaced`. The filter keeps flagged rows. Column positions do not change, so positional consumers
+still see the 16-column layout. In a vendor MADC this overwrites the vendor's `PICRef` statistic.
+Flag mode needs the `PICRef` (or an earlier `GenomeLabel`) column. HapApp's fixed-allele-ID MADC
+has none, so on that layout use drop mode and read the labels sidecar.
 
 A flagged file is for review. Tools that check the vendor's column names, such as HapApp-online's
-upload check, reject `GenomeLabel` in place of `PICRef`; give them the drop-mode output.
+upload check, reject `GenomeLabel` in place of `PICRef`, so give them the drop-mode output.
 
 ## Outputs
 
 | File | Contents |
 |------|----------|
-| `OUTPUT` | The cleaned MADC |
-| `OUTPUT.genome_labels.csv` | One line per haplotype row, dropped rows included. A row with an empty `AlleleID` is not a haplotype row; it is passed over and not written to `OUTPUT` either |
-| `OUTPUT.genome_markers.csv` | One line per marker: where it was placed and how |
+| `OUTPUT` | The filtered MADC |
+| `OUTPUT.genome_labels.csv` | One line per haplotype row, dropped rows included. A row with an empty `AlleleID` is not a haplotype row. The filter passes over it and does not write it to `OUTPUT` either |
+| `OUTPUT.genome_markers.csv` | One line per marker, recording where and how the filter placed it |
 | `OUTPUT.qc.json` | Parameters, aligner settings, marker placement summary, the number of distinct haplotypes and sequences, haplotypes per label and how many were found again in the realignment at their marker's site, alignment time, rows and reads per label, per outcome and per allele category, and `count_overflow` (see below) |
 
-Read totals are summed as stored. If the input has negative counts, the command warns and
+The filter sums read totals as stored. If the input has negative counts, the command warns and
 `count_overflow` records how many cells and markers carry them. A negative count with a maximum of
-exactly 127 points to signed 8-bit overflow in a vendor file; see the
+127 points to signed 8-bit overflow in a vendor file. See the
 [FAQ](../reference/faq.md#my-vendor-madc-has-negative-read-counts).
 
-When the input carries a MADCATS provenance cell (`generate --dart-preamble`), the filter's
-settings are appended to it.
+When the input carries a MADCATS provenance cell (`generate --dart-preamble`), the filter appends
+its settings to it.
 
 ### Labels sidecar
 
@@ -145,7 +148,7 @@ settings are appended to it.
 | `TargetFrom` | `genome` (the genome-wide search's hit at the site), `site` (the realignment to the marker's site, when it scored higher or the genome-wide search found nothing there) or `.` |
 | `OffTargetScore` | Best alignment score anywhere else (`.` if none) |
 | `OffTargetSites` | Distinct sites elsewhere at that score, among the 8 sites kept for a haplotype |
-| `OffTargetHit` | The best site elsewhere, 1-based: `Chr4:61708465-61708545(+)` |
+| `OffTargetHit` | The best site elsewhere, 1-based, such as `Chr4:61708465-61708545(+)` |
 
 A perfect 81-base match scores 162 and each mismatch costs 10, so `TargetScore` and
 `OffTargetScore` show how many mismatches separate a haplotype from each copy.
@@ -162,13 +165,14 @@ A perfect 81-base match scores 162 and each mismatch costs 10, so `TargetScore` 
 
 ## CloneID Positions
 
-With `--clone-positions use` (the default), a `CHROM_POS` CloneID is read as the marker's position
-on the genome given, where the panel was designed. When none of the Ref tag's equal-best sites is
-at that position (`CloneIDCheck` `disagree`), the Ref tag is aligned again, alone, within a window
-around the position. If it aligns there, that alignment is the marker's site (`clone_id_site`),
-even when the tag scores better elsewhere: the genome-wide search can miss the design site, and
-the assembly may carry the Alt allele at the target while a paralog carries Ref. If the tag does
-not align at the position, the marker is `unplaced` and keeps every row.
+With `--clone-positions use` (the default), the filter reads a `CHROM_POS` CloneID as the marker's
+position on the genome given, where the panel was designed. When none of the Ref tag's equal-best
+sites is at that position (`CloneIDCheck` `disagree`), the filter aligns the Ref tag again, alone,
+within a window around the position. If it aligns there, that alignment is the marker's site
+(`clone_id_site`), even when the tag scores better elsewhere, because the genome-wide search can
+miss the design site, and the assembly may carry the Alt allele at the target while a paralog
+carries Ref. If the tag does not align at the position, the marker is `unplaced` and keeps every
+row.
 
 The command warns when more than 10% of markers disagree. Either the genome is not the one you
 meant to use, or the CloneIDs refer to another assembly, in which case rerun with
@@ -176,8 +180,8 @@ meant to use, or the CloneIDs refer to another assembly, in which case rerun wit
 
 ## Using Another Assembly
 
-Any genome that contains the panel's target loci can be used, not only the one the panel was
-designed on, because markers are placed by aligning their Ref tags. Labels against a second
+You can use any genome that contains the panel's target loci, not only the one the panel was
+designed on, because the filter places markers by aligning their Ref tags. Labels against a second
 assembly, such as another cultivar's or a newer version, show where the two genomes support a
 haplotype differently. A haplotype that is `on_target` against one genome and `paralog` against
 another aligns better to some other locus in the second genome. That locus may be a copy the first
@@ -185,20 +189,20 @@ genome lacks, but a copy present in both with a different sequence changes the l
 way, so confirm a copy difference in the assemblies themselves.
 
 CloneID positions refer to the design assembly, so against another assembly use
-`--clone-positions ignore`. Otherwise, where the chromosome names match, a CloneID position is read
-in the new genome's coordinates. A marker whose Ref tag does not align is then judged at the wrong
-place, and its non-canonical rows are dropped as paralogs. A marker whose Ref tag aligns away from
-its CloneID position is left `unplaced`, unless the tag also aligns at that position. With
+`--clone-positions ignore`. Otherwise, where the chromosome names match, the filter reads a CloneID
+position in the new genome's coordinates. It then judges a marker whose Ref tag does not align at
+the wrong place and drops its non-canonical rows as paralogs. A marker whose Ref tag aligns away
+from its CloneID position is left `unplaced`, unless the tag also aligns at that position. With
 `ignore`, a marker whose Ref tag does not align is `unplaced` and keeps every row, and a Ref tag
 with several equal-best sites stays multi-copy, so its rows are `ambiguous`. Where the chromosome
 names differ, CloneID positions go unused anyway (`contig_absent`).
 
 Keep the default on the design assembly. On the lettuce vendor MADC, CloneID positions decide the
-site of 11 of 2,987 markers: 9 whose Ref tag does not align, 1 tie, and `Chr2_001081815`, whose Ref
-tag carries two IUPAC ambiguity codes. The genome-wide search placed that tag on Chr4 (score 96),
-but it aligns at its CloneID position on Chr2 with 156. With `ignore`, the 9 markers are
-`unplaced`, and 1,032 rows that the design assembly labels `paralog` are kept, while
-`Chr2_001081815` is judged on Chr4, which drops 11 of its rows that the default keeps.
+site of 11 of 2,987 markers. These are 9 whose Ref tag does not align, 1 tie, and `Chr2_001081815`,
+whose Ref tag carries two IUPAC ambiguity codes. The genome-wide search placed that tag on Chr4
+(score 96), but it aligns at its CloneID position on Chr2 with 156. With `ignore`, the 9 markers
+are `unplaced` and the filter keeps 1,032 rows that the design assembly labels `paralog`, while it
+judges `Chr2_001081815` on Chr4, which drops 11 of its rows that the default keeps.
 
 Each genome needs its own index:
 
@@ -221,7 +225,7 @@ print(pd.crosstab(both.Label_v8, both.Label_other))
 ```
 
 Rows that are `on_target` against the design assembly and `paralog` against the other align
-better to another locus in the other assembly. They point to loci worth checking for a copy that
+better to another locus in the other assembly. They point to loci to check for a copy that
 only the other assembly has, not to such a copy by themselves.
 
 ## Example
@@ -240,51 +244,52 @@ It kept 113,667 rows, with 35.7% of the reads. See the
 
 ## Limitations
 
-- The genome must contain the panel's target loci: the assembly the panel was designed on, or one
-  close to it. Markers whose region is missing or collapsed in the assembly cannot be judged.
-- A copy that exists in your germplasm but not in the reference assembly cannot be seen; its
-  haplotypes look like diverged alleles of the target. A second assembly that has the copy can
+- The genome must contain the panel's target loci, so use the assembly the panel was designed on
+  or one close to it. The filter cannot judge markers whose region is missing or collapsed in the
+  assembly.
+- The filter cannot see a copy that exists in your germplasm but not in the reference assembly.
+  Its haplotypes look like diverged alleles of the target. A second assembly that has the copy can
   show it (see [Using Another Assembly](#using-another-assembly)).
-- minimap2 finds fewer distant copies than bwa mem, so a haplotype far from every genome copy is
-  judged on the hits it has. The rows kept or dropped agreed with a bwa-mem classification for
+- minimap2 finds fewer distant copies than bwa mem, so the filter judges a haplotype far from every
+  genome copy on the hits it has. The rows kept or dropped agreed with a bwa-mem classification for
   98.2% of rows of a MADCATS MADC and 94.9% of a vendor MADC, whose rows are more diverged. Those
-  figures count the canonical Ref and Alt rows, which are always kept; among the rows the filter
-  decides, they are 97.3% and 94.8%.
-- Only the tag is aligned (81 bases by default), not the full read.
+  figures count the canonical Ref and Alt rows, which the filter always keeps. Among the rows the
+  filter decides, they are 97.3% and 94.8%.
+- The filter aligns only the tag (81 bases by default), not the full read.
 - An allele of the marker that is as near a copy as it is to its own site is `ambiguous`. With
   copies planted one or two bases from the Ref tag, 8 of 349 rows of the markers themselves were
-  lost this way; with copies that differ more, none of 515.
+  lost this way. With copies that differ more, none of 515 were.
 - Give the filter one set of chromosomes. In a reference that carries every haplotype (or, in an
-  autopolyploid, every copy of each chromosome), a tag has a copy on each, and those copies are
-  treated as any other: an allele that sits on another haplotype is labelled `paralog`, and one
+  autopolyploid, every copy of each chromosome), a tag has a copy on each, and the filter treats
+  those copies as any other. It labels an allele that sits on another haplotype `paralog`, and one
   that two haplotypes share makes the rows `ambiguous`. The alfalfa panel was designed on
-  chromosome set 1 of an assembly that has four sets: with set 1 as the genome the filter
-  dropped 296 of 2,753 RefMatch and AltMatch rows of a family's MADC; with set 2 added it
-  dropped 1,969, and 46% of the reads were on `ambiguous` rows. CloneID positions do not prevent
-  this. Cut such an assembly down to one set (for a panel designed on one, that one) before
-  indexing it. All four sets (2.7 Gb) also needed more than 13 GB of memory to index.
+  chromosome set 1 of an assembly that has four sets. With set 1 as the genome the filter dropped
+  296 of 2,753 RefMatch and AltMatch rows of a family's MADC. With set 2 added it dropped 1,969,
+  and 46% of the reads were on `ambiguous` rows. CloneID positions do not prevent this. Cut such
+  an assembly down to one set (for a panel designed on one, that one) before indexing it. All four
+  sets (2.7 Gb) also needed more than 13 GB of memory to index.
 - On a genome of another cultivar than the panel's, some Ref tags do not match their own site
-  best. With `--clone-positions ignore` on such a genome for alfalfa, 0.5 to 0.9% of the markers
-  were placed in another copy and 1% (81-base tags) to 7% (54-base tags) were left unplaced,
+  best. With `--clone-positions ignore` on such a genome for alfalfa, the filter placed 0.5 to
+  0.9% of the markers in another copy and left 1% (81-base tags) to 7% (54-base tags) unplaced,
   with all their rows kept.
 
 ## How It Was Checked
 
 - **Planted copies.** In the delta smelt genome (437 Mb) copies of 105 markers' tags were added
   as new contigs, with the rows a co-amplified copy would give added to a real MADC. Every row
-  from a copy 1 to 8 bases, or a base and a 2-base deletion, from the Ref tag was labelled
-  `paralog` (450 of 450 over three draws), and no row of the 263 untouched markers was mislabelled
-  (3,348 rows). A copy left out of the genome was not seen.
-- **Placement.** On the same data all 368 markers were placed where their two primers lie in the
-  genome, with CloneID positions or without. Markers given a wrong position were left unplaced,
+  from a copy 1 to 8 bases, or a base and a 2-base deletion, from the Ref tag got the label
+  `paralog` (450 of 450 over three draws), and the filter mislabelled no row of the 263 untouched
+  markers (3,348 rows). The filter did not see a copy left out of the genome.
+- **Placement.** On the same data the filter placed all 368 markers where their two primers lie in
+  the genome, with CloneID positions or without. It left markers given a wrong position unplaced,
   not placed elsewhere.
-- **Against bwa mem.** The lettuce figures above.
-- **Alfalfa, on its design genome.** Two tetraploid F1 families of the alfalfa 3K panel (7,517
-  rows of 54-base tags and 8,731 rows of 81-base tags) and the panel's haplotype database (23,469
-  haplotypes) were run on the genome the panel was designed on, chromosome set 1 of XinJiangDaYe,
-  with their own CloneIDs. Every marker was placed at its CloneID position (2,989, 2,999 and
-  3,000), with the positions or with `--clone-positions ignore`. The filter labelled 2 to 3% of
-  the reads `paralog` and as many `ambiguous`.
+- **Against bwa mem.** See the lettuce figures above.
+- **Alfalfa, on its design genome.** The filter ran on two tetraploid F1 families of the alfalfa
+  3K panel (7,517 rows of 54-base tags and 8,731 rows of 81-base tags) and the panel's haplotype
+  database (23,469 haplotypes), on the genome the panel was designed on, chromosome set 1 of
+  XinJiangDaYe, with their own CloneIDs. It placed every marker at its CloneID position (2,989,
+  2,999 and 3,000), with the positions or with `--clone-positions ignore`. The filter labelled 2
+  to 3% of the reads `paralog` and as many `ambiguous`.
 - **Alfalfa, against bwa mem and blastn.** Every row was also aligned to that genome with bwa mem
   and with blastn and labelled from each aligner's own score. The filter kept or dropped the same
   rows as bwa mem for 99.7 to 99.9% of rows and as blastn for 99.4 to 99.7%. On a monoploid genome
@@ -297,17 +302,17 @@ It kept 113,667 rows, with 35.7% of the reads. See the
   marker, 91 and 94% map away from it. A row whose better site is a nearby copy on the same
   chromosome is inherited with the marker, and this test cannot judge it.
 - **Alfalfa, genotypes.** Target genotypes called before and after the filter agree with the
-  families' published dosages equally often (89.8% and 89.8%; 90.1% and 89.9%). This panel has
-  few paralog reads, and filtering it changes little.
+  families' published dosages equally often (89.8% and 89.8%, and 90.1% and 89.9%). This panel
+  has few paralog reads, and filtering it changes little.
 - **Alfalfa, without the design genome.** On the other cultivar's genome with
-  `--clone-positions ignore`, 97.8% of the markers with 81-base tags and 91.0% of those with
-  54-base tags were placed where their 361-base design sequence lies, 0.5 to 0.9% in another
-  copy, and the rest left unplaced; and more rows were labelled `paralog` or `ambiguous` (7.5%
-  of the larger family's rows against 3.9% on the design genome).
-- **Tiled markers.** Two markers that read the same tag window (`generate --tile-groups`) are
-  placed at the same site, and none of their rows is taken for a copy of the other: on a
-  synthetic panel of two tiles every row was `on_target`, whether the tags hold the other tile's
-  variant as an ambiguity code or as the reference base.
+  `--clone-positions ignore`, the filter placed 97.8% of the markers with 81-base tags and 91.0%
+  of those with 54-base tags where their 361-base design sequence lies, 0.5 to 0.9% in another
+  copy, and left the rest unplaced. It also labelled more rows `paralog` or `ambiguous` (7.5% of
+  the larger family's rows against 3.9% on the design genome).
+- **Tiled markers.** The filter places two markers that read the same tag window
+  (`generate --tile-groups`) at the same site, and takes none of their rows for a copy of the
+  other. On a synthetic panel of two tiles every row was `on_target`, whether the tags hold the
+  other tile's variant as an ambiguity code or as the reference base.
 - Output does not depend on `--jobs`.
 
 ## See Also

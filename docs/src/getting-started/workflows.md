@@ -1,6 +1,6 @@
 # Choosing a Workflow
 
-Every `generate` run consumes one **panel definition**, which is a reference-tag CSV holding each
+Every `generate` run consumes one panel definition, which is a reference-tag CSV holding each
 marker's fixed-length Ref and Alt tag sequences plus an assignment anchor. Which commands you run
 before `generate` depends on two questions, *how will you get the panel?* and *are your reads
 primer-started?*

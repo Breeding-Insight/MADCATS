@@ -4120,7 +4120,14 @@ By default sample columns use the unique FASTQ filename stem.
 python3 -m unittest discover -s tests -v
 ```
 
-The suite contains 59 unit/end-to-end tests, including evidence-route
+The suite contains 257 unit/end-to-end tests in six files.
+`test_madcats.py` (86) covers `generate` and the commands around it,
+`test_call.py` (112) the genotype caller, `test_filter_paralogs.py` (49) the
+paralog filter, `test_tiled_markers.py` (5) tiled markers through all three,
+`test_example.py` (4) the bundled example and `test_docs.py` (1) the match
+between the command pages and the parser. The 14 tests that run the real
+aligner are skipped when the optional `mappy` is not installed. The tests in
+`test_madcats.py` include evidence-route
 protection and emission, single-sample depth discovery, the supporting-
 frequency floor, exact and fuzzy prefix-nested primer resolution,
 design-guard rejections, vendor-preamble sample-ID detection,

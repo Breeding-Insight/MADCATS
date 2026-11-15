@@ -2,11 +2,11 @@
 
 **Marker-Anchored Discovery and Counting of Alleles from Targeted Sequencing**
 
-> This is the long-form development record: design rationale, version-by-version
+> This long-form development record holds design rationale, version-by-version
 > changes, and the measurements behind every default. It was the project README
 > through 0.12.1. For installation and everyday usage, start with the
 > [README](../README.md) or the [documentation site](https://madcats.readthedocs.io).
-> Command examples below use `python3 madcats.py`; after `pip install madcats`
+> Command examples below use `python3 madcats.py`. After `pip install madcats`
 > the same commands run as `madcats <command>`.
 
 A platform-independent tool for recovering design-specified alleles and
@@ -18,97 +18,99 @@ origins as a FASTQ-to-MADC workflow, where MADC denotes the Missing
 Allele Discovery Counts format.)
 
 **A prior MADC is not an input to the workflow.** Generation uses the FASTQs
-plus the assay design: either the DArTag primer/probe files or a
+plus the assay design, either the DArTag primer/probe files or a
 platform-neutral Ref/Alt tag manifest.
 
-Every generation run consumes one panel definition: a platform-neutral
+Every generation run consumes one panel definition, a platform-neutral
 reference-tag CSV holding each marker's primer-started, fixed-length Ref and
 Alt tag sequences. Three routes produce that definition, differing only in
 which inputs they require:
 
-1. **Design route** (`design` command): the vendor's primer CSV plus the
-   bracket-notation probe-design file. Deterministic reconstruction from
-   design files alone — no sequencing data involved. Use when both files
-   are available; it is the reference implementation the other routes are
-   validated against. A tag is the primer-started window that carries the
-   bracketed variant, so a primer occurrence in a duplicated flank that
-   never reaches the variant is not a candidate (the pecan 3K panel has one
-   such marker; before this rule it was reported as ambiguous). Any DArT
+1. **Design route** (`design` command). It takes the vendor's primer CSV
+   plus the bracket-notation probe-design file and reconstructs the tags
+   deterministically from these design files alone, with no sequencing
+   data involved. Use when both files are available. It is the reference
+   implementation for validating the other routes. A tag is the
+   primer-started window that carries the bracketed variant, so a primer
+   occurrence in a duplicated flank that never reaches the variant is not
+   a candidate (the pecan 3K panel has one such marker, which this route
+   reported as ambiguous before the rule). Any DArT
    marker table with `MarkerName` and a bracket-notation `TargetSequence`
    serves as the probe design, extra markers and columns included.
    Raw DArT deliveries (older orders) keep an inline barcode and the
-   library's common sequence `GATGGATCCAGTGC` in front of every amplicon;
+   library's common sequence `GATGGATCCAGTGC` in front of every amplicon.
    `--leading-anchor GATGGATCCAGTGC` cuts each read where that sequence
    ends (it must end within 40 bases beyond its own length) and counts
    reads without it as `reads_no_leading_anchor`. Preprocessed deliveries
    are primer-started and need no anchor. The anchor is part of the cache
-   key and the provenance line; `infer-design` takes the same option, so
+   key and the provenance line. `infer-design` takes the same option, so
    the primer-free route reads raw deliveries too. Both commands check the
-   first FASTQ before any read pass: when almost no read starts with a
+   first FASTQ before any read pass. When almost no read starts with a
    panel tag but most carry one after a constant prefix, the run stops and
    names that prefix (the suffix shared by the bases in front of the tag),
    and `--leading-anchor auto` applies the detected sequence instead,
    recording it in the QC as detected.
-2. **Vendor-MADC bootstrap** (`scripts/madc_to_reference_tags.py`): any
-   delivered MADC from the same panel. The vendor's canonical Ref/Alt rows
-   carry the exact tags, their first difference gives the variant position,
-   and a tag prefix substitutes for the primer as the assignment anchor.
-   Use when a prior vendor report exists but design files are private; the
-   result reproduces the vendor's tags exactly, including their IUPAC
-   curation. Markers that cannot become loci — above all Ref and Alt rows
+2. **Vendor-MADC bootstrap** (`scripts/madc_to_reference_tags.py`). It
+   takes any delivered MADC from the same panel. The vendor's canonical
+   Ref/Alt rows carry the exact tags, their first difference gives the
+   variant position, and a tag prefix substitutes for the primer as the
+   assignment anchor. Use when a prior vendor report exists but design
+   files are private. The result reproduces the vendor's tags exactly,
+   including their IUPAC curation. The script announces markers that
+   cannot become loci with a `WARNING:` per reason and lists them with
+   their reason in `OUTPUT.skipped.tsv`. The main case is Ref and Alt rows
    that carry the same sequence, which means the target lies one base past
-   the window (or the design is presence/absence) — are announced with a
-   `WARNING:` per reason and listed with their reason in
-   `OUTPUT.skipped.tsv`; on one DArTag project that was 46 of 3,086
-   markers, invisible until the sidecar existed.
-3. **Primer-free inference** (`infer-design` command): the probe-design
-   file plus the project's own FASTQs, with the primer file never consulted.
-   Candidate tag windows are enumerated from the design targets and
-   selected by exact read-prefix votes (an identity-envelope fuzzy pass
-   covers loci with no exact support). Use when the primer file is withheld
-   and no vendor MADC exists; accuracy is measured per project in the
-   validation sections below.
+   the window (or the design is presence/absence). On one DArTag project
+   that was 46 of 3,086 markers, invisible until the sidecar existed.
+3. **Primer-free inference** (`infer-design` command). It takes the
+   probe-design file plus the project's own FASTQs and never consults the
+   primer file. It enumerates candidate tag windows from the design
+   targets and selects among them by exact read-prefix votes (an
+   identity-envelope fuzzy pass covers loci with no exact support). Use
+   when the primer file is withheld and no vendor MADC exists. The
+   validation sections below measure its accuracy per project.
 
 A hand-curated CSV from any other source (for example a public panel
-database) is equally valid input — the reference-tags CSV is the contract,
-not its producer.
+database) is equally valid input, because the reference-tags CSV is the
+contract, not its producer.
 
-Platforms whose reads are not primer-started take one extra stage first:
+Platforms whose reads are not primer-started take one extra stage first.
 `normalize-reads` locates each raw read against the probe-design targets by
 k-mer, orients it forward, and excises a fixed tag-length window containing
 the variant, emitting pipeline-ready per-sample FASTQs together with the
 matching window reference-tags CSV and a QC ledger. The window is the
-platform-neutral substitute for a primer-defined tag; after normalization,
+platform-neutral substitute for a primer-defined tag. After normalization,
 generation runs unchanged. Because the window is an analytical choice
 rather than a physical one, every later run of the same panel should pass
-`--reuse-tags` with the first run's window CSV — freezing placement is
-what keeps microhaplotype sequences comparable across sequencing runs.
+`--reuse-tags` with the first run's window CSV. Freezing placement keeps
+microhaplotype sequences comparable across sequencing runs.
 See the AgriSeq pathway section below.
 
-Paired-end platforms add one geometry decision before normalization —
-merge overlapping pairs (`merge-pairs`) or pool non-overlapping mates —
-and panels may tile several windows onto one locus (`LocusGroup`); both
-are 0.9.0 features documented in their own section below. Adapter
-trimming is not required on any route: reads are located middle-out, and
-adapter content beyond the fragment cannot enter a fully covered window.
+Paired-end platforms add one geometry decision before normalization,
+which is to merge overlapping pairs (`merge-pairs`) or pool
+non-overlapping mates. Panels may also tile several windows onto one
+locus (`LocusGroup`). Both are 0.9.0 features with their own section
+below. No route requires adapter trimming, because reads are located
+middle-out, and adapter content beyond the fragment cannot enter a fully
+covered window.
 
 ## Performance at a glance
 
-Five platforms validated through one engine, each against the strongest
+One engine covers five platforms, each validated against the strongest
 comparator its data permits. "Usable windows" is the fraction of raw
-reads that survive to clean, counted evidence at a panel window (see
-the read-accounting guardrails below — some loss is correct rejection
-of off-target and dimer reads, and external pipelines' percentages use
-different denominators).
+reads that survive filtering to become counted evidence at a panel
+window (see the read-accounting guardrails below). Some loss is correct
+rejection of off-target and dimer reads, and external pipelines'
+percentages use different denominators.
 
 | platform (dataset) | reads -> usable windows | accuracy | validated against |
 |---|---|---|---|
-| DArTag (hexaploid sweetpotato; diploid red clover; mixed-ploidy blackberry) | 56.5% of delivered records — vs the vendor's own 50.9% on the same FASTQs (19.6% of records are shorter than the 81-bp tag and unusable by any pipeline) | red clover 3-bin dosage agreement **96.98%** with the vendor table (DP>=20, 682,226 cells, 0.11.0; updog on both tables 99.73% at DP>=10, 0.9.x); sweetpotato count correlation r=0.9997 on 1.20M shared-row cells (0.11.0); blackberry dosage agreement 95.39% (967,299 cells); blackberry design tags 3,015/3,015 match the vendor canonicals (2,881 identical, 134 differ only by the vendor's IUPAC codes); alfalfa panel-paper validation set (two 2021 orders, 54-bp design, raw deliveries cut at the common sequence, 0.12.0): category agreement 99.60% and 99.83%, dosage agreement 98.40% and 97.40%, F1 and BC1 progeny haplotypes within the parental sets at 98.6–98.7% (vendor table 98.9%); pecan 3K (2023 order, 81-bp design, 0.12.0): category agreement 98.89%, dosage agreement **98.78%** on 1.02M cells, F1 progeny haplotypes within the parental set at 99.82% (vendor 99.86%), 93.3% agreement with skim-sequencing genotypes on 11 shared cultivars (vendor 93.3%) | vendor MADC + vendor/updog dosage calls + families + skim-sequencing VCF |
-| AgriSeq, Ion Torrent (2 honeybee chips; 372-sample oyster) | 88.4% | **94.9%** vs Torrent VariantCaller (152,698 cells; core 97.8%; 94.5% before 0.10.0's indel recovery); honeybee replicate concordance **98.0%**, cross-chip 98.2% | vendor caller + replicates |
-| GT-seq (96-sample delta smelt) | 84.5% merged | **99.49%** R1-only (98.80% before 0.10.0 — the gain is one real insertion allele the fixed-offset reading misclassified); 98.67% with tiles on +54% cells; end-of-chain (HapApp->BIGr->updog) **98.42%** targets + **98.79%** on 38K off-target SNPs; `infer-design` 368/368 primer-free | independent BWA/bcftools truth VCF |
-| Flex-Seq capture (192-sample cranberry) | 81.9% (110-bp windows) | end-of-chain **95.13%** targets (295,068 cells); trio incompatibility **3.6%** vs 6.2% for the comparison VCF's own source; locus recovery 80.7%/99.84% vs vendor 83.1%/99.8% | published population VCF + 20 pedigree trios |
-| rhAmpSeq (608 runs, 8 biparental grape families) | 86.6% (cohort-discovery panel; 79.3% on the original 16-sample-discovery panel) | family transmission **99.92-99.99%** (~14.9K locus-family tests); head-to-head vs the platform's own `analyze_amplicon` pipeline on identical reads: **93.0%** exact haplotype-genotype agreement, +19%/+79% more callable cells at 10x/30x, and MADCATS is the more Mendelian-consistent of the pair (99.947% vs 99.850% within the inferred parental four). Cohort-scale discovery (per-family union across all 8 families) designs 1,993/2,000 panel amplicons and delivers +43% genotype calls over the subset-discovery panel at held three-nines transmission, with every added locus 100.000% family-consistent (84,757 calls, zero violations) | Mendelian family constraints + same-reads tool head-to-head (no public truth matrix) |
-| synthetic truth suite | — | dosage **100%** on clean/linked/paralog/repeat classes; 50.8% on engineered null alleles (the correct negative); paired-end merge 100% with 98.6% molecular recovery | exact simulated truth |
+| DArTag (hexaploid sweetpotato, diploid red clover, mixed-ploidy blackberry) | 56.5% of delivered records, against the vendor's own 50.9% on the same FASTQs (19.6% of records are shorter than the 81-bp tag and unusable by any pipeline) | Red clover 3-bin dosage agreement with the vendor table is 96.98% (DP>=20, 682,226 cells, 0.11.0), and updog on both tables agrees at 99.73% (DP>=10, 0.9.x). Sweetpotato count correlation is r=0.9997 on 1.20M shared-row cells (0.11.0). Blackberry dosage agreement is 95.39% (967,299 cells), and blackberry design tags match the vendor canonicals at 3,015/3,015 (2,881 identical, 134 differ only by the vendor's IUPAC codes). The alfalfa panel-paper validation set (two 2021 orders, 54-bp design, raw deliveries cut at the common sequence, 0.12.0) has category agreement 99.60% and 99.83%, dosage agreement 98.40% and 97.40%, and F1 and BC1 progeny haplotypes within the parental sets at 98.6–98.7% (vendor table 98.9%). Pecan 3K (2023 order, 81-bp design, 0.12.0) has category agreement 98.89%, dosage agreement 98.78% on 1.02M cells, F1 progeny haplotypes within the parental set at 99.82% (vendor 99.86%), and 93.3% agreement with skim-sequencing genotypes on 11 shared cultivars (vendor 93.3%) | vendor MADC + vendor/updog dosage calls + families + skim-sequencing VCF |
+| AgriSeq, Ion Torrent (2 honeybee chips, 372-sample oyster) | 88.4% | 94.9% vs Torrent VariantCaller (152,698 cells, core 97.8%, 94.5% before 0.10.0's indel recovery), and honeybee replicate concordance 98.0%, cross-chip 98.2% | vendor caller + replicates |
+| GT-seq (96-sample delta smelt) | 84.5% merged | 99.49% R1-only (98.80% before 0.10.0, a gain from one real insertion allele the fixed-offset reading misclassified), 98.67% with tiles on +54% cells, end-of-chain (HapApp->BIGr->updog) 98.42% targets + 98.79% on 38K off-target SNPs, and `infer-design` 368/368 primer-free | independent BWA/bcftools truth VCF |
+| Flex-Seq capture (192-sample cranberry) | 81.9% (110-bp windows) | end-of-chain 95.13% targets (295,068 cells), trio incompatibility 3.6% vs 6.2% for the comparison VCF's own source, and locus recovery 80.7%/99.84% vs vendor 83.1%/99.8% | published population VCF + 20 pedigree trios |
+| rhAmpSeq (608 runs, 8 biparental grape families) | 86.6% (cohort-discovery panel, 79.3% on the original 16-sample-discovery panel) | family transmission 99.92-99.99% (~14.9K locus-family tests). Head-to-head against the platform's own `analyze_amplicon` pipeline on identical reads, MADCATS reaches 93.0% exact haplotype-genotype agreement, +19%/+79% more callable cells at 10x/30x, and the more Mendelian-consistent calls of the pair (99.947% vs 99.850% within the inferred parental four). Cohort-scale discovery (per-family union across all 8 families) designs 1,993/2,000 panel amplicons and delivers +43% genotype calls over the subset-discovery panel at held three-nines transmission, with every added locus 100.000% family-consistent (84,757 calls, zero violations) | Mendelian family constraints + same-reads tool head-to-head (no public truth matrix) |
+| synthetic truth suite | — | dosage 100% on clean/linked/paralog/repeat classes, 50.8% on engineered null alleles (the correct negative), and paired-end merge 100% with 98.6% molecular recovery | exact simulated truth |
 
 Version 0.10.0 adds recovery of *undesigned* indel haplotypes through a
 general gapped reading (see its section below). On a private in-house
@@ -117,49 +119,52 @@ that the vendor MADC lacked, 78% became MADC rows at 97% read recall
 (0.4% under 0.9.x), and the SNP calls on every truth-scored set above
 held or improved.
 
-Accuracy tracks comparator quality more than platform: where truth is
-clean (GT-seq, DArTag) MADCATS scores 98-99%+; against noisier
-comparators (TVC, raw mpileup) the *mutual* agreement is 94-95% while
+Accuracy tracks comparator quality more than platform. Where the truth
+set is reliable (GT-seq, DArTag), MADCATS scores 98-99%+. Against noisier
+comparators (TVC, raw mpileup) the *mutual* agreement is 94-95%, while
 internal instruments (replicates, trios) show MADCATS' own calls at the
-cleaner end of each pair — on cranberry, measurably more
+more accurate end of each pair. On cranberry they are measurably more
 Mendelian-consistent than the raw calls behind the comparison VCF.
 
 ## Important scope
 
-DArT describes its analytical pipeline as proprietary. Exact vendor
-equivalence therefore cannot be guaranteed because its adapter/quality
-filtering, partial-read handling, consensus construction, and error-correction
-rules are not documented. This implementation is an open and deterministic
-replacement, not a claim to be DArT's undisclosed implementation.
+DArT describes its analytical pipeline as proprietary. MADCATS therefore
+cannot guarantee exact vendor equivalence, because DArT does not document
+its adapter/quality filtering, partial-read handling, consensus
+construction, and error-correction rules. This implementation is an open
+and deterministic replacement, not a claim to be DArT's undisclosed
+implementation.
 
-The generated file preserves the MADC fields needed for microhaplotype work:
-`AlleleID`, `CloneID`, `AlleleSequence`, `ClusterConsensusSequence`, and one
-integer read-count column per sample, following the vendor conventions
+The generated file preserves the MADC fields needed for microhaplotype work,
+which are `AlleleID`, `CloneID`, `AlleleSequence`,
+`ClusterConsensusSequence`, and one integer read-count column per sample,
+following the vendor conventions
 observed in the supplied report (canonical rows carry their own sequence as
-the consensus; Match/Other rows carry the Ref consensus). `AvgCountRef` and
-`AvgCountSnp` are nonzero means, and `CallRate` is filled with the fraction of
+the consensus, and Match/Other rows carry the Ref consensus). `AvgCountRef` and
+`AvgCountSnp` are nonzero means, and `CallRate` holds the fraction of
 samples having canonical Ref or Alt reads at the locus. The remaining vendor
 dosage/genotype summary fields are downstream calls rather than FASTQ
-evidence and are emitted as `.` (missing value; see the output-format
-section).
+evidence, so the pipeline emits them as `.` (a missing value, described in
+the output-format section).
 
-Matching is substitution-only first: reads are compared to same-length
-tags at each position. **Designed indel markers are fully supported** —
+Matching is substitution-only first, comparing reads to same-length
+tags at each position. Designed indel markers are fully supported, because
 vendors report indel alleles as fixed-length windows whose suffix shifts at
 the indel, and both tags are ordinary same-length sequences to the counting
-layer. Since 0.10.0, **undesigned indels are recovered too**: a read that
-frameshifts against every canonical tag is offered one gapped reading under
+layer. Since 0.10.0, undesigned indels are recovered too. A read that
+frameshifts against every canonical tag gets one gapped reading under
 the same edit budget (gaps of up to `--max-indel-length` bases, 10 by
-default, counted as edits), and is kept as an ordinary fixed-length
-shifted-suffix row when that reading is composed like an indel haplotype
-(few substitutions, few gap events). The target base is read through the
-alignment. Out of scope remain indels longer than the band and gapped
-readings that need many substitutions — those are co-amplified paralogs,
-not alleles, and stay off-target.
+default, count as edits), and the pipeline keeps it as an ordinary
+fixed-length shifted-suffix row when that reading has the composition of
+an indel haplotype (few substitutions, few gap events). The pipeline reads
+the target base through the alignment. Indels longer than the band and
+gapped readings that need many substitutions remain out of scope. Those
+are co-amplified paralogs, not alleles, and stay off-target.
 
 ## Quick start for the supplied sweetpotato project
 
-The defaults are the recommended configuration; no evidence flags are needed:
+The defaults are the recommended configuration, so the command needs no
+evidence flags:
 
 ```bash
 python3 madcats.py generate \
@@ -172,7 +177,7 @@ python3 madcats.py generate \
 ```
 
 A stricter, higher-precision view for high-depth projects raises the
-reproducibility depth: add `--reproducible-min-reads 20`.
+reproducibility depth with `--reproducible-min-reads 20`.
 
 To inspect or reuse the reconstructed 3,120 Ref/Alt tags, run the separate
 design command:
@@ -185,8 +190,8 @@ python3 madcats.py design \
 ```
 
 Other targeted platforms can pass this same reference-tag format with
-`--reference-tags`. The provided DArT report is used only after generation,
-as an external validation target:
+`--reference-tags`. The validate command uses the provided DArT report only
+after generation, as an external validation target:
 
 ```bash
 python3 madcats.py validate \
@@ -199,104 +204,108 @@ python3 madcats.py validate \
 
 For each marker, the pipeline locates the left primer in the supplied target
 sequence in either orientation, extracts the primer-started tag, verifies the
-target-SNP position, and constructs the Alt tag by substitution. Each FASTQ
-read is assigned by its left-primer prefix, retained as a raw full tag of the
-configured length (81 bp by default), and accepted when it has at least 80%
-substitution-only identity to Ref or Alt — or, when every candidate rejects
-it, under one gapped reading that spends the same 20% edit budget
-(`--gapped-rescue on`, the default; see the 0.10.0 section).
+target-SNP position, and constructs the Alt tag by substitution. It assigns
+each FASTQ read by its left-primer prefix, retains it as a raw full tag of
+the configured length (81 bp by default), and accepts it when it has at
+least 80% substitution-only identity to Ref or Alt, or, when every
+candidate rejects it, under one gapped reading that spends the same 20%
+edit budget (`--gapped-rescue on`, the default, described in the 0.10.0
+section).
 
-Canonical Ref and Alt rows are always emitted, including at zero counts. A
-**non-canonical sequence** becomes an output row when it reaches
+The pipeline always emits canonical Ref and Alt rows, including at zero
+counts. A non-canonical sequence becomes an output row when it reaches
 `--min-global-count` project-wide reads and passes at least one enabled
 evidence route:
 
-- **Reproducibility route** (primary; default on): at least
+- **Reproducibility route** (primary, default on). It requires at least
   `--reproducible-min-reads` reads (default 10) in each of at least
   `--reproducible-min-samples` samples (default 2). Identical 81-mers
   recurring independently across samples are strong evidence even when a base
   position is systematically low-quality.
-- **Depth route** (default on): at least `--depth-min-reads` reads (default
-  30) within a single sample. This keeps private alleles discoverable in
-  unreplicated designs such as diversity panels of singleton accessions; on
-  the replicated project below it adds a single row, because deep sequences
-  there always recur across the paired extracts.
-- **Quality route** (default off): at least `--quality-min-clean-reads` reads
-  whose every tag base is at or above `--discovery-min-quality` (default
-  Q20). On the supplied project this route's marginal precision was 3%
-  (2,159 extra rows for 73 additional vendor-matching rows), and whole-tag
-  cleanliness vetoes real alleles with one systematically low-quality cycle,
-  so it is no longer a default gate.
+- **Depth route** (default on). It requires at least `--depth-min-reads`
+  reads (default 30) within a single sample. This keeps private alleles
+  discoverable in unreplicated designs such as diversity panels of
+  singleton accessions. On the replicated project below it adds a single
+  row, because deep sequences there always recur across the paired extracts.
+- **Quality route** (default off). It requires at least
+  `--quality-min-clean-reads` reads whose every tag base is at or above
+  `--discovery-min-quality` (default Q20). On the supplied project this
+  route's marginal precision was 3% (2,159 extra rows for 73 additional
+  vendor-matching rows), and whole-tag cleanliness vetoes real alleles
+  with one systematically low-quality cycle, so it is no longer a default
+  gate.
 
 An optional HaploCharmer-style dosage-aware floor, `--min-supporting-freq`
-(default 0 = off), additionally requires a sample's reads for the sequence to
+(default 0 = off), also requires a sample's reads for the sequence to
 reach that share of the sample's locus total before the sample can support
 the reproducibility or depth route. Measured on the supplied project, a 0.01
 floor raises precision 2.2 points and costs 0.35 recall points (17,319 rows,
 86.2%/77.2%), but it removes 33 of the vendor-confirmed rows the evidence
-redesign recovered: amplicon pools inflated by co-amplified paralogs leave
-real minor haplotypes at sub-percent shares, so the floor stays off by
-default. It is most useful as an artifact guard on the depth route in
-unreplicated designs, where around 0.01 is a reasonable starting point.
+redesign recovered, because amplicon pools inflated by co-amplified
+paralogs leave real minor haplotypes at sub-percent shares. The floor
+therefore stays off by default. It is most useful as an artifact guard on
+the depth route in unreplicated designs, where around 0.01 is a
+reasonable starting point.
 
 Evidence thresholds are absolute read counts and therefore do not scale
 with sequencing depth. At the honeybee AgriSeq run's ~750x per sample per
 marker, 10 reads sits below the Ion error noise floor, and the defaults
 admitted 1,752 novel rows of which roughly 92% were error haplotypes
-(median carrier share near zero). Sweep-backed guidance by depth regime:
-at low depth (~60x) and at standard DArTag depth the defaults stand; at
-very high depth (above roughly 500x per sample per marker) enable
-`--min-supporting-freq 0.10` — on the honeybee run it collapsed the novel
-rows to 147 while raising caller concordance from 89.8% to 90.6%, and
-locus-share floors dominate rescaled absolute thresholds because
-per-marker depth varies tenfold within a single run.
+(median carrier share near zero). Sweeps back the following guidance by
+depth regime. At low depth (~60x) and at standard DArTag depth the
+defaults stand. At very high depth (above roughly 500x per sample per
+marker), enable `--min-supporting-freq 0.10`. On the honeybee run it
+collapsed the novel rows to 147 while raising caller concordance from
+89.8% to 90.6%, and locus-share floors dominate rescaled absolute
+thresholds because per-marker depth varies tenfold within a single run.
 
 Setting every route's threshold to 0 emits every sequence at or above
 `--min-global-count` (exhaustive discovery). The same rule protects
 qualifying sequences from abundance-skew denoising and gates partial-read
 extension, so discovery, protection, and extension stay consistent.
 Abundance-skew denoising (UNOISE-style, `2^(alpha*d+1)`, closest parent
-first) then absorbs low-abundance neighbors within each sample; a pooled
+first) then absorbs low-abundance neighbors within each sample. A pooled
 pass (`--global-denoise-distance`, default 1) afterwards folds an
 evidence-failing sequence into the protected parent the project-wide skew
-names — but only when both carry the same target allele, so no move can
+names, but only when both carry the same target allele, so no move can
 change a sample's Ref/Alt dosage (0.9.x moved reads across alleles, which
-could turn a private 25/25 heterozygote into Ref=50). Evidence-passing and
-canonical sequences are never absorbed. Reads whose sequences pass no route
-remain visible in the QC read accounting rather than silently vanishing. At the default distance of 1 the eligible parents of a sequence are its single-substitution neighbours, which the denoiser enumerates and looks up rather than finding by scanning every centroid; the selection is identical, and a paralogous locus with thousands of unique sequences per sample (the pecan 3K panel has one) no longer makes the pass quadratic.
+could turn a private 25/25 heterozygote into Ref=50). The denoiser never
+absorbs evidence-passing and canonical sequences. Reads whose sequences
+pass no route remain visible in the QC read accounting rather than silently vanishing. At the default distance of 1 the eligible parents of a sequence are its single-substitution neighbours, which the denoiser enumerates and looks up rather than finding by scanning every centroid. The selection is identical, and a paralogous locus with thousands of unique sequences per sample (the pecan 3K panel has one) no longer makes the pass quadratic.
 
-Classification against the design is IUPAC-aware on the design side: with an
+Classification against the design is IUPAC-aware on the design side. With an
 ambiguity-coded design allele, a compatible concrete observed base classifies
 as RefMatch/AltMatch. An ambiguous observed base such as N is missing data
 and classifies as Other, matching the vendor's convention. Ref/Alt category
 assignment and per-row counts always use exact sequence equality, so an
-ambiguity-coded canonical tag reports zero exact counts; the pipeline does
+ambiguity-coded canonical tag reports zero exact counts. The pipeline does
 not guess which concrete variants a curated IUPAC consensus was meant to
 absorb (DArT uses such codes to encode real secondary SNPs, so collapsing
-them would merge genuine microhaplotypes — measured on the blackberry
-panel). A read whose tag contains an N is never counted as a haplotype of
-its own: it is credited to the one N-free sequence at its locus it is
-compatible with, or dropped (`reads_n_mapped` / `reads_n_dropped`).
+them would merge genuine microhaplotypes, as measured on the blackberry
+panel). The pipeline never counts a read whose tag contains an N as a
+haplotype of its own. It credits the read to the one N-free sequence at
+its locus that the read is compatible with, or drops it
+(`reads_n_mapped` / `reads_n_dropped`).
 
-Reads shorter than the tag length are salvaged by default
-(`--partial-read-mode assign`): a trimmed prefix is credited to the one
-learned full tag it matches, and only when it is longer than every prefix
-shared between two learned alleles of its locus (see the 0.11.0 section
+By default (`--partial-read-mode assign`) the pipeline salvages reads
+shorter than the tag length. It credits a trimmed prefix to the one
+learned full tag it matches, and only when the prefix is longer than every
+prefix shared between two learned alleles of its locus (see the 0.11.0 section
 "Truncated reads: partial-read salvage with a locus guard"). `off` excludes such
-reads. A partial read never establishes an allele: a prefix of nothing
-learned is left unmapped. Note that a partial read's quality is judged over
+reads. A partial read never establishes an allele, so a prefix of nothing
+learned stays unmapped. The pipeline judges a partial read's quality over
 its observed bases only.
 
 ## Recovering a panel without the primer file (`infer-design`)
 
 Some providers treat the primer file as proprietary. Its only irreplaceable
-content is where each tag starts inside the probe-design target: the tag must
+content is where each tag starts inside the probe-design target. The tag must
 be a tag-length window of the bracket-expanded target containing the SNP, so
 inference selects among a closed candidate set (~4x tag-length windows per
 locus) rather than reconstructing sequences freely. Because reads are
 primer-started, exact read prefixes identify the true window almost
 digitally, and Ref/Alt identity comes from bracket order (the first allele is
-the reference-genome base — verified at all 3,120 loci of this panel with
+the reference-genome base, verified at all 3,120 loci of this panel with
 zero swaps).
 
 ```bash
@@ -307,59 +316,62 @@ python3 madcats.py infer-design \
   --output inferred_reference_tags.csv
 ```
 
-Two evidence tiers, strictly ordered: exact read-prefix votes decide first
-and are authoritative; an identity-envelope fuzzy pass (seeded matching
-within the same 80% identity rule as generation, with already-resolved tags
-acting as competition sinks) runs only for loci with zero exact support and
-can never overrule exact evidence. Each locus needs a dominant window
-(default 10x the runner-up); the written anchor (`LeftPrimerSequence`) is the
-shortest panel-unique tag prefix, since the true primer boundary is
-unobservable in seamless reads and unnecessary for assignment. `--tag-length`
-sets the panel's reported tag length (54, 81, 109, ...); reads must reach it
-and the design flanks must contain a full window, both validated per locus.
+Inference uses two evidence tiers in strict order. Exact read-prefix votes
+decide first and are authoritative. An identity-envelope fuzzy pass
+(seeded matching within the same 80% identity rule as generation, with
+already-resolved tags acting as competition sinks) runs only for loci
+with zero exact support and can never overrule exact evidence. Each locus
+needs a dominant window (default 10x the runner-up). The written anchor
+(`LeftPrimerSequence`) is the shortest panel-unique tag prefix, since
+the reads do not show the true primer boundary and assignment does not
+need it. `--tag-length`
+sets the panel's reported tag length (54, 81, 109, ...). Reads must reach it
+and the design flanks must contain a full window, and inference checks
+both per locus.
 
-Measured blinded on this project (primer file untouched, ~11 minutes):
-3,068/3,120 loci inferred — 2,742 by exact evidence (100.0% correct against
-the primer-derived truth) and 326 by the fuzzy tier (319 correct, 97.9%);
-zero Ref/Alt swaps or variant-position errors; 52 loci excluded with stated
-reasons (no reads within identity, support below threshold, or ambiguous
-windows). Running `generate` on the inferred panel reproduces 99.1% of the
-full-input MADC's rows (novel Match/Other rows: 99.65%) with 100%
-classification agreement; count totals run 0.6% high because the short
-anchors reject fewer error-carrying reads than the truer, longer primers.
+In a blinded run on this project (primer file untouched, ~11 minutes),
+inference resolved 3,068/3,120 loci, 2,742 by exact evidence (100.0%
+correct against the primer-derived truth) and 326 by the fuzzy tier (319
+correct, 97.9%). It made zero Ref/Alt swaps or variant-position errors
+and excluded 52 loci with stated reasons (no reads within identity,
+support below threshold, or ambiguous windows). Running `generate` on
+the inferred panel reproduces 99.1% of the full-input MADC's rows (novel
+Match/Other rows 99.65%) with 100% classification agreement. Count totals
+run 0.6% high because the short anchors reject fewer error-carrying reads
+than the truer, longer primers.
 The `*.qc.json` report records each locus's route, support, margin, anchor
-length, and flags. The fuzzy tier is the review tier: its errors win by
+length, and flags. The fuzzy tier is the review tier. Its errors win by
 large margins (paralog haplotype pools), so no internal statistic can catch
-them — cross-check `fuzzy_anchor` loci against any delivered MADC's
+them. Cross-check `fuzzy_anchor` loci against any delivered MADC's
 canonical rows or a public panel asset, and prefer those sources outright
 when available (a single delivered MADC reconstructs the panel exactly).
-Inference is a one-time operation per panel; freeze its CSV and reuse it.
+Inference is a one-time operation per panel, so freeze its CSV and reuse it.
 `scripts/validate_inferred_design.py` compares an inferred panel against a
 ground-truth reference-tag CSV, with per-route accuracy breakdowns.
 
 ## Migration from 0.4.x
 
-Version 0.5.0 changed the discovery semantics, so the evidence flags were
-renamed to make old commands fail loudly rather than silently change meaning:
+Version 0.5.0 changed the discovery semantics and renamed the evidence
+flags so that old commands fail loudly rather than silently change meaning:
 
 - `--min-quality-support` became `--quality-min-clean-reads` (and the route
-  is now optional and off by default);
+  is now optional and off by default).
 - `--novel-min-reads-per-sample`/`--novel-min-samples` became
   `--reproducible-min-reads`/`--reproducible-min-samples`, and the
   reproducibility test moved from a post-hoc AND filter into the core
-  evidence rule (routes combine by OR);
-- `--depth-min-reads` is new;
-- `--allele-catalogue`/`--known-only` were removed: fixed allele-ID
+  evidence rule (routes combine by OR).
+- `--depth-min-reads` is new.
+- `--allele-catalogue`/`--known-only` are gone, because fixed allele-ID
   assignment and the cross-project allele database are downstream HapApp
   responsibilities, and reprocessing against a frozen catalogue is no longer
-  this pipeline's job;
-- the per-sample cache format version rose to 0.4.0 (fuzzy primer matches now
+  this pipeline's job.
+- The per-sample cache format version rose to 0.4.0 (fuzzy primer matches now
   resolve across all matched depths by tag identity instead of preferring the
-  deepest primer), so caches are rebuilt on first use. Rebuilding is cheap:
-  assignment decisions are memoized per unique sequence, which made
-  per-sample processing 7.1x faster; the full 80-sample, 154.6M-read project
-  processes from scratch in about 4.5 minutes with 8 workers and regenerates
-  from a warm cache in about a minute.
+  deepest primer), so caches rebuild on first use. Rebuilding is cheap
+  because the pipeline memoizes assignment decisions per unique sequence,
+  which made per-sample processing 7.1x faster. The full 80-sample,
+  154.6M-read project processes from scratch in about 4.5 minutes with 8
+  workers and regenerates from a warm cache in about a minute.
 
 ## Validation on the supplied project
 
@@ -379,80 +391,81 @@ are exactly equal, and the shared count total is 2.0% above DArT's.
 
 ### Why the evidence model changed
 
-The 0.4.x discovery gate required project-wide reads whose **every** tag base
+The 0.4.x discovery gate required project-wide reads whose every tag base
 reaches Q20. Auditing the raw caches showed this vetoed 286 vendor rows that
-are present as exact 81-bp FASTQ prefixes with strong support — up to 6,626
-reads spread across as many as 70 samples — because one base position is
-systematically low-quality (for many, below Q10, so no clean-read threshold
-can rescue them). Symmetrically, the old `10x4` post-filter removed 598
-vendor rows that had clean-read support but narrower sample spread. The
-reproducibility-primary rule recovers both classes; every vetoed-but-
-reproducible vendor row is present in the 0.5.0 default output.
+are present as exact 81-bp FASTQ prefixes with strong support, up to 6,626
+reads spread across as many as 70 samples, because one base position is
+systematically low-quality (for many, below Q10, so no clean-read
+threshold can rescue them). Symmetrically, the old `10x4` post-filter
+removed 598 vendor rows that had clean-read support but narrower sample
+spread. The reproducibility-primary rule recovers both classes, and every
+vetoed-but-reproducible vendor row is present in the 0.5.0 default output.
 
 The vendor's own file shows DArT applies no within-project support threshold
-of this kind: 27.3% of its positive-count rows have fewer than 10 reads in
+of this kind. Of its positive-count rows, 27.3% have fewer than 10 reads in
 fewer than 2 samples of its own counts, 4,081 rows have under 10 total reads,
 and 1,417 rows are all-zero. Its row list reflects proprietary clustering
-plus a cross-project haplotype database — reproducibility evidence at the
-database level, which a single-project de novo run cannot see. The
+plus a cross-project haplotype database, which supplies reproducibility
+evidence at the database level that a single-project de novo run cannot see. The
 within-project evidence rule is therefore this pipeline's explicit,
 configurable substitute, not an imitation of a vendor threshold.
 
 ### Independent validation: red clover (diploid, 109-bp tags, low depth)
 
-The DCl25-10856 red clover project (376 samples, 3,000 loci, 109-bp tags,
-mean read length ~88 bp so only ~65% of reads reach the tag length, ~60x mean
-locus depth) was processed with no primer file: the probe-design targets plus
-`infer-design` recovered 2,968 loci — 2,902 exactly matching the vendor's
-canonical tags, 56 differing only by the vendor's IUPAC curation, and the
-remaining handful confined to loci where the vendor's own tags have zero
-reads. `scripts/madc_to_reference_tags.py` converted the delivered MADC into
-the equivalent panel (3,000/3,000) as the cross-check route.
+MADCATS processed the DCl25-10856 red clover project (376 samples, 3,000
+loci, 109-bp tags, mean read length ~88 bp so only ~65% of reads reach the
+tag length, ~60x mean locus depth) with no primer file. The probe-design
+targets plus `infer-design` recovered 2,968 loci. Of these, 2,902 match the
+vendor's canonical tags exactly, 56 differ only by the vendor's IUPAC
+curation, and the remaining handful sit at loci where the vendor's own
+tags have zero reads. `scripts/madc_to_reference_tags.py` converted the
+delivered MADC into the equivalent panel (3,000/3,000) as the
+cross-check route.
 
 Generation at the defaults gave 85.4% precision and 62.9% raw recall with
-100% classification agreement and a 0.9975 shared-count total ratio. The raw
-recall is dominated by a structural ceiling: 36.7% of the vendor's
-positive-count rows fail every within-project evidence route on the vendor's
-own counts (their cross-project catalogue at low depth); against
+100% classification agreement and a 0.9975 shared-count total ratio. A
+structural ceiling dominates the raw recall. Of the vendor's
+positive-count rows, 36.7% fail every within-project evidence route on
+the vendor's own counts (their cross-project catalogue at low depth). Against
 evidence-bearing vendor rows, recall is 94.1%. Softening to
 `--reproducible-min-reads 5 --depth-min-reads 15` captured nearly the whole
 recoverable band (67.2% recall against a 67.0% ceiling) at a 10-point
-precision cost — but carrier-frequency profiling shows why the bare soft
-view is not recommended: its vendor-shared additions look like real alleles
+precision cost. Carrier-frequency profiling shows why the bare soft
+view is not recommended. Its vendor-shared additions look like real alleles
 (median 44% of their carrier's locus reads, matching the 48% of established
-rows), while its generated-only additions sit at a median 7.5% — not a
-diploid genotype. The defaults remain the recommendation for diploid and
+rows), while its generated-only additions sit at a median 7.5%, which is
+not a diploid genotype. The defaults remain the recommendation for diploid and
 polyploid projects alike. When a low-depth diploid project needs more
-sensitivity, add the diploid-justified frequency floor:
+sensitivity, add the diploid-justified frequency floor. With it,
 `--reproducible-min-reads 5 --depth-min-reads 15 --min-supporting-freq 0.10`
 recovers about 40% of the available recall band while excluding the
-artifact-profile rows, and its extra rows should still be confirmed by
-segregation or replicates downstream. On this project the pre-0.10 partial
+artifact-profile rows, and segregation or replicates should still confirm
+its extra rows downstream. On this project the pre-0.10 partial
 salvage (minimum length 30, no locus guard) added the ~24M primer-bearing
 short reads to counts without changing the row set, and lowered count
 concordance with the vendor (Pearson 0.976 to 0.941), showing the vendor
-does not count short fragments; the 0.10.0 default (minimum length
+does not count short fragments. The 0.10.0 default (minimum length
 `--tag-length` minus 9) excludes those fragments, and `--partial-read-mode
 off` restores the exact pre-salvage counts when vendor comparability matters.
 
 Segregation-based validation closed the loop on this project. The run
 contains a 152-progeny bi-parental mapping family with both parents, and
-both MADCs were pushed through the same updog (diploid) + BIGr workflow.
+both MADCs went through the same updog (diploid) + BIGr workflow.
 Updog imputes dosages at low or zero depth (about a third of calls sit at
 DP=0), so all comparisons are depth-filtered. Dosage concordance between
 the two pipelines' calls is 99.73% at DP>=10 in both (99.77% at DP>=20).
-Mendelian-violation rates in the family are statistically identical —
+Mendelian-violation rates in the family are statistically identical, at
 3.38% for this pipeline versus 3.35% for the vendor MADC (parents DP>=20,
-progeny DP>=10, MPP>=0.9) — so the shared violation floor reflects the
+progeny DP>=10, MPP>=0.9), so the shared violation floor reflects the
 assay and family, not either counting implementation. Family transmission
 of microhaplotype rows (present at >=5 reads in >=2 progeny must appear in
-a parent) adjudicates the discovery tiers directly: vendor-shared novel
-rows are parent-confirmed at 97.4% (the assay background), the default
-configuration's generated-only rows at 72.0% — majority genuinely
-transmitted alleles absent from the vendor's catalogue — and the soft
-band's generated-only rows at only 28.4%, independently confirming the
-carrier-frequency verdict that the bare soft view admits mostly artifacts.
-The symmetric test on the vendor's own counts completes the picture: only
+a parent) adjudicates the discovery tiers directly. Parents confirm
+vendor-shared novel rows at 97.4% (the assay background), the default
+configuration's generated-only rows at 72.0% (mostly transmitted alleles
+absent from the vendor's catalogue), and the soft band's generated-only
+rows at only 28.4%. That independently confirms the carrier-frequency
+verdict that the bare soft view admits mostly artifacts.
+The symmetric test on the vendor's own counts completes the picture. Only
 313 of their 10,175 exclusive novel rows segregate in the family at all
 (the rest are read-starved catalogue content this project can neither
 validate nor falsify), and those confirm at 67.7% against a 97.8%
@@ -460,12 +473,12 @@ consensus background on the same count matrix. Each pipeline's exclusive
 rows therefore carry the same real-but-imperfect profile (72.0% versus
 67.7%, indistinguishable at n=313), while this pipeline contributes about
 three times as many transmission-validated alleles (~633) as it forgoes
-(~212) — and the forgone ones sit in known, tunable territory just below
-the evidence thresholds.
+(~212), and the forgone ones sit in known, tunable territory immediately
+below the evidence thresholds.
 
-The canonical Ref/Alt rows — the input to downstream dosage calling —
-compare to the vendor's as follows. Of our 5,936 canonical rows, 5,827
-(98.2%) are sequence-identical to the vendor's; the 109 differences are 89
+The canonical Ref/Alt rows, which are the input to downstream dosage
+calling, compare to the vendor's as follows. Of our 5,936 canonical rows, 5,827
+(98.2%) are sequence-identical to the vendor's. The 109 differences are 89
 vendor-IUPAC-curated sequences plus the Ref/Alt pairs of the 10 loci whose
 vendor tags carry zero reads in this project. Across the 2.19 million
 matched count cells, Pearson correlation is 0.975 with a mean absolute
@@ -474,86 +487,87 @@ Ref/(Ref+Alt) ratio, evaluated over the 499,414 locus-by-sample cells where
 both files have at least 20 reads of canonical depth, the median ratio
 difference is 0.0000 (95th percentile 0.015) and 99.68% of cells imply the
 identical naive diploid genotype class. The zero-count canonical structure
-also mirrors the vendor's (644 all-zero rows versus their 604) — the
-germplasm-divergent loci both pipelines observe.
+also mirrors the vendor's (644 all-zero rows versus their 604), reflecting
+the germplasm-divergent loci both pipelines observe.
 
 ### Independent validation: blackberry (mixed ploidy, 109-bp tags, indels, degenerate primers)
 
 The DBla25-10927 blackberry project (376 samples of mixed *Rubus* species
 and ploidies, 3,015 loci, 109-bp tags, ~59-70% of reads reaching tag
 length) is the panel that motivated version 0.7.0's indel support and is
-the first project validated through **all three panel-definition routes**.
-Its design contains 10 indel markers — encoded with anchored VCF-style
+the first project validated through all three panel-definition routes.
+Its design contains 10 indel markers, encoded with anchored VCF-style
 brackets in the probe-design file but unanchored dash notation in the
-primer CSV — and, as the data revealed, primers synthesized with
+primer CSV. As the data revealed, it also has primers synthesized with
 degenerate IUPAC bases over flanking SNPs, whose oligo sequence the
-vendor's tags carry verbatim. DArT's delivered sample names were
-misassigned for this project (a correction crosswalk exists); this
-pipeline's targetid-named columns are immune to that class of error.
+vendor's tags carry verbatim. DArT misassigned the delivered sample names
+for this project (a correction crosswalk exists), but this pipeline's
+targetid-named columns are immune to that class of error.
 
 Version 0.7.0 replaced the SNP-only window construction with one general
-rule — the divergence point of a tag pair is the shared prefix of the two
-full allele expansions — which handles SNPs, insertions, deletions,
+rule, that the divergence point of a tag pair is the shared prefix of the
+two full allele expansions. The rule handles SNPs, insertions, deletions,
 anchored brackets, and homopolymer shifts identically, and reconstructs
 tags as primer-sequence overlay plus genomic suffix so degenerate oligo
 bases persist. SNP-panel outputs are byte-identical through the change.
 
 Route-by-route results against the vendor's canonical tags:
 
-- **Design route**: 2,881/3,015 exact; all 134 differences are vendor-IUPAC
-  loci; zero unexplained. All 10 indel loci reconstruct exactly, including
-  divergence positions shifted past homopolymer runs.
-- **Bootstrap route**: exact by construction (3,015/3,015 converted, none
-  skipped, indels included). Generation from this panel: 92.9% precision,
-  73.7% raw recall against a 75.7% within-project evidence ceiling (23.7%
-  of the vendor's positive rows carry no such evidence on their own
-  counts), **94.7% fair recall** — the third project inside the 94-95%
-  band — with 100% canonical row recovery, Pearson 0.981, and 99.2%
-  classification agreement (557 of the 639 disagreements sit at
-  IUPAC-canonical loci and 68 at indel loci, where the positional variant
-  heuristic and vendor curation legitimately differ). Family transmission
-  in the reciprocal Columbia Star x Kotata families (both parents
-  sequenced, 92 progeny) reproduces the red clover profile:
-  vendor-shared novel rows 98.5% parent-confirmed (n=12,064),
-  generated-only rows 74.0% (n=2,027); the test asserts only that progeny
-  alleles exist in a parent, so unknown hexaploid inheritance and
-  segmental allopolyploidy do not affect it.
-- **Primer-free inference**: 2,943/3,015 loci inferred (72 excluded with
-  stated reasons); 2,796 exact plus 126 concrete realizations of
-  vendor-IUPAC tags — identical under IUPAC compatibility, the
+- **Design route.** 2,881/3,015 tags are exact, all 134 differences are
+  vendor-IUPAC loci, and none is unexplained. All 10 indel loci
+  reconstruct exactly, including divergence positions shifted past
+  homopolymer runs.
+- **Bootstrap route.** The tags are exact by construction (3,015/3,015
+  converted, none skipped, indels included). Generation from this panel
+  gives 92.9% precision, 73.7% raw recall against a 75.7% within-project
+  evidence ceiling (23.7% of the vendor's positive rows carry no such
+  evidence on their own counts), and 94.7% fair recall, the third project
+  inside the 94-95% band. It also gives 100% canonical row recovery,
+  Pearson 0.981, and 99.2% classification agreement (557 of the 639
+  disagreements sit at IUPAC-canonical loci and 68 at indel loci, where
+  the positional variant heuristic and vendor curation legitimately
+  differ). Family transmission in the reciprocal Columbia Star x Kotata
+  families (both parents sequenced, 92 progeny) reproduces the red clover
+  profile, with vendor-shared novel rows 98.5% parent-confirmed
+  (n=12,064) and generated-only rows 74.0% (n=2,027). The test asserts
+  only that progeny alleles exist in a parent, so unknown hexaploid
+  inheritance and segmental allopolyploidy do not affect it.
+- **Primer-free inference.** Inference resolved 2,943/3,015 loci and
+  excluded 72 with stated reasons. It found 2,796 exact tags, 126 concrete
+  realizations of vendor-IUPAC tags, and 18 wrong windows (0.6%). The
+  realizations are identical under IUPAC compatibility, the
   information-theoretic limit when the oligo's degeneracy is unknowable
-  without the primer file — and 18 wrong windows (0.6%). Of the 10 indel
-  loci, 9 resolve exactly by read votes (one via the fuzzy tier at a locus
-  whose canonicals carry no reads) and 1 is excluded as ambiguous rather
-  than guessed.
+  without the primer file. Of the 10 indel loci, 9 resolve exactly by
+  read votes (one via the fuzzy tier at a locus whose canonicals carry no
+  reads), and inference excludes 1 as ambiguous rather than guessing it.
 
-The 18 wrong windows decompose into three classes, none an inference
-defect in read-bearing data: 8 are read-starved loci anchored on scraps;
-2 are short-amplicon loci (72-bp and 105-bp amplicons, real reads that
-never reach tag length); and ~8 are loci where the vendor counted
+The 18 wrong windows fall into three classes, none an inference
+defect in read-bearing data. Of these, 8 are read-starved loci anchored
+on scraps, 2 are short-amplicon loci (72-bp and 105-bp amplicons, real
+reads that never reach tag length), and ~8 are loci where the vendor counted
 thousands of reads for tags occurring zero times in the delivered FASTQs
 in any form. The leading explanation for the last class is the vendor's
 pre-delivery overrepresented-read filtering (quantified for sweetpotato
-above): dominant amplicons are precisely what such a filter removes, the
+above). Dominant amplicons are precisely what such a filter removes, the
 vendor counts predate it, and the affected loci are then unknowable to any
 FASTQ-based pipeline.
 
-A germplasm note from the same run: the project's two "Marion" samples
-are genetically different individuals (canonical-count correlation 0.47
-where technical replicates approach 1); one is near-clonal with the
-"Newberry" sample (r=0.958) and the other matches nothing in the panel —
-a plate-provenance question for curation, caught by targetid-level
-fingerprinting.
+The same run raised a germplasm question. The project's two "Marion"
+samples are genetically different individuals (canonical-count
+correlation 0.47 where technical replicates approach 1). One is
+near-clonal with the "Newberry" sample (r=0.958) and the other matches
+nothing in the panel. Targetid-level fingerprinting caught this
+plate-provenance question for curation.
 
 ### AgriSeq (Ion Torrent) pathway: honeybee validation
 
-AgriSeq reads violate the primer-started model three ways: amplicons are
-sequenced from both ends (~50/50 orientation split), primer digestion and
-primers placed outside the submitted targets disperse read starts, and Ion
-Torrent's dominant error is the homopolymer indel (a median 24% of reads
-per marker carry one across ~100 bp on the honeybee run, up to 77% at
-run-rich loci — the rate climbs monotonically with the longest run in the
-window). The pathway is two commands:
+AgriSeq reads violate the primer-started model in three ways. The platform
+sequences amplicons from both ends (~50/50 orientation split), primer
+digestion and primers placed outside the submitted targets disperse read
+starts, and Ion Torrent's dominant error is the homopolymer indel (a
+median 24% of reads per marker carry one across ~100 bp on the honeybee
+run, up to 77% at run-rich loci, and the rate climbs monotonically with
+the longest run in the window). The pathway is two commands:
 
 ```bash
 # first run of a panel: learn window placement from observed coverage
@@ -571,153 +585,156 @@ madcats.py generate --fastq-dir normalized/ --fastq-glob "*.fastq" \
   --output project_MADC.csv
 ```
 
-The 41-bp default window is measured, not assumed: sweeping 41/61/81 bp on
+The 41-bp default window comes from a measurement. Sweeping 41/61/81 bp on
 the 81-marker honeybee validation (24.2M reads, 81 samples of mixed drone
-and worker material) showed longer windows lose coverage and indel-free
-reads faster than they add context — end-to-end read yield 64%/59%/44% and
-genotype call rate 96.6%/93.9%/85.6% — with the 81-bp concordance uptick a
-survivor artifact of scoring only the easiest cells. Data-driven window
+and worker material) showed that longer windows lose coverage and
+indel-free reads faster than they add context, with end-to-end read yield
+64%/59%/44% and genotype call rate 96.6%/93.9%/85.6%. The 81-bp
+concordance uptick is a survivor artifact of scoring only the easiest
+cells. Data-driven window
 placement (per marker, from observed read coverage, keeping the variant
 out of the anchor) raised adapter yield from 66% to 85.5% of raw reads.
 Since 0.8.1, auto placement scores coverage minus a soft tandem-repeat
 penalty (`--str-penalty`, default 0.002 per repeat bp beyond 4, unit
-sizes 1-3): the original homopolymer tiebreak provably never fired,
+sizes 1-3). The original homopolymer tiebreak provably never fired,
 because real coverage fractions are never exactly tied, and it was blind
 to dinucleotide repeats entirely.
 
 Genotypes called from target-base dosage agree with the vendor's Torrent
 caller at 90.6%, and both pipelines agree with an independent pre-existing
-reference genotype set at 94.4% versus 94.5% — a dead heat, with disputed
-cells splitting 48:48 and the residual disagreement concentrated at a
-handful of three-way-inconsistent markers — most of which the second-chip
+reference genotype set at 94.4% versus 94.5%, a dead heat. Disputed
+cells split 48:48, and the residual disagreement concentrates at a
+handful of three-way-inconsistent markers, most of which the second-chip
 study below traced to window placement rather than to the loci
-themselves. Row accuracy against the Amel_HAv3.1 genome: all 81
+themselves. For row accuracy against the Amel_HAv3.1 genome, all 81
 real markers' Ref tags occur verbatim at their named coordinates and every
-Alt tag is structurally exact; the only four failures are the vendor's
+Alt tag is structurally exact. The only four failures are the vendor's
 four design-failed markers, whose submitted target sequences do not match
-the genome at their named positions — a pre-submission target-versus-
-genome check would have caught them before synthesis. Caveats: a single
+the genome at their named positions. A pre-submission target-versus-genome
+check would have caught them before synthesis. The caveats are a single
 project, two imperfect arbiters, and mixed-ploidy material, which the
 row-level checks tolerate by construction.
 
 ### Second chip, replicates, and window freezing (0.8.1)
 
-A second honeybee chip on the same panel (96 wells: 65 unique samples, 30
-within-chip technical replicate pairs, one no-template control; 40.8M
-reads at 2.5x the first chip's depth) ran the recipe unchanged: 84.8% of
-raw reads normalized, the control clean at 119 reads against a
-160,000-read median sample, vendor-caller concordance 92.4%, and — the
-first truth-free accuracy instrument — 98.2% genotype concordance across
-the 30 replicate pairs. The depth-scaling law reproduced exactly:
-default evidence thresholds admitted 4,410 novel rows at this depth
-(1,752 on chip 1), while `--min-supporting-freq 0.10` pinned the count
-near 145 on both chips and improved every concordance metric, settling
-the frequency floor as the AgriSeq default.
+A second honeybee chip on the same panel (96 wells holding 65 unique
+samples, 30 within-chip technical replicate pairs and one no-template
+control, with 40.8M reads at 2.5x the first chip's depth) ran the recipe
+unchanged. It normalized 84.8% of raw reads, its control held only 119
+reads against a 160,000-read median sample, and vendor-caller
+concordance was 92.4%. The first truth-free accuracy instrument, genotype
+concordance across the 30 replicate pairs, reached 98.2%. The
+depth-scaling law reproduced. Default evidence thresholds admitted 4,410
+novel rows at this depth (1,752 on chip 1), while
+`--min-supporting-freq 0.10` pinned the count near 145 on both chips and
+improved every concordance metric, settling the frequency floor as the
+AgriSeq default.
 
 The chips also exposed a stability failure with consequences for
-microhaplotype databases: re-learning window placement per run moved 42
+microhaplotype databases. Re-learning window placement per run moved 42
 of 85 windows, which made 58% of the second chip's haplotype sequences
-spuriously "novel" against the first chip — technical artifacts
+spuriously "novel" against the first chip. Those technical artifacts are
 indistinguishable from biology in any downstream database. Freezing the
 panel with `--reuse-tags` (the emitted window CSV is byte-identical to
 the source panel, every row validated against the design, partial
 mismatches refused) raised cross-chip haplotype sharing from 42% to 88%,
-with the remainder consistent with genuinely new germplasm on the second
-chip.
+with the remainder consistent with new germplasm on the second chip.
 
 Window placement also turned out to be the dominant cause of apparently
-bad markers, through allele-biased read dropout: where a variant allele
+bad markers, through allele-biased read dropout. Where a variant allele
 extends an adjacent tandem repeat, its reads carry longer runs and die
 preferentially inside any window spanning the repeat, faking
 monomorphism. Surgical single-marker re-windowing rescued four of the
 five worst markers on both chips (9%->100%/96%, 27%->99%/96%,
 48%->100%/99% vendor concordance), leaving only two markers plus one
-sub-amplicon-spaced marker cluster genuinely bad on every window tried —
-the true redesign list. The settled production workflow is: first chip
-with penalized auto placement, patch the few coverage-forced windows the
-cross-run comparison exposes, freeze the curated panel, and run every
-subsequent chip with `--reuse-tags`. The curated frozen honeybee panel
+sub-amplicon-spaced marker cluster bad on every window tried. Those form
+the true redesign list. The settled production workflow is to run the
+first chip with penalized auto placement, patch the few coverage-forced
+windows the cross-run comparison exposes, freeze the curated panel, and
+run every subsequent chip with `--reuse-tags`. The curated frozen honeybee panel
 scores 93.4%/93.9% vendor concordance on the two chips with 98.0%
 replicate concordance.
 
 Re-sweeping window sizes under the new scoring (31/41/61 bp, frequency
 floor on) confirmed 41 bp at the knee of the concordance-versus-
-information curve: 31 bp genotypes marginally better (92.7% vs 91.8%)
-but carries 20% fewer distinct discovered microhaplotypes (110 vs 137),
-while 61 bp adds essentially none (138) and loses two concordance points
-— on this chemistry, indel exposure destroys the extra flanking
-variation as fast as a longer window adds it. Curation matters more than
-size: the curated 41-bp panel outscores every uncurated size.
+information curve. At 31 bp, genotyping is marginally better (92.7% vs
+91.8%) but the panel carries 20% fewer distinct discovered
+microhaplotypes (110 vs 137), while 61 bp adds almost none (138) and
+loses two concordance points. On this chemistry, indel exposure destroys
+the extra flanking variation as fast as a longer window adds it.
+Curation matters more than size. The curated 41-bp panel outscores every
+uncurated size.
 
 ### External benchmarks on public datasets (GT-seq, rhAmpSeq)
 
 Public datasets extend the validation record beyond in-house data, with
-intake converters archived beside each dataset (the Flex-Seq capture
-benchmark is documented in the 0.9.0 section below).
+intake converters archived beside each dataset (the 0.9.0 section below
+documents the Flex-Seq capture benchmark).
 
-**Pacific oyster AgriSeq** (PRJNA1118744; 372 Ion S5 samples, 591
+**Pacific oyster AgriSeq** (PRJNA1118744, 372 Ion S5 samples, 591
 amplicons of median 170 bp, design published as Ion AmpliSeq Region +
 Hotspot BEDs converted against the oyster_v9 genome with zero REF
-mismatches): with the honeybee-derived defaults unmodified, 88.4% of
+mismatches). With the honeybee-derived defaults unmodified, 88.4% of
 144.6M raw reads normalized and genotypes agreed with the vendor's
-Torrent VariantCaller at **94.52%** (143,383/151,693 cells across 371
+Torrent VariantCaller at 94.52% (143,383/151,693 cells across 371
 name-matched samples, depth >= 20), 97.85% on the 460/542 markers above
-90% — within half a point of the curated in-house honeybee panel, on a
-foreign lab, species, chip generation, and target length. One panel-size
-effect appeared on schedule: 12-bp assignment anchors collide at 591
-markers (the birthday bound predicts it), resolved at the time with
-`--anchor-length 13`. Since 0.8.3, normalize-reads assigns anchors per
-locus instead (the same allocator infer-design uses): every marker keeps
+90%. This result is within half a point of the curated in-house honeybee panel,
+on a foreign lab, species, chip generation, and target length. One
+panel-size effect appeared on schedule. Assignment anchors of 12 bp
+collide at 591 markers (the birthday bound predicts it), which
+`--anchor-length 13` resolved at the time. Since 0.8.3, normalize-reads
+assigns anchors per locus instead (the same allocator infer-design uses).
+Every marker keeps
 the `--anchor-length` minimum, only colliding prefix groups grow, and
 windows identical all the way to the variant share an anchor with a
 surfaced warning (their reads resolve by full-tag identity downstream).
-A 17,500-marker genome-wide stress panel measured the necessity — 111
-colliding 12-mer groups, far above the random-sequence bound — and runs
+A 17,500-marker genome-wide stress panel measured the necessity, with 111
+colliding 12-mer groups, far above the random-sequence bound. It runs
 in ~820 MB with 17,291 markers at the minimum and 209 grown to 13-32 bp.
 
-**Delta smelt GT-seq** (Zenodo 10.5281/zenodo.19069550; 96 PE100
-samples, 410 loci, and — uniquely — the panel's real primer file):
+**Delta smelt GT-seq** (Zenodo 10.5281/zenodo.19069550, 96 PE100
+samples, 410 loci, and, uniquely, the panel's real primer file).
 GT-seq R1 reads are primer-started, so this platform needs no
 normalize-reads stage and exercised the primer-informed `design` route
 on non-DArT data for the first time, unchanged. Genotypes from the
 R1-only MADC agreed with the archive's independent BWA/bcftools
-reference VCF at **98.80%** (33,928/34,340 cells; 99.72% on the
-well-behaved core; per-sample median 98.9% across all 96 samples) — the
-pipeline's best platform result, on indel-free Illumina chemistry. The
-same dataset settled the primer-free question: `infer-design`, run with
-the primer file withheld, recovered **368/368 loci's Ref and Alt tags
-exactly** as the physical primers define them — a 100% inference score
+reference VCF at 98.80% (33,928/34,340 cells, 99.72% on the
+well-behaved core, per-sample median 98.9% across all 96 samples). That
+was the pipeline's best platform result, on indel-free Illumina
+chemistry. The same dataset settled the primer-free question. With the
+primer file withheld, `infer-design` recovered 368/368 loci's Ref and Alt
+tags exactly as the physical primers define them, a 100% inference score
 against ground truth rather than a vendor report.
 
-**Vitis rhAmpSeq** (PRJNA281110, Cornell; the published 2,000-marker
-collinear-core panel, NextSeq PE150, 200-300-bp amplicons): the panel
+**Vitis rhAmpSeq** (PRJNA281110, Cornell, the published 2,000-marker
+collinear-core panel, NextSeq PE150, 200-300-bp amplicons). The panel
 was designed on the collinear core of multiple *Vitis* genomes, so many
-markers have no exact home on any single reference — intake is
-**reference-free**: each marker's target frame is the consensus of its
+markers have no exact home on any single reference. Intake is therefore
+reference-free, and each marker's target frame is the consensus of its
 own primer-anchored read pileup. An R1-only first pass recovered 1,405
-markers at 63% read assignment; the paired-end route then measured the
-geometry (94.8% of pairs overlap and merge — the platform's own
+markers at 63% read assignment. The paired-end route then measured the
+geometry (94.8% of pairs overlap and merge, and the platform's own
 published pipeline merges with FLASH, independently confirming
-merge-first) and rebuilt consensus from full merged amplicons: **1,759
-markers (+25%), frames of median 228 bp, up to three 110-bp tiles per
-amplicon** (2,951 markers, 1,030 multi-SNP amplicons), 79.3% read
+merge-first) and rebuilt consensus from full merged amplicons. That gave
+1,759 markers (+25%), frames of median 228 bp, up to three 110-bp tiles
+per amplicon (2,951 markers, 1,030 multi-SNP amplicons), and 79.3% read
 extraction with `covered` routing. The tiled windows capture ~90% of
 all segregating sites (production's full-insert haplotypes span ~174 bp
-and capture all sites plus cross-tile phase; the trade buys fixed-length,
-frozen, cross-run-comparable MADC haplotypes). The merger itself was
-validated against FLASH 1.2.11, vsearch, and fastp on a four-regime
-exact-truth pair set — equal to the best (vsearch) in every regime,
-zero false merges, and on real NextSeq data the only inter-tool
+and capture all sites plus cross-tile phase, and the trade buys
+fixed-length, frozen, cross-run-comparable MADC haplotypes). Tests
+against FLASH 1.2.11, vsearch, and fastp on a four-regime exact-truth
+pair set put the merger equal to the best (vsearch) in every regime,
+with zero false merges. On real NextSeq data the only inter-tool
 differences are equal-quality overlap ties, where a per-locus pileup
 jury rules our R1-preferring pick correct 62.6% of the time.
 
 No public genotype matrix exists for these accessions, but family
-structure is its own truth: progeny of a biparental cross can carry at
-most four haplotypes per locus (two per parent), each individual at
-most two. All **eight biparental families in the submission (763 runs,
-~17.5 GB) were processed family-by-family under a 56 GB disk budget**
-against one frozen 2,951-window panel (`--reuse-tags`), so haplotypes
-are identical objects across families:
+structure is its own truth. Progeny of a biparental cross can carry at
+most four haplotypes per locus (two per parent), and each individual at
+most two. All eight biparental families in the submission (763 runs,
+~17.5 GB) went through the pipeline family-by-family under a 56 GB disk
+budget against one frozen 2,951-window panel (`--reuse-tags`), so
+haplotypes are identical objects across families:
 
 | family | progeny | informative loci | <=4 family haps | <=2 per progeny | calls within inferred parental 4 |
 |---|---|---|---|---|---|
@@ -729,54 +746,56 @@ are identical objects across families:
 
 (Three additional tiny families, n = 2-7, are consistent at 99.5-100%.)
 Across ~14,900 locus-family tests spanning eight independent crosses
-and three sequencing batches, **99.92-99.99% of all haplotype calls in
+and three sequencing batches, 99.92-99.99% of all haplotype calls in
 every family are alleles of that locus's four inferred parental
-haplotypes** — at three nines, the microhaplotypes the MADC reports in
+haplotypes. At three nines, the microhaplotypes the MADC reports in
 763 offspring are the parental alleles Mendelian transmission requires.
 
 ### Read accounting
 
-The QC JSON now reports where every read goes. For the default run:
-154,584,628 FASTQ records; 88,126,464 assigned to a locus at full length;
-87,373,009 (99.1% of assigned) retained in emitted rows; 753,455 dropped with
-their 558,194 low-evidence sequences (mean 1.3 reads each); 3,294,541 moved
-between sequences by within-sample denoising and 103,628 by cross-sample
-denoising (moved reads stay in the table under their centroid). Per-sample
+The QC JSON now reports where every read goes. The default run had
+154,584,628 FASTQ records, of which the pipeline assigned 88,126,464 to a
+locus at full length and retained 87,373,009 (99.1% of assigned) in
+emitted rows. It dropped 753,455 with their 558,194 low-evidence
+sequences (mean 1.3 reads each). Within-sample denoising moved 3,294,541
+between sequences and cross-sample denoising moved 103,628 (moved reads
+stay in the table under their centroid). Per-sample
 `reads_in_emitted_rows` joins the existing per-sample QC. Twelve samples have
-fewer than 100,000 assignable 81-bp tags (lowest: `4404075` with 23); these
-FASTQs are dominated by short or primer-less reads and downstream
-completeness should be reviewed for them. (Those figures are the 0.5.0 run;
-since 0.10.0 the pooled pass folds same-allele sequences only —
-`reads_moved_by_global_denoise` keeps its name — and the ledger gains
+fewer than 100,000 assignable 81-bp tags (the lowest, `4404075`, has 23).
+Short or primer-less reads dominate these FASTQs, so review their
+downstream completeness. (Those figures are from the 0.5.0 run. Since
+0.10.0 the pooled pass folds same-allele sequences only, though
+`reads_moved_by_global_denoise` keeps its name, and the ledger gains
 `reads_assigned_gapped`, `reads_n_mapped` and `reads_n_dropped`.)
 
 ### Historical exploratory analyses (0.3.x)
 
-The `results/v03_*` files document the audits that motivated the redesign:
-characterization of generated-only rows, right-primer support, cross-extract
-reproducibility of paired leaf/root samples, and a diagnostic BLAST against
-the public NSP306 *I. trifida* reference following the open `dartag_alleles`
-pattern (best hit at the designed locus for most high-support extra rows;
-off-target best hits flagged for paralog review, without automatic exclusion
-because cultivated sweetpotato is hexaploid and the reference is diploid).
-Those analyses used the 0.3.x quality-gated outputs; their row lists are
-superseded by the evidence model above, but the biological conclusions —
-filter the low-support tail, keep reproducible on-target microhaplotypes,
-flag multimappers — are what the current defaults implement.
+The `results/v03_*` files document the audits that motivated the redesign,
+covering characterization of generated-only rows, right-primer support,
+cross-extract reproducibility of paired leaf/root samples, and a
+diagnostic BLAST against the public NSP306 *I. trifida* reference
+following the open `dartag_alleles` pattern (best hit at the designed
+locus for most high-support extra rows, and off-target best hits flagged
+for paralog review, without automatic exclusion because cultivated
+sweetpotato is hexaploid and the reference is diploid).
+Those analyses used the 0.3.x quality-gated outputs. The evidence model
+above supersedes their row lists, but the current defaults implement
+their biological conclusions, which are to filter the low-support tail,
+keep reproducible on-target microhaplotypes, and flag multimappers.
 
 ### Evidence about prior FASTQ filtering and tag length
 
-Every vendor `AlleleSequence` and `ClusterConsensusSequence` is exactly 81
-bp; the panel design reconstructs a 97-bp primer-to-primer amplicon at all
+Every vendor `AlleleSequence` and `ClusterConsensusSequence` is 81
+bp long. The panel design reconstructs a 97-bp primer-to-primer amplicon at all
 3,120 loci, so an 81-bp tag is an observed prefix of a longer amplicon. The
 two target manifests report 175,642,223 `tagcounttotal` observations versus
-154,584,628 delivered FASTQ records; applying each manifest's `overreppct`
+154,584,628 delivered FASTQ records. Applying each manifest's `overreppct`
 predicts 18,989,753 removed overrepresented reads, and per-sample predicted
-and observed deficits are strongly correlated. The delivered FASTQs were
-therefore already filtered before release, which supports the preprocessing
+and observed deficits are strongly correlated. The vendor therefore
+filtered the delivered FASTQs before release, which supports the preprocessing
 hypothesis without identifying the exact vendor commands. A raw-data audit
 finds 17,334 of the vendor's 18,677 pure-ACGT rows as exact 81-bp FASTQ
-prefixes; the vendor also reports 569 Ref/Alt rows with curated IUPAC
+prefixes. The vendor also reports 569 Ref/Alt rows with curated IUPAC
 ambiguity (their concrete groupings are not derivable from the A/C/G/T probe
 design) and 73 Match/Other rows containing `N`. All 6,238 81-bp prefixes of
 the public Breeding Insight PanelHub 109-bp design sequences agree exactly
@@ -787,112 +806,112 @@ with this pipeline's independently reconstructed tags.
 Statistics columns the pipeline does not compute (`OneRatioRef` through
 `AvgPIC`, and `RatioAvgCountRefAvgCountSnp`) emit `.` rather than a blank
 cell in every data row (with `--annotations on`, the default, `PICSnp` and
-`AvgPIC` instead carry the `Variants` and `MarkerType` annotations — see
-the 0.10.0 section). This is a 0.8.2 format change: byte comparisons
-against MADCs generated by earlier versions will differ in exactly those
-nine columns and nothing else.
+`AvgPIC` instead carry the `Variants` and `MarkerType` annotations
+described in the 0.10.0 section). This is a 0.8.2 format change, so byte
+comparisons against MADCs from earlier versions will differ in those
+nine columns only.
 
 Three `generate` flags reproduce the raw-MADC framing that
 preamble-expecting consumers such as HapApp and HapApp_utils rely on:
 
 - `--dart-preamble` prepends the vendor-style seven starred rows above the
-  header: service/project label, plate barcode, plate number, plate row,
-  plate column, plate name, and the targetid row, which carries the
-  FASTQ-derived sample ids directly above the header row's sample names —
-  the same fastq-id-over-sample-name adjacency as vendor files. Every
-  preamble cell without a value is `*`, exactly as in vendor output, with
-  one exception: the file's very first cell holds a full provenance string
+  header. They are the service/project label, plate barcode, plate number,
+  plate row, plate column, plate name, and the targetid row, which carries
+  the FASTQ-derived sample ids directly above the header row's sample
+  names, the same fastq-id-over-sample-name adjacency as vendor files.
+  Every preamble cell without a value is `*`, as in vendor output, with
+  one exception. The file's very first cell holds a full provenance string
   (pipeline, version, and every generation parameter as `key=value`,
   prefixed with `* ` so consumers that skip preamble lines by their
   leading star still skip it), so the file records how it was made even
-  when separated from its QC sidecar. No timestamp is included — output
-  stays byte-reproducible.
+  when separated from its QC sidecar. The preamble includes no timestamp,
+  so output stays byte-reproducible.
 - `--preamble-project` sets the label repeated across the first preamble
-  row's sample cells (default: the output filename before its first dot).
+  row's sample cells (by default the output filename before its first dot).
 - `--sample-lookup` takes a two-column CSV/TSV (FASTQ-derived sample id,
-  desired sample name; a header line is detected and skipped) and replaces
+  desired sample name, with any header line detected and skipped) and replaces
   the output column names while the targetid row keeps the FASTQ ids.
   Validation is deliberately strict, because a rename table with holes
-  silently mislabels count columns: every run sample must be mapped, ids
-  matching no sample are errors, and duplicate names are errors.
+  silently mislabels count columns. The table must map every run sample,
+  ids matching no sample are errors, and duplicate names are errors.
 
-`read_madc` round-trips preambled output: the header is found by its
-`AlleleID` cell, and a numeric, unique targetid row is adopted for sample
-identity exactly as when reading vendor files.
+`read_madc` round-trips preambled output. It finds the header by its
+`AlleleID` cell and adopts a numeric, unique targetid row for sample
+identity, as when reading vendor files.
 
 ## Paired-end reads and multi-window tiling (0.9.0)
 
 The single-window model reads one excised window per locus, which caps
-usable data whenever the sequenced fragment is larger than one read: on
+usable data whenever the sequenced fragment is larger than one read. On
 a dual-probe capture platform (Flex-Seq, ~300-bp probe-to-probe
 fragments, NovaSeq 2x150) only ~52% of reads could ever overlap the one
 window, by geometry rather than by quality. 0.9.0 adds the two missing
-pieces — paired-end intake and multiple windows per locus — as explicit,
+pieces, paired-end intake and multiple windows per locus, as explicit,
 separately validated mechanisms.
 
 **Paired-end intake is one explicit decision, never auto-detected.**
 Measured read geometry decides it:
 
 - **Overlapping pairs** (insert shorter than R1+R2, e.g. GT-seq PE100
-  over 130-200-bp amplicons): merge first with the `merge-pairs`
+  over 130-200-bp amplicons). Merge first with the `merge-pairs`
   subcommand, then feed merged fragments to `normalize-reads` or
   `generate`. The merger reverse-complements R2, scans overlaps longest
-  first, and handles both geometries — the merged read is always R1's
-  head plus the overlap plus R2's tail, so in the extended geometry that
-  is the whole fragment, and in engulfed read-through R1's adapter tail
-  past the fragment end falls outside the overlap and is discarded by
-  construction (no adapter trimming step) while R2 bases past R1's end
-  are kept when the reads differ in length; disagreeing overlap bases
-  take the higher-quality call, `--unmerged r1|pool|drop` states what
-  happens to the remainder, mates are paired by read ID (out-of-step
-  names or unequal counts are a hard error), and samples are independent
-  so `--jobs` merges them in parallel processes. On a synthetic paired-end truth set with modeled
-  adapter read-through, 100% of 513,715 pairs merged and molecular count
-  recovery was 98.6% — one fragment, one count.
-- **Non-overlapping dual-anchored designs** (Flex-Seq: R1s anchor the
-  left probe, R2s the right, mates cover opposite halves of a fragment
-  neither read spans): pool both mates as independent reads. Merging is
-  geometrically impossible there and pooling cannot double-count a
-  window, because no window is covered by both mates.
+  first, and handles both geometries. The merged read is always R1's
+  head plus the overlap plus R2's tail. In the extended geometry this
+  covers the whole fragment. In engulfed read-through, R1's adapter tail past
+  the fragment end falls outside the overlap and drops out by
+  construction (no adapter trimming step), while the merger keeps R2
+  bases past R1's end when the reads differ in length. Disagreeing
+  overlap bases take the higher-quality call, `--unmerged r1|pool|drop`
+  states what happens to the remainder, the merger pairs mates by read
+  ID (out-of-step names or unequal counts are a hard error), and samples
+  are independent, so `--jobs` merges them in parallel processes. On a
+  synthetic paired-end truth set with modeled adapter read-through, 100%
+  of 513,715 pairs merged and molecular count recovery was 98.6%, so each
+  fragment gave one count.
+- **Non-overlapping dual-anchored designs** (Flex-Seq, where R1s anchor
+  the left probe, R2s the right, and mates cover opposite halves of a
+  fragment neither read spans). Pool both mates as independent reads.
+  Merging is geometrically impossible there and pooling cannot
+  double-count a window, because the two mates never cover the same
+  window.
 
-**Multi-window tiling** puts several markers on one physical locus: an
+**Multi-window tiling** puts several markers on one physical locus. An
 optional `LocusGroup` column (probe-design TSV and reference-tags CSV)
 declares markers as tiles of one target region. Tiles must share an
 identical Ref expansion frame (validated at load), share one k-mer
 territory, and reads locate to the group before routing to member
-windows. Panels without the column behave exactly as before, to the
-byte.
+windows. Panels without the column behave as before, to the byte.
 
 **Routing between a group's windows** is `--group-routing`:
 
-- `nearest` (default): each read feeds exactly one tile — the fully
+- `nearest` (default) feeds each read to a single tile, the fully
   covered window whose center is nearest the read's center.
-- `covered`: the read's excision is emitted at every member window it
+- `covered` emits the read's excision at every member window it
   fully covers. Each window still sees each fragment at most once in
-  both modes; the QC separates the extra per-window emissions
+  both modes, and the QC separates the extra per-window emissions
   (`tile_extra_emissions`) from the read-fate accounting.
 
 The distinction matters because merged full-span fragments all share
-the amplicon's center, so `nearest` degenerates to winner-take-all: on
-the GT-seq benchmark, one tile took effectively all depth at 163 of 164
+the amplicon's center, so `nearest` degenerates to winner-take-all. On
+the GT-seq benchmark, one tile took almost all depth at 163 of 164
 tiled loci and the other went dark. Use `covered` whenever reads span
 more than one tile (merged fragments, or long reads over closely spaced
-tiles); a fragment that covers two windows genuinely observes both
-SNPs.
+tiles), because a fragment that covers two windows observes both SNPs.
 
 **Distinct-window guard.** Tiles share a coverage profile, so fresh
-window placement can collapse two members onto the same start — and two
+window placement can collapse two members onto the same start, and two
 markers with identical Ref tags make every ref-carrying read an exact
-tie, which the assignment layer drops as ambiguous. Measured on GT-seq,
+tie, which the assignment layer drops as ambiguous. On GT-seq,
 that silently zeroed a locus's ref depth and flipped its calls from
 100% to 3% concordance. Fresh placement therefore forces member windows
 to excise distinct sequences (a colliding member takes its best-ranked
-distinct start; the nudge is listed in QC `locus_groups.window_dedup_nudged`;
-no distinct start at all is an error), and `--reuse-tags` refuses a
+distinct start, QC lists the nudge in `locus_groups.window_dedup_nudged`,
+and no distinct start at all is an error), and `--reuse-tags` refuses a
 frozen panel containing twin windows instead of replaying the defect.
 
-**Window freezing is load-bearing for paired-end modes.** A four-way
-GT-seq experiment on identical reads and truth (96 samples, 409
+**Paired-end modes depend on window freezing.** A four-way GT-seq
+experiment ran on identical reads and truth (96 samples, 409
 original + 206 added tile/rescued markers, DP >= 20 against the
 archive's independent BWA/bcftools VCF):
 
@@ -901,52 +920,52 @@ archive's independent BWA/bcftools VCF):
 | R1-only | 98.80% | — | 34,340 |
 | pooled mates + fresh windows | 95.18% | 87.92% | — |
 | merged + fresh windows | 92.99% | 90.06% | — |
-| merged + frozen tags + tiles, `covered` | **98.80%** | **98.43%** | **52,971** |
+| merged + frozen tags + tiles, `covered` | 98.80% | 98.43% | 52,971 |
 
 Every fresh-placement regression was window drift (all 368 windows
-moved; the worst landed on twin-window ambiguity), and the recipe that
-holds is: `merge-pairs`, then `normalize-reads --reuse-tags` with the
-proven panel plus tile rows, then `generate` — original markers
+moved, and the worst landed on twin-window ambiguity). The recipe that
+holds is `merge-pairs`, then `normalize-reads --reuse-tags` with the
+proven panel plus tile rows, then `generate`. With it, original markers
 reproduce the R1-only result on the same cells while the tiles add 54%
 more truth-validated genotype calls at parity.
 
 On the dual-probe capture benchmark (cranberry Flex-Seq, 24 samples,
 17,242 reconstructed clusters scored against the population truth VCF),
-the same mechanisms lift the geometry ceiling: R1-only single-window
-92.39% on 32,675 cells with median 7,733 loci recovered per sample;
-pooling both mates raises it to 93.24% on 57,577 cells and 13,421 loci
-(the published vendor pipeline recovered 14,550 of 17,502); a
-three-tile 41,033-marker panel with `covered` routing reaches 82.9%
-read extraction and **94.59% on 120,261 cells** — 3.7x the callable
+the same mechanisms lift the geometry ceiling. R1-only single-window
+calling scores 92.39% on 32,675 cells with median 7,733 loci recovered
+per sample. Pooling both mates raises it to 93.24% on 57,577 cells and
+13,421 loci (the published vendor pipeline recovered 14,550 of 17,502).
+A three-tile 41,033-marker panel with `covered` routing reaches 82.9%
+read extraction and 94.59% on 120,261 cells, 3.7x the callable
 genotypes of the single-window R1 run, at higher concordance. A
 subsequent full-cohort campaign (192 samples, K=4 tiles at 45-bp
 spacing with 110-bp windows, one cohort-level `generate`) raised
 capture of the population's segregating-site catalogue from 64.5% to
-78.4% while *improving* trio incompatibility from 4.5% to 3.6% —
-window geometry solved the coverage gap (outside-window misses fell
-from 18.6% to 1.9% of sites) and cohort-scale evidence produced a
-cleaner haplotype catalogue, not just a larger one.
+78.4% while *improving* trio incompatibility from 4.5% to 3.6%.
+Window geometry solved the coverage gap (outside-window misses fell
+from 18.6% to 1.9% of sites), and cohort-scale evidence produced a more
+accurate haplotype catalogue as well as a larger one.
 
 **Adapter trimming is not required, and adapter cannot reach the
-emitted haplotypes.** Three structural guarantees, one per read mode:
-windows are defined in frame coordinates and bounded by the frame
-(`window start + length <= frame length`), so on amplicon platforms —
-where the frame is the amplicon — a window cannot reach past the
-biology into adapter by construction; merge mode removes read-through
-adapter geometrically (the engulfed merge drops R1's tail past the overlap;
-proven on the synthetic paired-end set with modeled read-through: 100%
-merged, zero length errors); and pooled mode exists precisely for
+emitted haplotypes.** There are three structural guarantees, one per
+read mode. Windows live in frame coordinates and the frame bounds them
+(`window start + length <= frame length`), so on amplicon platforms,
+where the frame is the amplicon, a window cannot reach past the
+biology into adapter by construction. Merge mode removes read-through
+adapter geometrically (the engulfed merge drops R1's tail past the
+overlap, and on the synthetic paired-end set with modeled read-through
+it gave 100% merged and zero length errors). Pooled mode exists precisely for
 long-fragment designs whose reads end before the fragment does, so
 there is no read-through to leak. The residual theoretical path
 (capture platforms whose genome-slice frames outrun a short fragment,
 on the unmerged tail) funnels into identity-gate rejection, because
 variable shear junctions never reproduce as one sequence. The census
-agrees: across 127,667 emitted rows in six MADCs spanning five
+agrees. Across 127,667 emitted rows in six MADCs spanning five
 platforms (GT-seq at two window lengths, rhAmpSeq pooled and
 family-scale, the 41K-tile capture panel, Ion AgriSeq), zero rows
 contain TruSeq or Ion P1 adapter at a strict 13-mer probe. (A loose
 10-mer probe flags one capture locus whose genome happens to contain
-`AGATCGGAAG` diverging from TruSeq at base 11 — a chance genomic
+`AGATCGGAAG` diverging from TruSeq at base 11. It is a chance genomic
 k-mer inside the reference tag itself, not contamination.) Measured on
 the capture benchmark, trimming adapters before the run changed dosage
 concordance by 0.05 points (92.24% untrimmed vs 92.19% trimmed) while
@@ -954,350 +973,365 @@ costing 2 points of extraction from the shortened reads.
 
 ## Choosing the window length (`window-scan`)
 
-Tag/window length was historically chosen per platform against external
+Earlier versions chose tag/window length per platform against external
 truth (the honeybee 41-bp knee came from a concordance-versus-length
 sweep against vendor calls). `window-scan` makes the same decision from
-the project's own reads: one coverage pass predicts **retention**
+the project's own reads. One coverage pass predicts retention
 (fraction of located reads fully covering the best window) for a dense
 grid of lengths, and each candidate length then runs the real
 normalize-and-generate machinery on a sample subset to measure
-**cleanliness** (assigned reads not absorbed by denoising or dropped as
-failed evidence — per-base error and indel exposure accumulate with
-length) and **information** (evidence-passing novel haplotype rows per
-100 markers — rises with length until the local linked variation is
-exhausted). The recommendation is **survival-first**: survival =
-retention x assignment x cleanliness; candidates within `--info-band`
+cleanliness (assigned reads not absorbed by denoising or dropped as
+failed evidence, which falls as per-base error and indel exposure
+accumulate with length) and information (evidence-passing novel
+haplotype rows per 100 markers, which rises with length until the local
+linked variation runs out). The recommendation is survival-first, where
+survival = retention x assignment x cleanliness. Candidates within `--info-band`
 (default 10%) of the best survival are eligible, and the most
 informative eligible length wins, ties breaking short. Information
-deliberately cannot lead the decision, because it can be inflated by
-exactly the rows one fears: systematic errors (Ion homopolymer indel
+deliberately cannot lead the decision, because the rows one fears can
+inflate it. Systematic errors (Ion homopolymer indel
 families recur across samples) pass the reproducibility route and
 masquerade as haplotype diversity. An earlier score that weighted
-information directly followed that inflation long — on Ion oyster data
-it recommended 81 bp against the externally validated 41-bp knee — and
-the survival-first rule was the correction. Output: a TSV of the
-curves, a QC JSON, and per-length run directories; a candidate the
-distinct-window guard refuses (tiles inseparable at that length) is
-reported failed rather than aborting the sweep.
+information directly followed that inflation long. On Ion oyster data
+it recommended 81 bp against the externally validated 41-bp knee, and
+the survival-first rule was the correction. The output is a TSV of the
+curves, a QC JSON, and per-length run directories. The scan reports a
+candidate the distinct-window guard refuses (tiles inseparable at that
+length) as failed rather than aborting the sweep.
 
 Under the survival-first rule the scan reproduces every externally
-arbitrated choice: Ion oyster 41 bp (assignment falls 15 points from
-31 to 81 bp as indel-bearing reads fail the substitution-only identity
-gate — the Ion damage shows in assignment, not cleanliness), GT-seq
-81 bp (the frozen-validated length; the 96-sample truth test measured
-110 bp at only -0.08 points, so the band's conservatism is cheap), and
-capture 61 bp. On merged rhAmpSeq amplicons — clean chemistry,
-fragments dwarfing every candidate, information unsaturated through
-150 bp — the rule recommends 81 while the family instrument cleared
-110 and the platform's own pipeline uses full inserts: where richer
-haplotypes are the goal and an external or genetic arbiter is
-available, widening `--info-band` expresses that choice explicitly.
+arbitrated choice. It picks 41 bp for Ion oyster (assignment falls 15
+points from 31 to 81 bp as indel-bearing reads fail the substitution-only
+identity gate, so the Ion damage shows in assignment rather than
+cleanliness), 81 bp for GT-seq (the frozen-validated length, and the
+96-sample truth test measured 110 bp at only -0.08 points, so the band's
+conservatism is cheap), and 61 bp for capture. On merged rhAmpSeq
+amplicons, with low-error chemistry, fragments dwarfing every candidate,
+and information unsaturated through 150 bp, the rule recommends 81 while
+the family instrument cleared 110 and the platform's own pipeline uses
+full inserts. Where richer haplotypes are the goal and an external or
+genetic arbiter is available, widening `--info-band` expresses that
+choice explicitly.
 
 **Seed sensitivity (0.11.0).** The scan runs on a sample subset (six files
 by default), and a recommendation can be a property of that subset rather
 than of the panel. `--scan-draws N` repeats the whole sweep on N
 independent seeded draws (seeds `--scan-seed`, +1, +2, ...) into
 `draw_1/`, `draw_2/`, ... and reports each draw's recommendation, the
-votes per length, and their agreement (`recommendation_stability`);
-the consensus is the most-voted length, ties breaking short. A
+votes per length, and their agreement (`recommendation_stability`).
+The consensus is the most-voted length, ties breaking short. A
 recommendation that flips between draws is the signal to scan more
-samples or to arbitrate externally — the one check a user without truth
-can make on the length decision itself.
+samples or to arbitrate externally. It is the one check a user without
+truth can make on the length decision itself.
 
-Falling cleanliness deserves a precise reading: a churned read is one
+Falling cleanliness deserves a precise reading. A churned read is one
 whose exact sequence the denoiser recognized as an error neighbor and
-folded back into its parent — the count survives, no error row is
-emitted, so churn measures error-handling load, not leakage. The
+folded back into its parent. The count survives and no error row
+appears, so churn measures error-handling load, not leakage. The
 narrow leak path is a systematic error (same position, same
 substitution, recurring across samples) clearing the reproducibility
-route and emitting as a false Match row — and the scan's information
+route and emitting as a false Match row. The scan's information
 metric cannot distinguish that from real linked variation, so the scan
 is a screening instrument whose recommendation still wants an external
-or genetic arbiter. On GT-seq the arbitration is done: the scan
+or genetic arbiter. On GT-seq the arbitration is done. The scan
 recommended 110 bp over the historical 81, and against the archive's
 independent truth VCF on all 96 samples (identical merged reads,
-identical fresh placement), 110 bp scores 98.62% versus 81 bp's 98.70%
-— at most 0.08 points of dosage cost while emitting 27% more Match
-haplotypes (1,568 vs 1,231 rows). The information the scan saw is not
-corrupting target genotypes; whether each added Match row is linked
-biology versus a systematic error family is exactly what the family
-instrument settles (on rhAmpSeq at 110 bp: under 1% family-bound
-violations across 763 progeny). The same experiment refined the
-window-drift picture: fresh 81-bp placement WITH the distinct-window
-guard scores 98.77/98.57 (old/new markers) versus the pre-guard 92.99/
-90.06 — the drift "catastrophe" was entirely the twin-window defect,
-and honest residual drift costs only 0.03-0.14 points against frozen
-windows. Freezing remains mandatory for cross-run haplotype identity;
-it is no longer load-bearing for accuracy.
+identical fresh placement), 110 bp scores 98.62% versus 81 bp's 98.70%.
+The longer window costs at most 0.08 points of dosage while emitting 27%
+more Match haplotypes (1,568 vs 1,231 rows). The information the scan saw is not
+corrupting target genotypes. The family instrument settles whether each
+added Match row is linked biology or a systematic error family (on
+rhAmpSeq at 110 bp it found under 1% family-bound violations across 763
+progeny). The same experiment refined the window-drift picture. Fresh
+81-bp placement WITH the distinct-window guard scores 98.77/98.57
+(old/new markers) versus the pre-guard 92.99/90.06, so the drift
+"catastrophe" was entirely the twin-window defect, and the remaining
+drift costs only 0.03-0.14 points against frozen windows. Freezing
+remains mandatory for cross-run haplotype identity, but accuracy no
+longer depends on it.
 
 ## General indel recovery and review fixes (0.10.0)
 
 Two independent code reviews and a colleague's finding on a DArTag project
-— genome assemblies predicted indel-bearing microhaplotypes (1–13 bp,
-often several events per tag) that the vendor MADC never reported, and
-neither did 0.9.x — motivated this release. The 0.9.x identity gate was
-substitution-only, so an undesigned indel frameshifts the tag against
-every canonical sequence and the read was dropped as off-target; on that
-project only 6 of 447 read-supported indel microhaplotypes fell inside the
-envelope, while 423 lay within the same 20% budget once gaps count as
-edits.
+motivated this release. In that project, genome assemblies predicted
+indel-bearing microhaplotypes (1–13 bp, often several events per tag)
+that the vendor MADC never reported, and neither did 0.9.x. The 0.9.x
+identity gate was substitution-only, so an undesigned indel frameshifts
+the tag against every canonical sequence and the gate dropped the read as
+off-target. On that project only 6 of 447 read-supported indel
+microhaplotypes fell inside the envelope, while 423 lay within the same
+20% budget once gaps count as edits.
 
 **One general mechanism, not a catalogue of cases.** When every primer
-candidate rejects a read, `select_marker` offers one gapped reading: a
+candidate rejects a read, `select_marker` offers one gapped reading. It is a
 start-anchored banded alignment (band = `--max-indel-length`, default 10)
 whose end may overhang by up to a band on either side (a read tail past
 the reference is a deletion's signature, a reference tail past the read an
 insertion's), scored under the same edit budget as substitutions. The
-reading is believed only when it is composed like an indel haplotype —
-at most 6 substitutions and 6 gap events alongside the gaps — because a
+pipeline accepts the reading only when its composition is that of an
+indel haplotype, with at most 6 substitutions and 6 gap events alongside
+the gaps, because a
 co-amplified paralog reaches the budget through many substitutions (the
 captured reads on the motivating project carried a median of 13
 substitutions per read against 2 for true indel haplotypes, and one locus
-would otherwise have swollen from 351 to 38,653 reads). Accepted reads are
-counted as ordinary fixed-length rows in the vendor's shifted-suffix
-convention; the counting layer, evidence rules and denoiser are unchanged.
+would otherwise have swollen from 351 to 38,653 reads). Accepted reads
+count as ordinary fixed-length rows in the vendor's shifted-suffix
+convention, and the counting layer, evidence rules and denoiser are unchanged.
 `classify_sequence` reads the target base at the position the *cheaper*
-explanation puts it: the fixed offset unless a gapped reading is strictly
-cheaper, well composed, and verified by at least 12 bases after its last
-gap (clustered errors at a read end must not masquerade as a shift); a
-target inside a deletion or pushed past the read is `Other`. This also
-corrects in-envelope indel reads that 0.9.x classified at a shifted offset
-— the delta smelt locus `NC_061083`, whose real 1-bp insertion scored 26%
-against the truth VCF, is now concordant. Cost is bounded by an exact
-lower bound: a Myers/Hyyrö bit-vector edit distance (C-speed integer
-operations) proves most hopeless tags cannot meet the budget before any
+explanation puts it. This position is the fixed offset unless a gapped
+reading is strictly cheaper, well composed, and verified by at least 12
+bases after its last gap (clustered errors at a read end must not
+masquerade as a shift). A target inside a deletion or pushed past the
+read is `Other`. This also corrects in-envelope indel reads that 0.9.x
+classified at a shifted offset.
+The delta smelt locus `NC_061083`, whose real 1-bp insertion scored 26%
+against the truth VCF, is now concordant. An exact lower bound limits the
+cost. A Myers/Hyyrö bit-vector edit distance (C-speed integer
+operations) proves that most hopeless tags cannot meet the budget before any
 alignment runs, so a 15-sample DArTag run takes 75 s against 41 s
 (a prototype without the prescreen took 150–290 s). `--gapped-rescue off`
-restores the 0.9 assignment path; QC reports `reads_assigned_gapped`.
+restores the 0.9 assignment path, and QC reports `reads_assigned_gapped`.
 
 **Review fixes adopted.** The pooled denoising pass now folds an
 evidence-failing sequence only into a protected parent carrying the same
-target allele (0.9.x moved reads across alleles); parent ranking is
-closest-first, then deepest; an observed N counts as a mismatch and
-N-bearing tags are credited to their unique compatible sequence or dropped,
-never emitted; a k-mer repeated at two positions inside one target frame no
-longer anchors reads (it kept only its last position); `merge-pairs` keeps
+target allele (0.9.x moved reads across alleles). Parent ranking is
+closest-first, then deepest. An observed N counts as a mismatch, and the
+pipeline credits N-bearing tags to their unique compatible sequence or
+drops them, never emitting them. A k-mer repeated at two positions
+inside one target frame no longer anchors reads (it kept only its last
+position). `merge-pairs` keeps
 R2's extension when the reads differ in length and errors on mates out of
-step; `window-scan` takes `--scan-seed` for a random sample subset and
+step. `window-scan` takes `--scan-seed` for a random sample subset and
 `--generate-args` to forward evidence flags to the candidate runs. The
 per-sample cache format is 0.5.0, so existing caches rebuild once.
 
 **Considered and not adopted, with the measurement.** Collapsing reads onto
-IUPAC-coded canonical tags: DArT uses those codes to encode real secondary
-SNPs, and on the blackberry panel the collapse lost 272 vendor-matching
-rows and moved count agreement from 0.982 to 0.976 — so rows stay exact
-and ambiguity-coded canonicals keep reporting zero exact counts. A
-synthesized-primer mask (worse still on blackberry), an unconditional
-merge of indel families in long homopolymer runs (it absorbed 66 real
-indel alleles on the DArTag project at its Ion-safe default), a
-hard-coded ubiquity filter, and a single-gap-only indel tier with its
-downstream-context columns were all left out in favour of the one
+IUPAC-coded canonical tags failed because DArT uses those codes to encode
+real secondary SNPs. On the blackberry panel the collapse lost 272
+vendor-matching rows and moved count agreement from 0.982 to 0.976, so
+rows stay exact and ambiguity-coded canonicals keep reporting zero exact
+counts. The release left out a synthesized-primer mask (worse still on
+blackberry), an unconditional merge of indel families in long homopolymer
+runs (it absorbed 66 real indel alleles on the DArTag project at its
+Ion-safe default), a hard-coded ubiquity filter, and a single-gap-only
+indel tier with its downstream-context columns, in favour of the one
 mechanism above.
 
-**Validation, identical inputs, 0.9.1 → 0.10.0 — every platform in the
-corpus.** Delta smelt GT-seq vs the BWA/bcftools VCF 98.80% → **99.49%**
-R1-only and 98.80% → **99.49%** on the merged tiled panel (core 99.80%;
-358/361 markers ≥90%); oyster AgriSeq vs Torrent VariantCaller 94.51% →
-**94.91%** (markers ≥90%: 460 → 472); honeybee AgriSeq chip 2 vs the
-vendor caller 91.60% → **93.84%**, replicate concordance across 30 pairs
-97.64% → **98.49%**, depth per sample-marker +28%; cranberry Flex-Seq
-(24-sample subset, pooled mates, frozen K4 panel) vs the truth VCF 94.50%
-→ **94.78%** on 3.8% more callable cells; vitis rhAmpSeq MM531, 165
-progeny, 193,737 → **202,811** calls (+4.7%) at within-parental-four
-transmission 99.890% → **99.894%**, and the 16-sample head-to-head against
-`analyze_amplicon` 93.0% → **94.9%** exact agreement at 99.953% Mendelian
-consistency; the three in-house DArTag projects `validate`d against their
-vendor MADCs kept every substitution-side number (sweetpotato count
-Pearson 0.9992 → 0.9993, red clover 0.9733 → 0.9733, blackberry 376
-samples 0.9814 → 0.9814) while adding 1,544 / 2,393 / 8,313 indel-type
-rows respectively — rows the vendor pipeline structurally cannot report —
-and the private DArTag project (15 checked samples): 2 → **348 of 447**
-assembly-predicted indel microhaplotypes recovered at 97% read recall,
-including 72–82% of those with two or more indel events, while the new
-heterozygotes those rows create have allele fractions indistinguishable
-from vendor-agreeing heterozygotes and a third are confirmed by the same
-sample's genome assembly. Indel-rich loci gain reads (about 60 markers
+**Validation on identical inputs, 0.9.1 → 0.10.0, for every platform in
+the corpus.** Delta smelt GT-seq vs the BWA/bcftools VCF rose 98.80% →
+99.49% R1-only and 98.80% → 99.49% on the merged tiled panel (core
+99.80%, 358/361 markers ≥90%). Oyster AgriSeq vs Torrent VariantCaller
+rose 94.51% → 94.91% (460 → 472 markers ≥90%). Honeybee AgriSeq chip 2
+vs the vendor caller rose 91.60% → 93.84%, with replicate concordance
+across 30 pairs 97.64% → 98.49% and depth per sample-marker +28%.
+Cranberry Flex-Seq (24-sample subset, pooled mates, frozen K4 panel) vs
+the truth VCF rose 94.50% → 94.78% on 3.8% more callable cells. Vitis
+rhAmpSeq MM531, 165 progeny, rose 193,737 → 202,811 calls (+4.7%) at
+within-parental-four transmission 99.890% → 99.894%, and the 16-sample
+head-to-head against `analyze_amplicon` rose 93.0% → 94.9% exact
+agreement at 99.953% Mendelian consistency. The three in-house DArTag
+projects `validate`d against their vendor MADCs kept every
+substitution-side number (sweetpotato count Pearson 0.9992 → 0.9993, red
+clover 0.9733 → 0.9733, blackberry 376 samples 0.9814 → 0.9814) while
+adding 1,544 / 2,393 / 8,313 indel-type rows respectively, rows the
+vendor pipeline structurally cannot report. In the private DArTag
+project (15 checked samples), recovered assembly-predicted indel
+microhaplotypes rose 2 → 348 of 447 at 97% read recall, including 72–82%
+of those with two or more indel events. The new heterozygotes those rows
+create have allele fractions indistinguishable from vendor-agreeing
+heterozygotes, and the same sample's genome assembly confirms a third of
+them. Indel-rich loci gain reads (about 60 markers
 more than doubled on that project, the same set two independent indel
 implementations found), and Ion row counts rise about 9% (5,890 → 6,443
-on oyster) as slippage haplotypes are now assigned rather than dropped;
-their target base is still read correctly, which is why SNP accuracy
-rose. Two vendor-agreement effects are expected and explained: DArT emits
+on oyster) as the pipeline now assigns slippage haplotypes rather than
+dropping them. It still reads their target base correctly, which is why
+SNP accuracy rose. Two vendor-agreement effects are expected and
+explained. DArT emits
 N-bearing rows that 0.10.0 never does (29 of the 30 sweetpotato rows that
 "disappeared"), and at indel-shifted rows inside the substitution envelope
 the vendor classifies at the fixed offset while 0.10.0 reads through the
 gap (153 sweetpotato rows, mostly vendor `Other` becoming Ref/AltMatch or
-Ref/AltMatch swapping) — the smelt truth VCF settled that question in
+Ref/AltMatch swapping). The smelt truth VCF settled that question in
 favour of the gapped reading. Where an indel allele carries the alternate
 base, the recovered rows create heterozygotes the vendor calls homozygous
-(red clover: updog dosage agreement with the vendor MADC 97.86% → 95.95% at
-DP≥10, 13,797 new indel-driven heterozygotes). The 152-progeny red clover
-mapping family with both parents adjudicates them: with every MADC pushed
+(in red clover, updog dosage agreement with the vendor MADC fell 97.86% →
+95.95% at DP≥10, with 13,797 new indel-driven heterozygotes). The
+152-progeny red clover mapping family with both parents adjudicates
+them. With every MADC pushed
 through the same updog (diploid, norm) fit, the Mendelian-violation rate is
-1.59% under the vendor MADC, 1.61% under 0.9.1 and **1.30% under 0.10.0**
-on 2% more tests (parents DP≥20, progeny DP≥10, MPP≥0.9) — the new
+1.59% under the vendor MADC, 1.61% under 0.9.1 and 1.30% under 0.10.0
+on 2% more tests (parents DP≥20, progeny DP≥10, MPP≥0.9). The new
 heterozygotes are inherited, and the vendor's disagreement is the vendor
 missing real alleles.
 
 **Band width.** `--max-indel-length` 10 is the validated default. On the
 private DArTag project's full 558-sample order, band 10 recovered 374 of
-the 447 read-supported assembly-predicted indel microhaplotypes (84%; the
-extra samples let 26 more clear the reproducibility route than in the
-15-sample run) and band 20 recovered 393 (88%) by adding exactly 76 rows —
-all 11–20 bp indel haplotypes, median ~5,600 reads each — with the same
-row-plausibility profile, vendor SNP concordance within 0.04 pp
-(97.87% vs 97.83% over 1.5M cells) and equal runtime. That order also
+the 447 read-supported assembly-predicted indel microhaplotypes (84%, as
+the extra samples let 26 more clear the reproducibility route than in the
+15-sample run), and band 20 recovered 393 (88%) by adding 76 rows, all
+11–20 bp indel haplotypes with a median of ~5,600 reads each. The wider
+band kept the same row-plausibility profile, vendor SNP concordance within
+0.04 pp (97.87% vs 97.83% over 1.5M cells) and equal runtime. That order also
 carries a 264-progeny F2 family and three genotypes in technical
-quadruplicate, which arbitrate the rows directly: indel-haplotype calls
+quadruplicate, which arbitrate the rows directly. Indel-haplotype calls
 fall inside the founders' four haplotypes at 99.86–99.96%, the same rate
-as substitution haplotypes (99.91–99.94%; the vendor's own rows 99.95%),
-and an indel haplotype called in one replicate is re-called in its twins
-98.4% of the time against 99.3% for substitution haplotypes — inherited
-alleles, with the replicate gap consistent with indel alleles amplifying a
-little less efficiently. Widen the band on
-panels where long indels are expected; the composition guard, not the
-band, is what keeps paralogs out.
+as substitution haplotypes (99.91–99.94%, and the vendor's own rows
+99.95%). An indel haplotype called in one replicate is re-called in its
+twins 98.4% of the time against 99.3% for substitution haplotypes. These
+are inherited alleles, and the replicate gap fits indel alleles
+amplifying a little less well. Widen the band on panels where long
+indels are expected. The composition guard, not the band, keeps
+paralogs out.
 
-**Annotations: `MarkerType`, `Variants`, and the variants sidecar
-(`--annotations on`, the default).** Two vendor statistics this pipeline
-never computes are repurposed, header included, and a sidecar is written
-next to the table; `--annotations off` restores the exact vendor header
+**The `MarkerType` and `Variants` annotations and the variants sidecar
+(`--annotations on`, the default).** The pipeline repurposes two vendor
+statistics it never computes, header included, and writes a sidecar
+next to the table. `--annotations off` restores the exact vendor header
 and writes no sidecar. The column positions are unchanged, so positional
 consumers see the same 16-column layout.
 
-- `AvgPIC` becomes **`MarkerType`**: what the row carries *beyond its
-  canonical*, derived from its Variants. The Ref row is `.`; the Alt row
-  is labelled by the design itself (`snp` for a designed SNP, `indel` for
-  a designed indel); every other row by its events once the marker's
-  designed events are removed: `snp` (substitutions only), `indel` (gaps
-  only), `both`, or `.` (no concrete event beyond the canonical — a row
-  that merely realises an ambiguity code). A downstream user who wants
+- `AvgPIC` becomes `MarkerType`, which records what the row carries
+  *beyond its canonical*, derived from its Variants. The Ref row is `.`.
+  The design itself labels the Alt row (`snp` for a designed SNP, `indel`
+  for a designed indel). Every other row takes its label from its events
+  after removing the marker's designed events, so it is `snp`
+  (substitutions only), `indel` (gaps only), `both`, or `.` (no concrete
+  event beyond the canonical, as in a row that merely realises an
+  ambiguity code). A downstream user who wants
   SNP-only microhaplotypes drops `indel`/`both` rows by this label alone
   and keeps designed-indel markers intact.
-- `PICSnp` becomes **`Variants`**: the row's events against the Ref tag,
-  one token per event, `;`-separated, in 1-based coordinates on the tag as
-  printed (design strand; a consumer that knows the strand flips them, as
-  it already does for substitutions). Substitutions are `91:A>T`;
-  insertions and deletions are VCF-anchored on the preceding reference
-  base and left-normalised (`55:C>CAAAA`, `70:TAG>T`); then comes the
-  window geometry a fixed-length row cannot show: `clip=k` when an
-  insertion pushed the last *k* Ref bases out of the window, `overhang=k`
-  when a deletion pulled *k* downstream bases in. The Ref row is `.`, the
-  Alt row of a designed SNP is exactly the design (`46:C>G`), and an
-  AltMatch row lists the designed substitution among its events. A
-  position where the Ref tag carries an ambiguity code is never an event
-  (a concrete base realises the code), matching the IUPAC handling
-  elsewhere.
-- **`OUTPUT.variants.csv`** lists the same events one per line —
+- `PICSnp` becomes `Variants`, which lists the row's events against the
+  Ref tag, one token per event, `;`-separated, in 1-based coordinates on
+  the tag as printed (design strand, and a consumer that knows the strand
+  flips them, as it already does for substitutions). Substitutions are
+  `91:A>T`. Insertions and deletions are VCF-anchored on the preceding
+  reference base and left-normalised (`55:C>CAAAA`, `70:TAG>T`). Then
+  comes the window geometry a fixed-length row cannot show, with `clip=k`
+  when an insertion pushed the last *k* Ref bases out of the window and
+  `overhang=k` when a deletion pulled *k* downstream bases in. The Ref
+  row is `.`, the Alt row of a designed SNP is exactly the design
+  (`46:C>G`), and an AltMatch row lists the designed substitution among
+  its events. A position where the Ref tag carries an ambiguity code is
+  never an event (a concrete base realises the code), matching the IUPAC
+  handling elsewhere.
+- **`OUTPUT.variants.csv`** lists the same events one per line, as
   `CloneID, AlleleID, AlleleSequence, Position, Ref, Alt, Type` with Type
   `snp`, `ins`, `del`, `clip` (Ref holds the unobserved bases) or
-  `overhang` (Alt holds the pulled-in bases) — keyed by CloneID and
+  `overhang` (Alt holds the pulled-in bases). It is keyed by CloneID and
   sequence so it survives allele-ID renumbering downstream.
 
-Every row is described by its cheapest reading against Ref — a gapped
-reading only when strictly cheaper than substitutions — through the
-alignment with the fewest gap openings among equal-edit ones (a
-three-state banded table), so an inserted block is one event even where
-its bases happen to match the reference, as an affine-gap aligner would
-describe it. Rows of a marker whose own Alt differs from Ref by a gap
-are always read with gaps, so an AltMatch of a designed insertion that
-adds one SNP lists the inherited insertion plus the SNP (and is labelled
-`snp`) rather than a run of shifted substitutions; because MarkerType is
-derived from the same events, the two annotations cannot disagree.
-Canonical tags that share an ambiguity code are scored as matching at
-that column by the alignment, its prescreen and the substitution count
-alike — the relation `tag_mismatches` uses. Rerunning an output with
+The pipeline describes every row by its cheapest reading against Ref (a
+gapped reading only when strictly cheaper than substitutions), through
+the alignment with the fewest gap openings among equal-edit ones (a
+three-state banded table). An inserted block is therefore one event even
+where its bases happen to match the reference, as an affine-gap aligner
+would describe it. Rows of a marker whose own Alt differs from Ref by a
+gap always get a gapped reading, so an AltMatch of a designed insertion
+that adds one SNP lists the inherited insertion plus the SNP (and carries
+the label `snp`) rather than a run of shifted substitutions. MarkerType
+comes from the same events, so the two annotations cannot disagree.
+The alignment, its prescreen and the substitution count alike score
+canonical tags that share an ambiguity code as matching at that column,
+which is the relation `tag_mismatches` uses. Rerunning an output with
 `--annotations off` removes a sidecar left by an earlier run. A
-microhaplotype with several SNPs and indels is simply a longer
-list: phase lives in the row, and a per-site consumer emits one record
+microhaplotype with several SNPs and indels gives a longer list. Phase
+lives in the row, and a per-site consumer emits one record
 per event, which is what `BIGr::madc2vcf_all` does today for
-substitutions by realigning each row to Ref. Checks: the Alt-row token
+substitutions by realigning each row to Ref. In the checks, the Alt-row token
 reproduces the design's own `position:Ref>Alt` for 3,120/3,120
 sweetpotato, 3,005/3,015 blackberry-design, 2,982/3,000 red clover and
 3,030/3,040 private-DArTag-panel loci (every remainder is an Alt tag that
-is not a single SNP — ambiguity codes, or a vendor Alt tag that carries
-an 8-bp insertion, reported as such); replaying each annotated row's
-events onto its Ref tag returns the row's own sequence for all 9,430
-annotated rows of the public sweetpotato plate (16,954 rows; 43,766
+is not a single SNP, such as ambiguity codes, or a vendor Alt tag that
+carries an 8-bp insertion, reported as such). Replaying each annotated
+row's events onto its Ref tag returns the row's own sequence for all 9,430
+annotated rows of the public sweetpotato plate (16,954 rows with 43,766
 substitutions, 1,700 insertions, 1,830 deletions), the delta smelt GT-seq
-run (1,775 rows) and the private project's 15-sample run (9,430 rows; a
+run (1,775 rows) and the private project's 15-sample run (9,430 rows, a
 median of two events per annotated row, 41 on the most heavily
-substituted one); the annotations add no measurable runtime (the 15-sample
-run: 78.7 s off, 76.8 s on). Row counts by
+substituted one). The annotations add no measurable runtime (the
+15-sample run took 78.7 s off and 76.8 s on). Row counts by
 label (`marker_types`) and by event kind, plus the sidecar path
 (`variants`), are in the QC summary.
 
-Consumers: HapApp's fixed-allele-ID step keeps columns 1–3 plus the
+Among consumers, HapApp's fixed-allele-ID step keeps columns 1–3 plus the
 samples, so these columns do not travel through it to
-`BIGr::madc2vcf_all` (the sidecar does not need to); BIGr's raw-MADC
+`BIGr::madc2vcf_all` (the sidecar does not need to). BIGr's raw-MADC
 readers (`get_countsMADC`, `filterMADC`) drop statistics columns by
-name, so until `MarkerType` and `Variants` are on their list, files
-headed there should be generated with `--annotations off` or the two
-names added; polyRAD's `readDArTag` and HapApp locate samples
-positionally and are unaffected.
+name, so until `MarkerType` and `Variants` are on their list, generate
+files headed there with `--annotations off` or add the two names.
+polyRAD's `readDArTag` and HapApp locate samples positionally and are
+unaffected.
 
 ## Raw deliveries, tag reconstruction and denoiser scaling (0.12.0)
 
-Three changes made while setting up the alfalfa (DAl21-5779, DAl21-6024)
-and pecan (DPec23-8107) panel-paper datasets, none of which alters a table
-produced from a preprocessed delivery:
+Three changes came out of setting up the alfalfa (DAl21-5779, DAl21-6024)
+and pecan (DPec23-8107) panel-paper datasets, and none of them alters a
+table produced from a preprocessed delivery.
 
 **Raw DArT deliveries.** Older DArT FASTQs keep the inline barcode and the
 library's common sequence `GATGGATCCAGTGC` in front of every amplicon
-(alfalfa 2021: 12 + 14 bases, then the 54-bp tag, on 83-bp reads; pecan
-2023: the same 26 bases, the 81-bp tag, then adapter and poly-G on 138-bp
-reads), so nothing is primer-started and a 0.11.0 run assigned no read.
+(alfalfa 2021 has 12 + 14 bases, then the 54-bp tag, on 83-bp reads, and
+pecan 2023 has the same 26 bases, the 81-bp tag, then adapter and poly-G
+on 138-bp reads), so nothing is primer-started and a 0.11.0 run assigned no read.
 `generate --leading-anchor SEQ` and `infer-design --leading-anchor SEQ`
 cut each read where the anchor ends (it must end within 40 bases beyond
-its own length) and count reads without it as `reads_no_leading_anchor`;
-the anchor is part of the cache key, the provenance line and the QC
+its own length) and count reads without it as `reads_no_leading_anchor`.
+The anchor is part of the cache key, the provenance line and the QC
 parameters (so assignment caches written by 0.11.0 rebuild once, as they
-did when the partial-read length joined the key). Both commands check the first files before any read pass:
-when almost no read starts with a panel tag but most carry one after a
+did when the partial-read length joined the key). Both commands check
+the first files before any read pass.
+When almost no read starts with a panel tag but most carry one after a
 constant prefix, the run stops and names that prefix (the suffix shared by
 the bases in front of the tag at the modal offset, sampled across files so
 per-sample barcodes do not survive), and `--leading-anchor auto` applies
 the detected sequence instead (`leading_anchor_detected` in the QC). A
-preprocessed delivery passes the check silently (red clover: 87% of reads
-start with a panel tag, 0.3% carry one further in), and `auto` refuses on
-it rather than cutting anything. Measured: alfalfa assigns 5–6% more reads
-per sample than the vendor counted, as the other DArTag panels do; the
-primer-free route on the raw alfalfa reads, with no primer file, resolves
-2,999 of 3,000 loci in the exact tier, all identical to the design tags.
+preprocessed delivery passes the check silently (in red clover, 87% of
+reads start with a panel tag and 0.3% carry one further in), and `auto`
+refuses on it rather than cutting anything. In the measurements, alfalfa
+assigns 5–6% more reads per sample than the vendor counted, as the other
+DArTag panels do. The primer-free route on the raw alfalfa reads, with
+no primer file, resolves 2,999 of 3,000 loci in the exact tier, all
+identical to the design tags.
 
-**Design route: a tag carries its variant.** Tag reconstruction from the
+**In the design route, a tag carries its variant.** Tag reconstruction from the
 primer table and probe design now keeps only the primer-started windows
 that contain the bracketed variant. The pecan design has one marker
-(Chr04_45131234) whose target carries a duplicated primer-bearing flank;
-both placements showed the Ref base at the variant offset and the marker
-was reported as ambiguous. With the rule, the pecan design tags match the
-vendor's Ref/Alt rows at 3,100 of 3,100 markers (3,084 identical, 16 under
-vendor IUPAC codes). Any DArT marker table with `MarkerName` and a bracket
-`TargetSequence` serves as the probe design, extra markers included.
+(Chr04_45131234) whose target carries a duplicated primer-bearing flank.
+Both placements showed the Ref base at the variant offset, so the design
+route reported the marker as ambiguous. With the rule, the pecan design
+tags match the vendor's Ref/Alt rows at 3,100 of 3,100 markers (3,084
+identical, 16 under vendor IUPAC codes). Any DArT marker table with
+`MarkerName` and a bracket `TargetSequence` serves as the probe design,
+extra markers included.
 
 **Denoiser scaling.** At the default distance of 1 the eligible parents of
 a sequence are its single-substitution neighbours, which `denoise_counts`
 now enumerates and looks up once the centroids outnumber those neighbours
-(the scan stays cheaper at an ordinary locus with a few dozen centroids;
-the choice is made per sequence); the selection is identical (a randomized test checks it against the scan, and
-the sweetpotato table regenerates byte-identically from cache, and the alfalfa tables re-stamped with 0.12.0 are byte-identical in body to the ones made with the 0.11.0 denoiser).
-The pecan panel has one paralogous locus (Chr04_23494647: reads 10–16
+(the scan stays cheaper at an ordinary locus with a few dozen centroids,
+and the function chooses per sequence). The selection is identical (a
+randomized test checks it against the scan, the sweetpotato table
+regenerates byte-identically from cache, and the alfalfa tables
+re-stamped with 0.12.0 are byte-identical in body to the ones made with
+the 0.11.0 denoiser).
+The pecan panel has one paralogous locus (Chr04_23494647, with reads 10–16
 mismatches from the design tags around a GGGGGG homopolymer, about 6,000
-unique sequences per sample, 409 rows in the vendor table) that made the
-old pass quadratic: its finalisation ran for more than 90 minutes before
-being stopped, and completes in minutes now. The locus is not flagged in
-the generate QC yet; a per-locus diversity and paralog warning is the
-natural next addition.
+unique sequences per sample, and 409 rows in the vendor table) that made
+the old pass quadratic. Its finalisation ran for more than 90 minutes
+before being stopped, and now completes in minutes. The generate QC does
+not flag the locus yet, and a per-locus diversity and paralog warning is
+the natural next addition.
 
-80 unit tests.
+The test suite has 80 unit tests.
 
-**0.12.1: the finalisation runs across the workers.** `generate`'s
+**In 0.12.1 the finalisation runs across the workers.** `generate`'s
 finalisation (protection, per-sample denoising, the pooled pass, the
-bookkeeping) ran in one process; on a family of 169 rhAmpSeq runs with
+bookkeeping) ran in one process. On a family of 169 rhAmpSeq runs with
 150-bp windows and 637K reads per sample (311K distinct sequences per
 sample, 67 per locus, so the lookup rule above never triggers) that stage
 took 107 minutes against 32 for the eight-worker assignment. Stage timers
-(`finalize: ... in N s` on stderr) showed where it went on a 44-run family:
-protection 30 s, per-sample denoise 154 s, pooled pass 1,123 s. Both
+(`finalize: ... in N s` on stderr) showed where it went on a 44-run
+family, with protection at 30 s, per-sample denoise at 154 s, and the
+pooled pass at 1,123 s. Both
 denoising passes are independent per unit of work, the per-sample pass per
 sample and the pooled pass per locus (its aggregate, the protected set and
 the gapped classifier that checks a move keeps the target allele), so
@@ -1313,127 +1347,135 @@ table write stay in the main process. The table is unchanged with
 
 A DArTag order whose delivered files were trimmed to 109–113 bp per file,
 with several amplicons 1–9 bases shorter than the 109-bp window, showed
-what the 0.10 rule "reads shorter than the tag are dropped" costs: two loci
+what the 0.10 rule "reads shorter than the tag are dropped" costs. Two loci
 with 101- and 102-bp amplicons had no reads at all in the table (the vendor
-counted 104,507 and 69,381), a Y-specific locus lost 46 of 211 carrier
-samples because one plate's reads were 106 bp, and in cells where one
-allele's amplicon is shorter than the other's every read of that allele was
-discarded, so the cell was called homozygous for the other allele (546
+counted 104,507 and 69,381), and a Y-specific locus lost 46 of 211 carrier
+samples because one plate's reads were 106 bp. In cells where one
+allele's amplicon is shorter than the other's, the rule discarded every
+read of that allele, so the pipeline called the cell homozygous for the
+other allele (546
 Ref reads of 109 bp against 478 Alt reads of 108 bp in one sample).
 **Truncated reads support alleles but never invent them (partial-read
-salvage, on by default).** Reads shorter than the window — adapter- or
-quality-trimmed reads at amplicons a few bases short of the tag, or files
-trimmed to fewer bases than the tag — are primer-assigned and then credited
-to the one full-length allele that has already earned a row and of which the
-read is an exact prefix. Two guards
-keep this from moving a call: the read must be longer than the longest
+salvage, on by default).** The pipeline primer-assigns reads shorter than
+the window (adapter- or quality-trimmed reads at amplicons a few bases
+short of the tag, or files trimmed to fewer bases than the tag) and then
+credits them to the one full-length allele that has already earned a row
+and of which the read is an exact prefix. Two guards keep this from
+moving a call. The read must be longer than the longest
 prefix shared between any two learned alleles of its locus (a locus credits
 truncated reads for both target alleles or for neither, so a ratio can
 never shift, and a read that does not reach the target base is always
 ambiguous), and `--min-partial-length` defaults to `--tag-length` minus 9,
-so at most nine tail bases are unobserved and primer-dimer fragments never
-qualify. Defaults: `--partial-read-mode assign`; `off` restores the drop
-behaviour. An `extend` mode that borrowed the design Ref suffix to turn an
-unmatched prefix into a provisional allele existed through 0.11.0 and was
-removed: on the project above it manufactured a RefMatch row from a 30-bp
-primer-dimer. A tag table that carries identical Ref
+so at most nine tail bases go unobserved and primer-dimer fragments never
+qualify. The default is `--partial-read-mode assign`, and `off` restores
+the drop behaviour. An `extend` mode that borrowed the design Ref suffix
+to turn an unmatched prefix into a provisional allele existed through
+0.11.0 and is now gone, because on the project above it manufactured a
+RefMatch row from a 30-bp primer-dimer. A tag table that carries identical Ref
 and Alt tags (presence/absence designs) shares its whole tag between the two
-alleles, so no partial is ever credited at such a locus. The QC reports `partial_reads_assigned`,
-`partial_reads_ambiguous` and `partial_reads_unmapped` per sample. The
-minimum partial length is part of the cache fingerprint, so runs that relied
-on the old default of 30 rebuild their cache once.
+alleles, so the pipeline never credits a partial at such a locus. The QC
+reports `partial_reads_assigned`, `partial_reads_ambiguous` and
+`partial_reads_unmapped` per sample. The minimum partial length is part
+of the cache fingerprint, so runs that relied on the old default of 30
+rebuild their cache once.
 
 **Measured on that project (564 samples, 3,040 markers, band 20).** The
 default salvage credits 3.04M reads (+0.98%) to 37,359 cells at 979 loci,
 makes 15,987 more cells callable for dosage, and raises count agreement with
 the vendor on the 24,755 shared rows (Pearson r over nonzero cells) from
-0.961 to 0.971, because the vendor counts these near-full reads too; dosage
+0.961 to 0.971, because the vendor counts these near-full reads too. Dosage
 agreement with the vendor moves from 97.83% to 97.85% on 1.53M cells, and
 BIGr `madc_summary` missingness (cells under 10 reads) falls from 7.55% to
-6.62% overall against the vendor's 6.74% (per-sample median 7.20% → 6.22%
-against 6.38%). The locus guard, run against the same cache without it, removes 504,677 of the
-salvaged reads from 7,914 cells at 269 loci — loci with a learned Match row
-that differs from Ref or Alt only beyond the truncated length — and reverts
+6.62% across all cells against the vendor's 6.74% (per-sample median
+7.20% → 6.22% against 6.38%). The locus guard, run against the same cache
+without it, removes 504,677 of the salvaged reads from 7,914 cells at 269
+loci, which are loci with a learned Match row that differs from Ref or
+Alt only beyond the truncated length. It also reverts
 469 of the 472 dosage-class changes that unguarded crediting introduces.
 The 2,316 cells (0.15%) whose dosage class differs from the no-salvage table
 are the allele-specific amplicon-length cases above, which the no-salvage
-table calls homozygous; two independent instruments say the new calls are
-right: their haplotypes fall within the locus's four founder haplotypes in
-the F2 families at 99.8% (GEN, n=1,067) and 100% (DV, n=558), the F2 rate,
-and re-call in technical replicates at 98.6% against 98.5% for the calls
-they replace, while the vendor's own call agrees with the new call in 1,276
-of 2,164 cells and with the old one in 737. Reads that stop before the
-target (a 35-bp junction product at one Y-specific locus, 90-bp amplicons
-whose target sits beyond them, primer-dimers) stay out: they are below the
-length minimum, and would be ambiguous between Ref and Alt even above it.
+table calls homozygous. Two independent instruments show that the new
+calls are right. Their haplotypes fall within the locus's four founder
+haplotypes in the F2 families at 99.8% (GEN, n=1,067) and 100% (DV,
+n=558), the F2 rate, and re-call in technical replicates at 98.6%
+against 98.5% for the calls they replace. The vendor's own call agrees
+with the new call in 1,276 of 2,164 cells and with the old one in 737.
+Reads that stop before the target (a 35-bp junction product at one
+Y-specific locus, 90-bp amplicons whose target sits beyond them,
+primer-dimers) stay out, because they are below the length minimum and
+would be ambiguous between Ref and Alt even above it.
 The assign stage adds under a minute to a 50-minute run. The preamble now
 records `min_partial_length=` beside `partial_read_mode=`.
 
-**Measured on three other DArTag panels (salvage on against off; same code,
-scripts and band 10).** Sweetpotato (80 samples, 81-bp tags): +40,438 reads
-(0.04%) at 304 loci; 5 of 196,494 called dosage cells change class and the
-vendor's own call agrees with the salvaged class in all 5; leaf/root
-replicate re-call 90.11% either way; count correlation with the vendor table
-0.9993 → 0.9997. Red clover (376 samples, 109-bp tags, primer-free panel):
-+941,538 reads (1.3%) at 823 loci, 8,733 more callable cells, 786 of 717,768
-called cells change class (the vendor sides with the salvaged class in 714,
-with the unsalvaged in 14); dosage agreement 96.87% → 96.98%, count
-correlation 0.9765 → 0.9845. Blackberry (376 samples, 109-bp tags):
-+1,552,191 reads (0.76%) at 634 loci, 6,160 more callable cells, 2,112 of
-1,006,967 change class (1,994 against 50); dosage agreement 95.18% → 95.39%,
-count correlation 0.9823 → 0.9867. Rows are identical in every pair: a
-partial read never establishes one. The credited reads sit at loci whose
+**Measured on three other DArTag panels (salvage on against off, with the
+same code, scripts and band 10).** Sweetpotato (80 samples, 81-bp tags)
+gains +40,438 reads (0.04%) at 304 loci. Of 196,494 called dosage cells,
+5 change class, and the vendor's own call agrees with the salvaged class
+in all 5. Leaf/root replicate re-call is 90.11% either way, and count
+correlation with the vendor table goes 0.9993 → 0.9997. Red clover (376
+samples, 109-bp tags, primer-free panel) gains +941,538 reads (1.3%) at
+823 loci and 8,733 more callable cells, and 786 of 717,768 called cells
+change class (the vendor sides with the salvaged class in 714, with the
+unsalvaged in 14). Dosage agreement goes 96.87% → 96.98% and count
+correlation 0.9765 → 0.9845. Blackberry (376 samples, 109-bp tags) gains
++1,552,191 reads (0.76%) at 634 loci and 6,160 more callable cells, and
+2,112 of 1,006,967 change class (1,994 against 50). Dosage agreement goes
+95.18% → 95.39% and count correlation 0.9823 → 0.9867. Rows are
+identical in every pair, because a partial read never establishes one.
+The credited reads sit at loci whose
 amplicons run short of the tag, where the counts land on the vendor's totals
-(one red clover locus: 2,606 → 83,324 reads against the vendor's 83,303);
-loci whose amplicons are shorter than the partial minimum (78–84 bp at the
-largest red clover examples) or whose reads end before the distinguishing
-base stay uncredited, by design.
+(one red clover locus went 2,606 → 83,324 reads against the vendor's
+83,303). Loci whose amplicons are shorter than the partial minimum (78–84
+bp at the largest red clover examples) or whose reads end before the
+distinguishing base stay uncredited, by design.
 
-**One reading per row (0.11.0).** 0.10.0 read a row twice: classification
+**One reading per row (0.11.0).** 0.10.0 read a row twice. Classification
 confirmed a gapped reading on a unit-cost traceback with the composition
 guard and the 12-base verified suffix, while `Variants`/`MarkerType` took
 the fewest-openings alignment unconfirmed, so a row could list an indel its
 category ignored, or be classified through a gap its annotation placed
-elsewhere. Both now use `row_reading`: the cheaper of the two
+elsewhere. Both now use `row_reading`. The cheaper of the two
 substitution-only readings is the bound, the fewest-openings alignment is
-the reading, and it is accepted only when verified by GAP_VERIFIED_SUFFIX
-bases after its last gap and well composed — composition being judged on
-the equal-edit explanation that needs the fewest substitutions
-(`fewest_substitution_alignment`), because the fewest-openings explanation
-trades a gap opening for a substitution wherever it can, and against the
-canonical the row is read from, so a designed substitution never counts
-against an AltMatch row's indel reading. A reading that fails is not a
-reading of the row at all: the row is classified at the fixed offset and
-described as substitutions, by both consumers. On the project above this
+the reading, and the function accepts it only when GAP_VERIFIED_SUFFIX
+bases after its last gap verify it and it is well composed. It judges
+composition on the equal-edit explanation that needs the fewest
+substitutions (`fewest_substitution_alignment`), because the
+fewest-openings explanation trades a gap opening for a substitution
+wherever it can, and against the canonical the row is read from, so a
+designed substitution never counts against an AltMatch row's indel
+reading. A reading that fails is not a reading of the row at all. Both
+consumers then classify the row at the fixed offset and describe it as
+substitutions. On the project above this
 re-labelled 76 of 28,793 rows (53 `Other` rows became RefMatch/AltMatch,
 16 swapped between RefMatch and AltMatch, 7 became `Other`) and rewrote the
 annotation of 554 rows whose listed indel sat inside the last 12 bases or
-whose composition failed the guard (`both`/`indel` → `snp`); counts moved by
+whose composition failed the guard (`both`/`indel` → `snp`). Counts moved by
 97 reads in 66 rows through the category-aware pooled denoise.
 
-**Freeze health (0.11.0).** Freezing a window panel (`--reuse-tags`) is
-what keeps haplotype identity comparable across runs, but read geometry
+**Freeze health (0.11.0).** Freezing a window panel (`--reuse-tags`)
+keeps haplotype identity comparable across runs, but read geometry
 drifts run to run and a frozen window can slide off the reads a new run
 delivers. `normalize-reads --reuse-tags` therefore still runs the coverage
-pass fresh placement would use and scores every frozen window against it:
-the QC's `markers` table carries each window's predicted full coverage on
+pass fresh placement would use and scores every frozen window against it.
+The QC's `markers` table carries each window's predicted full coverage on
 this run beside the window fresh placement would choose today and its
 coverage, and `freeze_health` summarises the read-weighted coverage of
 the frozen panel against the fresh one, the markers losing more than ten
-points, and the ten worst. One line on stderr says what freezing costs
-this run; `--window-placement center` skips the pass. The excised FASTQs
-and the tag table are unchanged by the check.
+points, and the ten worst. One line on stderr reports what freezing costs
+this run, and `--window-placement center` skips the pass. The check
+leaves the excised FASTQs and the tag table unchanged.
 
 **Vendor-only markers, re-derived.** Of the 53 markers in the tag table that
 had no reads in the 0.10 table, 46 carry vendor counts (40,101 called
-cells): 33 markers (29,861 cells) have only primer-bearing fragments that
-end before the target (the vendor counts them as Ref), 10 (8,478 cells)
-have 44–77-bp amplicons that do contain the target — recoverable only by a
-per-locus window, not by salvage — or, for two of them, reads that are
-largely absent from the delivered files, 2 (1,762 cells) have 101/102-bp
-amplicons and are counted since 0.11.0, and 7 have no reads anywhere and no
-vendor counts. The 46 markers whose vendor Ref and Alt rows are identical
-are a separate class: their target sits at position 110, one base past the
+cells). By class, 33 markers (29,861 cells) have only primer-bearing
+fragments that end before the target (the vendor counts them as Ref), and
+10 (8,478 cells) have 44–77-bp amplicons that do contain the target,
+recoverable only by a per-locus window and not by salvage, or, for two of
+them, reads that are largely absent from the delivered files. Another 2
+(1,762 cells) have 101/102-bp amplicons, which the pipeline has counted
+since 0.11.0, and 7 have no reads anywhere and no vendor counts. The 46
+markers whose vendor Ref and Alt rows are identical are a separate class.
+Their target sits at position 110, one base past the
 109-bp window (the vendor's SNP report lists them without a position, and
 the 110th base segregates in the plates whose reads are longer than 109 bp).
 
@@ -1444,57 +1486,59 @@ paralogous copies. A paralog read that carries the target base becomes a
 RefMatch/AltMatch row, and `BIGr::madc2vcf_all` sums it into the target SNP,
 so inbred lines look heterozygous. Raising `generate --min-identity` removes
 the diverged copies but not the close ones. `filter-paralogs` is an opt-in
-cleaner for such panels. It reads any MADC, from MADCATS or the vendor, with
-or without the preamble, so it also cleans vendor deliveries, and HapApp's
-fixed-allele-ID output (`Code_version`, `AlleleID`, `CloneID`,
-`AlleleSequence`, samples; IDs such as `|Ref_0001`; merged counts written as
-`12.0`). The command lives in `madcats_paralogs.py`, which imports the MADC
-helpers it shares with `validate` from `madcats`; `build_parser` imports it
-when the parser is built. Run as `python3 madcats.py`, the file is
-`__main__`, so it registers itself as `madcats` before the filter module
-imports it; otherwise the module would load a second copy whose `MadcError`
+filter for such panels. It reads any MADC, from MADCATS or the vendor, with
+or without the preamble, so it also filters vendor deliveries, and HapApp's
+fixed-allele-ID output (columns `Code_version`, `AlleleID`, `CloneID`,
+`AlleleSequence` and samples, IDs such as `|Ref_0001`, and merged counts
+written as `12.0`). The command lives in `madcats_paralogs.py`, which imports
+the MADC helpers it shares with `validate` from `madcats`, and `build_parser`
+imports it when it builds the parser. Run as `python3 madcats.py`, the file
+is `__main__`, so it registers itself as `madcats` before the filter module
+imports it. Otherwise the module would load a second copy whose `MadcError`
 `main` does not catch.
 
 Design:
 
-- **Aligner.** minimap2 through `mappy`, an optional extra imported only by
-  this command; MADCATS still has no required dependency. The index is a
-  standard `-x sr` index (k=21, w=11). At map time single-seed chains
-  (`min_cnt=1`, `min_chain_score=20`) and 50 hits (`best_n`) are allowed.
-  mappy reports neither AS nor XS, so each hit's DP score is recomputed from
-  CIGAR, NM, matching bases and block length with the pinned short-read
-  scoring (+2/−8, gaps 12+2 or 24+1, ambiguous −1). Ties are exact.
-- **Marker placement.** Each marker's Ref tag is aligned, and every
-  equal-best site the search returns is kept. The CloneID `CHROM_POS` is
-  read as a position on the genome given: it picks among equal-best Ref-tag
-  sites and stands in (±tag length) when the Ref tag does not align. When no
-  equal-best site covers it, the Ref tag is realigned to a k=11 index of the
-  window around the position (±tag length + 20 bp), and an alignment
-  covering the position becomes the marker's site (`clone_id_site`), even
-  when the tag scores better elsewhere; without one the marker is
-  `unplaced`. `--clone-positions ignore` turns these uses off, for a genome
-  other than the one the CloneIDs refer to. On the lettuce vendor MADC
-  against v8 it changes 11 markers: the 9 fallback windows become
-  `unplaced`, keeping 1,032 rows labelled `paralog`; 1 tie stays
-  multi-copy; and `Chr2_001081815` goes back to Chr4, dropping 11 rows that
+- **Aligner.** The command uses minimap2 through `mappy`, an optional extra
+  imported only by this command, so MADCATS still has no required
+  dependency. The index is a standard `-x sr` index (k=21, w=11). At map
+  time the command allows single-seed chains (`min_cnt=1`,
+  `min_chain_score=20`) and 50 hits (`best_n`). mappy reports neither AS
+  nor XS, so the command recomputes each hit's DP score from CIGAR, NM,
+  matching bases and block length with the pinned short-read scoring
+  (+2/−8, gaps 12+2 or 24+1, ambiguous −1). Ties are exact.
+- **Marker placement.** The command aligns each marker's Ref tag and keeps
+  every equal-best site the search returns. It reads the CloneID
+  `CHROM_POS` as a position on the genome given. The position picks among
+  equal-best Ref-tag sites and stands in (±tag length) when the Ref tag does
+  not align. When no equal-best site covers it, the command realigns the Ref
+  tag to a k=11 index of the window around the position (±tag length +
+  20 bp), and an alignment covering the position becomes the marker's site
+  (`clone_id_site`), even when the tag scores better elsewhere. Without one
+  the marker is `unplaced`. `--clone-positions ignore` turns these uses off,
+  for a genome other than the one the CloneIDs refer to. On the lettuce
+  vendor MADC against v8 it changes 11 markers. The 9 fallback windows
+  become `unplaced`, keeping 1,032 rows labelled `paralog`, and 1 tie stays
+  multi-copy. `Chr2_001081815` goes back to Chr4, dropping 11 rows that
   `use` keeps. The id95 labels do not change.
 - **Labels.** Each haplotype gets its best score at its marker's site and
-  its best score elsewhere: higher at the marker is `on_target`, higher
-  elsewhere is `paralog`, a tie is `ambiguous`. Every haplotype is also
-  realigned to a k=11 index of its own marker's sites (±20 bp), and the site
-  score is the higher of that and the genome-wide hit there. Without that
-  realignment, 18% of id95 haplotypes had no hit at their own marker, and
-  326 that bwa places on target were unmapped. Each marker's sites get an
-  index of their own, so markers sharing a site never compete for the
-  preset's hit limit. Hits are one locus when they share at least half of
-  the shorter interval, both when a sequence's hits are merged and when a
-  hit is matched to its marker's site.
-- **Actions.** Paralog and ambiguous rows are dropped by default or flagged
-  in the `PICRef` column, renamed `GenomeLabel`. Canonical rows are never
-  dropped. Every input row, dropped or kept, gets a line in the labels
-  sidecar.
+  its best score elsewhere. A haplotype that scores higher at the marker is
+  `on_target`, one that scores higher elsewhere is `paralog`, and a tie is
+  `ambiguous`. The command also realigns every haplotype to a k=11 index of
+  its own marker's sites (±20 bp), and the site score is the higher of that
+  and the genome-wide hit there. Without that realignment, 18% of id95
+  haplotypes had no hit at their own marker, and 326 that bwa places on
+  target were unmapped. Each marker's sites get an index of their own, so
+  markers sharing a site never compete for the preset's hit limit. Hits are
+  one locus when they share at least half of the shorter interval, both
+  when the command merges a sequence's hits and when it matches a hit to its
+  marker's site.
+- **Actions.** The command drops paralog and ambiguous rows by default, or
+  flags them in the `PICRef` column, renamed `GenomeLabel`. It never drops
+  canonical rows. Every input row, dropped or kept, gets a line in the
+  labels sidecar.
 
-Measurements (lettuce v8 genome, 2.4 Gb; 12-core laptop):
+Measurements (lettuce v8 genome, 2.4 Gb, 12-core laptop):
 
 | | id95 MADCATS MADC | DArT vendor MADC |
 |---|---|---|
@@ -1504,30 +1548,30 @@ Measurements (lettuce v8 genome, 2.4 Gb; 12-core laptop):
 | Reads in paralog rows | 16.0% | 63.3% |
 | Keep/drop agreement with bwa-mem labels | 98.2% | 94.9% |
 | Keep/drop agreement with the bwa prototype's output, rows / reads | 98.2% / 99.7% | 94.9% / 99.4% |
-| Het rate (proxy): unfiltered → prototype → `filter-paralogs` | 12.6% → 6.44% → 6.40% | 19.9% → 6.79% → 7.02% |
+| Het rate (proxy), unfiltered → prototype → `filter-paralogs` | 12.6% → 6.44% → 6.40% | 19.9% → 6.79% → 7.02% |
 
-Indexing took 50 s and 10.6 GB at peak; the `.mmi` is 5.7 GB. The het
+Indexing took 50 s and 10.6 GB at peak, and the `.mmi` is 5.7 GB. The het
 proxy sums Ref+RefMatch and Alt+AltMatch reads per marker and sample, calls
 cells with ≥10 reads, and counts het where the minor allele has ≥10%. The
 bwa-mem labels came from aligning the same haplotypes with `bwa mem -T 20`
 (AS > XS unique). Variants tried and rejected:
 
-- Default sr chaining: keep/drop agreement on id95 was 97.3%, against
+- With default sr chaining, keep/drop agreement on id95 was 97.3%, against
   98.2% with single-seed chains and `best_n` 50.
-- A k=15, w=10 index: DArT agreement 94.4%, against 94.9% with k=21, and
-  slower mapping.
-- Also dropping site-realigned DArT haplotypes with ≥6 mismatches:
-  het proxy 6.93%, against 7.02%. The rest of the gap to bwa is minimap2
+- A k=15, w=10 index gave a DArT agreement of 94.4%, against 94.9% with
+  k=21, and slower mapping.
+- Also dropping site-realigned DArT haplotypes with ≥6 mismatches gave a
+  het proxy of 6.93%, against 7.02%. The rest of the gap to bwa is minimap2
   finding fewer distant copies of highly diverged vendor haplotypes.
 
-Count overflow. The lettuce vendor MADC stores counts in a signed byte:
+Count overflow. The lettuce vendor MADC stores counts in a signed byte, so
 90,913 cells across 1,108 markers are negative (minimum −128) and the
-largest count is exactly 127. Counts of 128–255 appear as count − 256
+largest count is 127. Counts of 128–255 appear as count − 256
 (adding 256 matches MADCATS's counts for the same cells), and counts of 256
 or more wrap silently. `read_madc` (and so `validate`) and `filter-paralogs`
 now warn and record `count_overflow` in their reports. They never correct
-the counts, since the wrapped ones cannot be told from real small counts.
-The figures in the table above use the counts as stored.
+the counts, since the wrapped ones are indistinguishable from real small
+counts. The figures in the table above use the counts as stored.
 
 HapApp layout. The id95 MADC rewritten in HapApp's layout (fixed IDs,
 leading `Code_version`, every tenth row's counts as floats) gets the same
@@ -1536,61 +1580,62 @@ QC totals. Moving the command into its own module left the id95 output, both
 sidecars included, byte-identical.
 
 Review fixes. An external review of the first version (cd2d7cb) gave a
-counterexample for each of the defects below; each is now a test
+counterexample for each of the defects below, and each is now a test
 (`ReviewCaseTests`, and `FilterTests` with the fake aligner). Effects on
 the lettuce MADCs, default `use` mode:
 
 | Fix | Effect |
 |---|---|
-| Ref tag realigned at its CloneID position on disagreement | `Chr2_001081815`: the genome-wide search returned 51 hits, best on Chr4 (96), none at its Chr2 design site (156). Placed on Chr2, 11 of its 14 dropped DArT rows become `on_target` |
-| Every haplotype scored at its own site; the higher of the two scores kept | 530 DArT rows that the shared site index had crowded out get a site score; 1 row (`Chr5_323370531`, genome-wide 86 at the site, 88 elsewhere, 94 realigned) becomes `on_target` |
-| One locus rule for merging hits and for target membership | No label changes; 850 DArT sequences had adjacent hits merged before |
+| Ref tag realigned at its CloneID position on disagreement | For `Chr2_001081815` the genome-wide search returned 51 hits, best on Chr4 (96), none at its Chr2 design site (156). Placed on Chr2, 11 of its 14 dropped DArT rows become `on_target` |
+| Every haplotype scored at its own site, and the higher of the two scores kept | 530 DArT rows that the shared site index had crowded out get a site score, and 1 row (`Chr5_323370531`, genome-wide 86 at the site, 88 elsewhere, 94 realigned) becomes `on_target` |
+| One locus rule for merging hits and for target membership | No label changes, but 850 DArT sequences had adjacent hits merged before |
 | Every equal-best Ref-tag site kept for placement | No lettuce Ref tag has more than 8 |
-| Multi-part `.mmi` refused | The lettuce index is one part; reading its layout takes 0.03 s |
+| Multi-part `.mmi` refused | The lettuce index is one part, and reading its layout takes 0.03 s |
 
 Together, 12 DArT rows (994 reads) go from dropped to kept and none the
 other way. Keep/drop agreement with bwa-mem on the 726,693 DArT Match/Other
-rows with bwa labels rises from 94.8128% to 94.8136% (+6 rows); id95
+rows with bwa labels rises from 94.8128% to 94.8136% (+6 rows), and id95
 labels do not change (97.3484% on 11,842 rows). The DArT run took 76 s,
 against 78 s for cd2d7cb in the same session.
-For `Chr2_001081815`, both the hit limit and the ambiguity codes matter: the
+For `Chr2_001081815`, both the hit limit and the ambiguity codes matter. The
 vendor tag, or the tag with R and M read as N, misses the design site at
-`best_n` 50, 200 and 1,000 and finds it at 5,000; with the codes resolved to
-bases it is found at `best_n` 50. bwa agreement is concordance, not truth:
-source-known fixtures for both errors (target evidence removed, paralog
-evidence kept) are still to be built.
+`best_n` 50, 200 and 1,000 and finds it at 5,000. With the codes resolved
+to bases the search finds it at `best_n` 50. bwa agreement is concordance,
+not truth, and source-known fixtures for both errors (target evidence
+removed, paralog evidence kept) are still missing.
 
 Review of the module. Two readers went through `madcats_paralogs.py`, one for
-structure and one for names, comments, sources and tests, as was done for
-`madcats_call.py`. Three defects were fixed:
+structure and one for names, comments, sources and tests, as for
+`madcats_call.py`. They found three defects, now fixed:
 
 | Defect | Effect before | Now |
 |---|---|---|
-| A minimap2 index in several parts was refused only as `--genome-index` | Given as `--genome` it was loaded, mappy searched its first part, and markers on later contigs were judged without their own site | Refused whichever option names it |
-| A processed MADC's `readCountSum` column was taken for a sample by `validate` and `filter-paralogs` (only `call` skipped it) | QC read totals of `filter-paralogs` doubled; `validate` listed it among the samples | Skipped by the helper all three use |
+| A minimap2 index in several parts was refused only as `--genome-index` | Given as `--genome` it loaded, mappy searched its first part, and the command judged markers on later contigs without their own site | Refused whichever option names it |
+| `validate` and `filter-paralogs` took a processed MADC's `readCountSum` column for a sample (only `call` skipped it) | QC read totals of `filter-paralogs` doubled, and `validate` listed it among the samples | Skipped by the helper all three use |
 | A run that failed while writing (a non-numeric count in a late row) | A truncated MADC and labels file stayed on disk | Removed |
 
-The rest changed no output: `filter_paralogs`, 211 lines doing five jobs, is
-now five functions; both passes read their rows through one generator; the
-MADC's header is checked before the index is loaded; names and comments were
-corrected against the code (the genome-wide search returns up to 51 hits, not
-50; a marker is placed by its CloneID position as well as its Ref tag; the
-score is that of the reported alignment and not minimap2's `AS`); and the
-module says what is minimap2's (Li 2018; Li 2021) and what is MADCATS's own.
+The rest changed no output. `filter_paralogs`, 211 lines doing five jobs, is
+now five functions, and both passes read their rows through one generator.
+The command checks the MADC's header before it loads the index. Names and
+comments now agree with the code. They say that a marker's CloneID position
+places it as well as its Ref tag, that the score is that of the reported
+alignment and not minimap2's `AS`, and that the genome-wide search returns
+up to 51 hits and not 50. The module says what is minimap2's (Li 2018 and
+Li 2021) and what is MADCATS's own.
 The outputs of eight runs on the data below were the same before and after,
 byte for byte, and the same on one thread and on four.
 
-Rows with an empty `AlleleID`, or too short to hold the identity columns, are
-passed over by both passes and are not counted in the QC totals. That is now
-documented and tested; counting them would add a key to the QC JSON and was
+Both passes skip rows with an empty `AlleleID`, or too short to hold the
+identity columns, and the QC totals do not count them. That is now
+documented and tested. Counting them would add a key to the QC JSON and was
 left for a decision.
 
-Delta smelt GT-seq: placement against the primers. The public smelt data
+Delta smelt GT-seq, placement against the primers. The public smelt data
 (see "Delta smelt GT-seq against alignment-based genotypes" under genotype
 calling) give a second species and platform, and an independent answer for
-where each marker lies: the 81 bases from its forward primer, found by exact
-search of both primers in the genome (GCA_021917145.1, 437 Mb). The MADC has
-368 markers, 1,527 rows and 10.2 million reads.
+where each marker lies. That answer is the 81 bases from its forward primer,
+found by exact search of both primers in the genome (GCA_021917145.1,
+437 Mb). The MADC has 368 markers, 1,527 rows and 10.2 million reads.
 
 | Run | Markers at the expected site | Unplaced | Rows labelled |
 |---|---|---|---|
@@ -1600,24 +1645,24 @@ search of both primers in the genome (GCA_021917145.1, 437 Mb). The MADC has
 | The same, `--clone-positions ignore` | 368 | 0 | 1,527 on_target |
 | CloneIDs as generated (locus names such as `NC_061060_1_U618`) | 354 | 14 | 1,494 on_target, 33 unplaced |
 
-No row was labelled `paralog` or `ambiguous` and none was dropped: the panel
-has no paralogs in this genome, so this checks placement and false positives.
-A marker with a wrong position is left unplaced, not misplaced. In the last
-run 100 locus names end in an underscore and digits and are read as
-CHROM_POS; for 14 the number is not within the tag and the marker is left
-unplaced. A CloneID that looks like a position is taken for one, which
-`--clone-positions ignore` avoids. Eight runs took 38 s on four threads,
-building the index once.
+The filter labelled no row `paralog` or `ambiguous` and dropped none. The
+panel has no paralogs in this genome, so this checks placement and false
+positives. A marker with a wrong position is left unplaced, not misplaced.
+In the last run 100 locus names end in an underscore and digits, and the
+filter reads them as CHROM_POS. For 14 the number is not within the tag and
+the marker stays unplaced. The filter takes a CloneID that looks like a
+position for one, which `--clone-positions ignore` avoids. Eight runs took
+38 s on four threads, building the index once.
 
 Planted paralogs. The record above says the agreement with bwa mem is
-concordance and that cases with a known answer were still to be built. They
-were built in the smelt genome: for each of 105 markers drawn at random, a
-copy of the genome around its tag (the tag and 100 bases either side) was
-changed and added to the genome as a contig of its own, and the MADC was
-given the rows a co-amplified copy would give (the copy's tag, and that tag
-with one more substitution, with half the Ref row's reads each). Fifteen
-markers per class and three random draws; CloneIDs are CHROM_POS; default
-options:
+concordance and that cases with a known answer were still missing. They
+were built in the smelt genome. For each of 105 markers drawn at random, a
+changed copy of the genome around its tag (the tag and 100 bases either
+side) went into the genome as a contig of its own, and the MADC got the rows
+a co-amplified copy would give (the copy's tag, and that tag with one more
+substitution, with half the Ref row's reads each). The runs used fifteen
+markers per class, three random draws, CloneIDs in CHROM_POS form and the
+default options:
 
 | Planted copy | Rows from the copy labelled `paralog` | Rows of the marker itself labelled `on_target` |
 |---|---|---|
@@ -1627,87 +1672,89 @@ options:
 | 4 substitutions | 90 of 90 | 165 of 165 |
 | 8 substitutions | 90 of 90 | 183 of 183 |
 | 1 substitution and a 2-base deletion | 90 of 90 | 167 of 167 |
-| Identical copy | | 1 of 192; 191 `ambiguous`, of which 90 canonical rows were kept |
-| 4 substitutions, copy not added to the genome | 0 of 90: all `on_target` | 177 of 177 |
+| Identical copy | | 1 of 192 and 191 `ambiguous`, of which the filter kept 90 canonical rows |
+| 4 substitutions, copy not added to the genome | 0 of 90 because all are `on_target` | 177 of 177 |
 
-- Every row from a copy that is in the genome was labelled `paralog` and
-  dropped, 450 of 450, and no row of an unplanted marker was mislabelled.
-- Of the 864 rows of markers with a copy in the genome, 8 were lost, all at
-  copies one or two bases from the Ref tag: an allele of the marker that is
-  as near the copy as its own site is `ambiguous`, and one that carries the
-  copy's base is the copy's sequence.
-- An identical copy makes the marker's rows `ambiguous`; the default drops
-  them and keeps the canonical Ref and Alt rows.
-- A copy that is not in the assembly is not seen: its rows are kept as
-  alleles of the marker.
+- The filter labelled every row from a copy that is in the genome `paralog`
+  and dropped it, 450 of 450, and mislabelled no row of an unplanted marker.
+- Of the 864 rows of markers with a copy in the genome, the filter lost 8
+  rows, all at copies one or two bases from the Ref tag. An allele of the
+  marker that is as near the copy as its own site is `ambiguous`, and one
+  that carries the copy's base is the copy's sequence.
+- An identical copy makes the marker's rows `ambiguous`, and the default
+  drops them and keeps the canonical Ref and Alt rows.
+- The filter cannot see a copy that is not in the assembly, so it keeps that
+  copy's rows as alleles of the marker.
 
 The same design, twenty markers on a random genome, is in the test suite
 (`PlantedCopyTests`).
 
-Alfalfa: two aligners and two families. The alfalfa 3K panel is a second real
+Alfalfa, two aligners and two families. The alfalfa 3K panel is a second real
 panel with paralogs, in an autotetraploid, and its public data allow three
-checks that the lettuce record lacks: where each marker lies, from more
-sequence than its tag; each row's label from two other aligners; and where
-each row maps genetically.
+checks that the lettuce record lacks. They place each marker from more
+sequence than its tag, label each row with two other aligners, and map each
+row genetically.
 
-- MADCs: the two F1 families of the G3 article jkag131, with fixed allele
-  IDs. I195 x J432 has 186 samples, 2,999 markers and 7,517 rows of 54-base
-  tags; E115 x F628 has 374 samples, 2,989 markers and 8,731 rows of 81-base
-  tags. The panel's haplotype database (23,469 haplotypes, Zenodo
-  doi:10.5281/zenodo.10681524) was run as a third table.
-- Genomes: first the monoploid assembly of cultivar Bolivia (GCA_051527215.1,
-  eight gapless chromosomes, 776 Mb), a genome of another cultivar than the
-  panel's: the panel's 361-base design sequences differ from it at a median
-  of 3 bases, and at 17 or more for a tenth of the markers. Then the genome
-  the panel was designed on, chromosome set 1 of XinJiangDaYe (see "The
-  design genome" below). The first shows what a user gets without the design
-  genome, the second what the filter does where it is meant to run.
+- The MADCs are the two F1 families of the G3 article jkag131, with fixed
+  allele IDs. I195 x J432 has 186 samples, 2,999 markers and 7,517 rows of
+  54-base tags, and E115 x F628 has 374 samples, 2,989 markers and 8,731
+  rows of 81-base tags. The filter also ran on the panel's haplotype
+  database (23,469 haplotypes, Zenodo doi:10.5281/zenodo.10681524) as a
+  third table.
+- The first genome is the monoploid assembly of cultivar Bolivia
+  (GCA_051527215.1, eight gapless chromosomes, 776 Mb), a genome of another
+  cultivar than the panel's. The panel's 361-base design sequences differ
+  from it at a median of 3 bases, and at 17 or more for a tenth of the
+  markers. The second is the genome the panel was designed on, chromosome
+  set 1 of XinJiangDaYe (see "The design genome" below). The first shows
+  what a user gets without the design genome, the second what the filter
+  does in its intended use.
 - A marker's home on this genome is where its design sequence (180 bases
   either side of the target, from the panel's probe table) aligns. bwa mem
-  placed 2,745 of the 3,000 uniquely and minimap2 2,780; the 2,735 that both
+  placed 2,745 of the 3,000 uniquely and minimap2 2,780. The 2,735 that both
   place uniquely are at the same base in both, and are the markers judged
   below. Another 22 have a unique place on a chromosome with another number
   than the panel names, and the rest have no unique place.
-- Two runs of each table: with `--clone-positions ignore`, as a user must run
-  it on a genome the CloneIDs do not refer to, and with the default after the
-  CloneIDs were renamed to the chromosome and target position on this genome,
-  as it runs on a design genome. The first run took 47 s and 5.2 GB with the
-  index built, the others 7 to 8 s.
+- Each table had two runs, one with `--clone-positions ignore`, as a user
+  must run it on a genome the CloneIDs do not refer to, and one with the
+  default after renaming the CloneIDs to the chromosome and target position
+  on this genome, as it runs on a design genome. The first run took 47 s and
+  5.2 GB with the index built, the others 7 to 8 s.
 
 Placement, for the markers with a home:
 
 | | E115 x F628, 81-base tags (2,730 markers) | I195 x J432, 54-base tags (2,734) |
 |---|---|---|
-| `ignore`: at home | 2,669 | 2,487 |
-| `ignore`: several equal-best sites, one at home | 17 | 28 |
-| `ignore`: somewhere else | 15 | 25 |
-| `ignore`: not placed | 29 | 194 |
-| Positions on this genome: at home | 2,730 | 2,727 (7 not placed) |
+| `ignore`, at home | 2,669 | 2,487 |
+| `ignore`, several equal-best sites with one at home | 17 | 28 |
+| `ignore`, somewhere else | 15 | 25 |
+| `ignore`, not placed | 29 | 194 |
+| Positions on this genome, at home | 2,730 | 2,727 (7 not placed) |
 
-Without positions, a Ref tag that differs from this genome is placed where it
-matches best, or nowhere: 0.5 to 0.9% of the markers are put in another copy,
-and 1% (81 bases) to 7% (54 bases) are left unplaced with all their rows
-kept. With positions, the tag is aligned again at its own site and every
-marker but seven is placed.
+Without positions, the filter places a Ref tag that differs from this genome
+where it matches best, or nowhere. It puts 0.5 to 0.9% of the markers in
+another copy and leaves 1% (81 bases) to 7% (54 bases) unplaced, keeping all
+their rows. With positions, it aligns the tag again at its own site and
+places every marker but seven.
 
-Rows and reads by label, with positions: in E115 x F628 7,928 rows are
+Rows and reads by label, with positions. In E115 x F628 7,928 rows are
 `on_target` (90.9% of reads), 357 `paralog` (4.3%), 297 `ambiguous` (3.8%),
-9 `unmapped` and 140 `unplaced` (0.9%); 437 rows with 4.1% of the reads are
-dropped, and 217 canonical rows with 4.0% are kept despite their label. In
-I195 x J432 the shares are 88.7%, 4.7%, 4.5%, 0.3% and 1.8%, and 4.2% of the
-reads are dropped. Of the database's 23,469 haplotypes 1,145 are `paralog`
-and 930 `ambiguous`. Lettuce lost 63% of its reads; alfalfa has little to
-remove.
+9 `unmapped` and 140 `unplaced` (0.9%). The filter drops 437 rows with 4.1%
+of the reads and keeps 217 canonical rows with 4.0% despite their label. In
+I195 x J432 the shares are 88.7%, 4.7%, 4.5%, 0.3% and 1.8%, and the filter
+drops 4.2% of the reads. Of the database's 23,469 haplotypes 1,145 are
+`paralog` and 930 `ambiguous`. Lettuce lost 63% of its reads, while alfalfa
+has little to remove.
 
-Labels against bwa mem and blastn. Every row was aligned to the same genome
-with bwa mem (`-a -k 12 -T 20`) and with blastn (word size 11, no masking),
-and labelled from the aligner's own score by the rule the filter uses: the
-best score is at home, is equalled elsewhere, or is elsewhere. Rows of the
-markers placed at home; "same decision" joins the labels by what the default
-does with the row (kept: `on_target`, `unmapped`; dropped: `paralog`,
-`ambiguous`):
+Labels against bwa mem and blastn. bwa mem (`-a -k 12 -T 20`) and blastn
+(word size 11, no masking) each aligned every row to the same genome, and
+each row got a label from the aligner's own score by the rule the filter
+uses. The best score is at home, is equalled elsewhere, or is elsewhere. The
+table counts rows of the markers placed at home. "Same decision" joins the
+labels by what the default does with the row, which keeps `on_target` and
+`unmapped` and drops `paralog` and `ambiguous`:
 
-| Table, run | Rows | bwa mem: same label, same decision | blastn: same label, same decision |
+| Table, run | Rows | Same label and same decision as bwa mem | Same label and same decision as blastn |
 |---|---|---|---|
 | E115 x F628, positions | 7,916 | 99.42%, 99.81% | 99.42%, 99.68% |
 | E115 x F628, `ignore` | 7,716 | 99.49%, 99.86% | 99.49%, 99.74% |
@@ -1726,14 +1773,14 @@ Where the rows map genetically. In a full-sib family a haplotype is inherited
 with the haplotypes near it on the same chromosome copy, so across the
 progeny its share of the marker's reads rises and falls with theirs, and a
 row from a paralogous copy follows the haplotypes around that copy instead.
-For each row whose share varies in the family, the ten rows of other markers
-that correlate with it most strongly (0.4 or more in absolute value, three or
-more needed) were looked up at their markers' homes. The row is linked at
-home when 60% or more of them lie within 15 Mb of its marker, and linked
-elsewhere when 60% or more lie on one chromosome and fewer than 20% near the
-marker. No alignment of the row enters this.
+For each row whose share varies in the family, the check finds the ten rows
+of other markers that correlate with it most strongly (0.4 or more in
+absolute value, three or more needed) and looks up their markers' homes. The
+row is linked at home when 60% or more of them lie within 15 Mb of its
+marker, and linked elsewhere when 60% or more lie on one chromosome and
+fewer than 20% near the marker. No alignment of the row enters this.
 
-| Family, run | Rows judged | Kept rows linked at home | Rows labelled `paralog`: linked elsewhere, at home with the other site far away, at home with it near |
+| Family, run | Rows judged | Kept rows linked at home | Rows labelled `paralog` that are linked elsewhere, at home with the other site far away, and at home with it near |
 |---|---|---|---|
 | E115 x F628, positions | 2,877 | 2,701 of 2,768 (97.6%) | 38, 7, 29 |
 | E115 x F628, `ignore` | 2,816 | 2,671 of 2,736 (97.6%) | 36, 5, 21 |
@@ -1742,11 +1789,11 @@ marker. No alignment of the row enters this.
 
 - Of the rows the filter keeps, 97.6% map to their marker in both families.
   More than half of the others are at some 30 markers where every kept row
-  maps elsewhere: there the marker itself is somewhere else in the family
+  maps elsewhere. There the marker itself is somewhere else in the family
   than its design sequence is on this genome, which no row label can mend.
   The rest, 22 to 28 rows or about 1% of the kept rows judged, are rows from
-  another place that the filter did not catch; a copy that this genome lacks
-  or holds in another form is not seen.
+  another place that the filter did not catch, because it cannot see a copy
+  that this genome lacks or holds in another form.
 - Of the `paralog` rows that linkage can decide, 84 to 95% map elsewhere, and
   for 25 of 38 and 18 of 22 the region they map to holds the site the filter
   named.
@@ -1757,38 +1804,38 @@ marker. No alignment of the row enters this.
   before the filter and 5.5% after in the larger family, and 8.3% and 5.2% in
   the smaller.
 - A RefMatch or AltMatch row with reads in every sample of the family is two
-  to three times as common among `paralog` rows as among `on_target` rows:
-  23% against 8%, and 43% against 13%.
+  to three times as common among `paralog` rows as among `on_target` rows,
+  at 23% against 8%, and 43% against 13%.
 
-Genotypes. `call --prior norm` was run on each family before and after the
-filter and compared with the article's published dosages, which come from
-the same reads. Over the 986 and 974 published targets the share of equal
-dosages moved from 89.80% to 89.87% and from 90.11% to 90.33%. Of the 211
-markers that lost a row in the larger family only 29 are among the
+Genotypes. `call --prior norm` ran on each family before and after the
+filter, and the comparison is with the article's published dosages, which
+come from the same reads. Over the 986 and 974 published targets the share
+of equal dosages moved from 89.80% to 89.87% and from 90.11% to 90.33%. Of
+the 211 markers that lost a row in the larger family only 29 are among the
 published ones (2.9%, against 7.1% of the panel), and there the share rose
 from 86.3% to 86.9% with 11% of the genotypes changed. The estimated
-overdispersion rose from 40 to 50 and from 30 to 40: with those rows gone the
-counts scatter less.
+overdispersion rose from 40 to 50 and from 30 to 40 because with those rows
+gone the counts scatter less.
 
 A count of the progeny genotypes that the two parents' genotypes cannot give
 was tried as a test and is not one. Reads of a paralog make a parent look
 heterozygous, and a heterozygous parent allows every progeny genotype, so the
-count rewards the rows the filter removes: it was 1.86% before and 2.20%
+count rewards the rows the filter removes. It was 1.86% before and 2.20%
 after at the markers that lost a row. At chr4.1_040870396 it went from 0 to
-189 of 372 when one row was dropped. That row has a quarter to three quarters
-of the marker's reads in every one of the progeny, which no allele of a
-tetraploid cross has (two copies in each parent leave 1 progeny in 36 without
-it); it differs from the Ref tag at five bases and matches a copy 10 kb away
-better.
+189 of 372 when the filter dropped one row. That row has a quarter to three
+quarters of the marker's reads in every one of the progeny, which no allele
+of a tetraploid cross has (two copies in each parent leave 1 progeny in 36
+without it). The row differs from the Ref tag at five bases and matches a
+copy 10 kb away better.
 
 The design genome. The panel's probe table names
 `M_sativa_genome_XinJiangDaYe_set1_v1.fasta`, and every CloneID is on a
-chromosome named `chrN.1`: the panel was designed on one of the four
+chromosome named `chrN.1`, so the panel was designed on one of the four
 chromosome sets of the XinJiangDaYe assembly (figshare,
-doi:10.6084/m9.figshare.12327602, CC BY 4.0; `chr1.1` to `chr8.4` and 9,789
-unplaced sequences). Set 1, `chr1.1` to `chr8.1`, was taken as the genome and
-the MADCs were run as they are, in the default mode, so that their own
-CloneIDs are the positions. bwa mem places 2,984 of the 3,000 design
+doi:10.6084/m9.figshare.12327602, CC BY 4.0, with `chr1.1` to `chr8.4` and
+9,789 unplaced sequences). Set 1, `chr1.1` to `chr8.1`, served as the
+genome, and the MADCs ran as they are, in the default mode, so that their
+own CloneIDs are the positions. bwa mem places 2,984 of the 3,000 design
 sequences uniquely and minimap2 2,992, every one at the position its CloneID
 names and without a single difference, so here a marker's home is its CloneID
 position.
@@ -1803,39 +1850,39 @@ position.
 | Same label as bwa mem, same decision | 99.61%, 99.85% | 99.48%, 99.76% | 99.32%, 99.69% |
 | Same label as blastn, same decision | 99.59%, 99.72% | 99.49%, 99.68% | 99.10%, 99.43% |
 | Kept rows linked at home | 3,053 of 3,184 (95.9%) | 2,740 of 2,845 (96.3%) | |
-| `paralog` rows: linked elsewhere, at home with the other site far away, at home with it near | 29, 3, 27 | 17, 1, 33 | |
+| `paralog` rows linked elsewhere, at home with the other site far away, and at home with it near | 29, 3, 27 | 17, 1, 33 | |
 
 - On the design genome no marker is unplaced or put in another copy, with
   CloneID positions or without them (`ignore` leaves the 17 and 34 Ref tags
-  with several sites unsettled and changes nothing else), and the 54-base
-  tags are placed as well as the 81-base ones. On the other cultivar's
-  genome 1 to 7% were unplaced.
-- Fewer rows are labelled: 207 `paralog` and 136 `ambiguous` in the larger
-  family against 357 and 297 on the other genome, and no row is `unplaced`
-  against 140. A genome of another cultivar makes some alleles look like
-  copies.
+  with several sites unsettled and makes no other change), and the filter
+  places the 54-base tags as well as the 81-base ones. On the other
+  cultivar's genome 1 to 7% were unplaced.
+- Fewer rows are labelled, with 207 `paralog` and 136 `ambiguous` in the
+  larger family against 357 and 297 on the other genome, and no row
+  `unplaced` against 140. A genome of another cultivar makes some alleles
+  look like copies.
 - The filter keeps or drops the same rows as bwa mem for 99.7 to 99.9% and as
   blastn for 99.4 to 99.7%, as on the other genome.
 - Of the `paralog` rows that linkage can decide, 91% (29 of 32) and 94% (17
-  of 18) map elsewhere. Of the kept rows 96% map to their marker; the others
-  are mostly at some 60 markers where every kept row maps elsewhere (102 of
-  131 rows at 63 markers, and 86 of 105 at 54), where the marker is somewhere
-  else in the family than in this assembly. Apart from those, 29 and 19 kept
-  rows, under 1% of those judged, map away from their marker.
-- Genotypes do not gain: against the published dosages the larger family
+  of 18) map elsewhere. Of the kept rows 96% map to their marker, and the
+  others are mostly at some 60 markers where every kept row maps elsewhere
+  (102 of 131 rows at 63 markers, and 86 of 105 at 54), where the marker is
+  somewhere else in the family than in this assembly. Apart from those, 29
+  and 19 kept rows, under 1% of those judged, map away from their marker.
+- Genotypes do not gain. Against the published dosages the larger family
   stays at 89.80% and the smaller goes from 90.11% to 89.93%. In alfalfa the
   filter removes 2.6 to 3.0% of the reads, its labels hold up against two
-  aligners and against inheritance, and there is no measurable effect on the
-  target genotypes; it is a panel that does not need it.
+  aligners and against inheritance, and it has no measurable effect on the
+  target genotypes. Alfalfa is a panel that does not need the filter.
 
 A haplotype-resolved reference. The assembly the alfalfa panel was designed
 on has four copies of every chromosome, and the panel used one set of them.
-What the filter does when it is given more than one set was measured with
-another tetraploid cultivar whose haplotypes are in the INSDC archives
-(RegenSY; haplotype 3, GCA_054855475, and haplotype 4, GCA_054883285):
-chromosomes 1 to 3 of one haplotype as the genome, then of both, and the
-3,378 rows of the larger family at the 1,193 markers designed on those
-chromosomes.
+Another tetraploid cultivar whose haplotypes are in the INSDC archives
+(RegenSY, with haplotype 3, GCA_054855475, and haplotype 4,
+GCA_054883285) shows what the filter does when it gets more than one set.
+The genome was chromosomes 1 to 3 of one haplotype, then of both, and the
+table was the 3,378 rows of the larger family at the 1,193 markers designed
+on those chromosomes.
 
 | Genome, run | Markers placed at one site | Ref tag with several equal-best sites | Rows `on_target` | `ambiguous` | `paralog` | RefMatch and AltMatch rows dropped |
 |---|---|---|---|---|---|---|
@@ -1844,77 +1891,79 @@ chromosomes.
 | Two haplotypes, `ignore` | 648 | 518 | 1,372 | 1,565 | 361 | 655 of 992 |
 | Two haplotypes, positions | 1,148 | 29 | 1,171 | 1,490 | 670 | 637 of 992 |
 
-With the second haplotype in the genome two thirds of the RefMatch and
-AltMatch rows are dropped where one in nine was, and 1,271 to 1,523 Ref and
-Alt rows are kept only because canonical rows always are. A row that is the
-other haplotype's allele matches that haplotype better and is labelled
-`paralog`; one that both haplotypes carry is `ambiguous`. CloneID positions
-place the markers (1,148 at one site against 648) and do not help the rows.
+With the second haplotype in the genome the filter drops two thirds of the
+RefMatch and AltMatch rows where it dropped one in nine, and keeps 1,271 to
+1,523 Ref and Alt rows only because it always keeps canonical rows. A row
+that is the other haplotype's allele matches that haplotype better and is
+labelled `paralog`, and one that both haplotypes carry is `ambiguous`.
+CloneID positions place the markers (1,148 at one site against 648) and do
+not help the rows.
 
 The design assembly itself says the same. With sets 1 and 2 of XinJiangDaYe
 as the genome and the larger family's whole MADC, 1,199 of the 2,989 Ref
 tags have an identical copy on set 2 (all settled by the CloneID position),
 3,757 rows are `ambiguous` and 1,229 `paralog` where 136 and 207 were, and
-1,969 of the 2,753 RefMatch and AltMatch rows are dropped where 296 were;
-3,017 Ref and Alt rows are kept only as canonical rows. Indexing two sets
-(1.6 Gb) took 8.3 GB of memory; three sets and all four (2.7 Gb) did not fit
-in the 13 GB available here. A polyploid or haplotype-resolved assembly has
-to be cut down to one set of chromosomes before it is given to the filter,
-and for this panel that is set 1.
+the filter drops 1,969 of the 2,753 RefMatch and AltMatch rows where it
+dropped 296. It keeps 3,017 Ref and Alt rows only as canonical rows.
+Indexing two sets (1.6 Gb) took 8.3 GB of memory, and three sets and all
+four (2.7 Gb) did not fit in the 13 GB available here. A polyploid or
+haplotype-resolved assembly has to be cut down to one set of chromosomes
+before it goes to the filter, and for this panel that is set 1.
 
-Not covered: FASTQs of this panel, and so a MADC from `generate` (no public
-alfalfa DArTag reads were found); and planted copies in these genomes.
+This record does not cover FASTQs of this panel, and so a MADC from
+`generate` (a search found no public alfalfa DArTag reads), or planted
+copies in these genomes.
 
 Tiled markers with the paralog filter and `call`. `generate` credits a read
-that fits several tiles of one amplicon to each of them (`--tile-groups`);
-that work and the two new commands were written on separate branches and
-first met when they were merged. A synthetic panel checks them together
-(`tests/test_tiled_markers.py`): two tiles with variants at tag positions 31
-and 56 of one 81-base window, a third marker elsewhere, ten diploid samples
-with every combination of the two variants, and the tags written both ways a
-tile's tag can carry the other tile's variant, as an ambiguity code (the
-DArTag way) and as the reference base.
+that fits several tiles of one amplicon to each of them (`--tile-groups`).
+That work and the two new commands were written on separate branches and
+first met at the merge. A synthetic panel checks them together
+(`tests/test_tiled_markers.py`). It has two tiles with variants at tag
+positions 31 and 56 of one 81-base window, a third marker elsewhere, ten
+diploid samples with every combination of the two variants, and the tags
+written both ways a tile's tag can carry the other tile's variant, as an
+ambiguity code (the DArTag way) and as the reference base.
 
 - `generate` gives both tiles all 60 reads of every sample. With ambiguity
   codes in the tags no read equals a Ref or Alt tag, so those two rows are
-  empty and every read is on a RefMatch or AltMatch row; a genotype taken
+  empty and every read is on a RefMatch or AltMatch row. A genotype taken
   from the Ref and Alt rows alone would have no reads.
 - `filter-paralogs` places both tiles at the one site and labels every row
-  `on_target`; the filtered table is the table it was given.
+  `on_target`, so the filtered table is the same as its input.
 - `call` gives each tile the true dosage of its own variant in every sample.
   With the reference base in the tag, each tile's `all` VCF also has the other
-  tile's variant as an off-target record, with that tile's target genotypes;
-  with an ambiguity code there the position gets no off-target record, and
-  the variant is reported once.
+  tile's variant as an off-target record, with that tile's target genotypes.
+  With an ambiguity code there the position gets no off-target record, and
+  the VCF reports the variant once.
 
 ## Genotype calling (`call`, 0.14.0)
 
 `madcats call` (in `madcats_call.py`) calls genotypes from a MADC and writes
-VCFs. The model is adapted from polyRAD 2.0.1: a beta-binomial likelihood of
-each allele's read count against the rest of the record, a uniform or
+VCFs. The model takes from polyRAD 2.0.1 a beta-binomial likelihood of each
+allele's read count against the rest of the record, a uniform or
 Hardy-Weinberg prior, and (for `hwe`) iteration of the allele frequencies.
-Only the parts needed for this were adapted. polyRAD's population-structure,
-linkage and mapping-population priors, its ploidy tests and its import and
-export code were not.
+It adapts only the parts needed for this and leaves out polyRAD's
+population-structure, linkage and mapping-population priors, its ploidy
+tests and its import and export code.
 
-Three parts of updog 2.1.7's model were added afterwards: the `norm` genotype
-prior, the allelic bias, and a prior with a free weight for every dosage
-(updog's `flex`), which `call` uses only while estimating the read model. Four
-parts are MADCATS's own and have no published counterpart: the
-maximum-likelihood estimate of the overdispersion, the table-wide
+Three parts of updog 2.1.7's model followed later. They are the `norm`
+genotype prior, the allelic bias, and a prior with a free weight for every
+dosage (updog's `flex`), which `call` uses only while estimating the read
+model. Four parts are MADCATS's own and have no published counterpart. They
+are the maximum-likelihood estimate of the overdispersion, the table-wide
 background-read rate estimated with it, the search that fits the bias, and
 the `structure` prior. `madcats_call.py` names the polyRAD or updog function
 each of its functions follows and says where it differs ("Audit against both
-packages' sources" below). The paragraphs below are in the order the work was
-done, so the earlier tables were measured before the later parts existed. The
+packages' sources" below). The paragraphs below follow the order of the
+work, so the earlier tables come from before the later parts existed. The
 figures for the finished model are under "Finished model on the alfalfa
 populations", "Tables from updog's and polyRAD's simulators" and "Time and
 memory".
 
 **Differences from polyRAD.**
 
-- Likelihoods are kept as logarithms. polyRAD exponentiates them and sets a
-  sample's likelihoods to 1 when they all underflow to 0.
+- MADCATS keeps likelihoods as logarithms. polyRAD exponentiates them and
+  sets a sample's likelihoods to 1 when they all underflow to 0.
 - Each record iterates until its own allele frequencies settle. polyRAD stops
   all loci together on their mean change.
 - There is an iteration limit (`--max-iterations`).
@@ -1922,8 +1971,8 @@ memory".
   genotype.
 
 **Agreement with polyRAD.** `scripts/make_polyrad_fixture.R` runs polyRAD on
-three simulated loci (2, 3 and 4 alleles; 16 samples of ploidy 2, 3, 4 and 6)
-and stores the values in `tests/fixtures/polyrad_parity.json`:
+three simulated loci (2, 3 and 4 alleles, and 16 samples of ploidy 2, 3, 4
+and 6) and stores the values in `tests/fixtures/polyrad_parity.json`:
 
 | Compared | Agreement |
 |---|---|
@@ -1931,10 +1980,10 @@ and stores the values in `tests/fixtures/polyrad_parity.json`:
 | Allele frequencies and posteriors after `IterateHWE(tol = 1e-10)` | 7 decimal places |
 | Genotypes after the correction to the ploidy | identical (144 sample-by-allele values) |
 
-**Correction to the ploidy.** With more than two alleles the most probable
-dosage of each allele is found separately, and the dosages need not add up to
-the ploidy. polyRAD adds or removes one copy at a time. An exact search for
-the dosages with the highest product of posteriors
+**Correction to the ploidy.** With more than two alleles the model finds the
+most probable dosage of each allele separately, and the dosages need not add
+up to the ploidy. polyRAD adds or removes one copy at a time. An exact search
+for the dosages with the highest product of posteriors
 (`best_dosages_summing_to_ploidy`) gave the same genotype in all 4,104
 corrected genotypes of a simulation (hexaploid, five alleles, 40 markers, 200
 samples, 20–200 reads), where 51% of genotypes needed correcting. `call` uses
@@ -1954,18 +2003,18 @@ records, other settings at their defaults):
 
 `--overdispersion auto`, the default since the real-data comparison below, is
 a maximum-likelihood estimate over a grid
-(`estimate_overdispersion`). polyRAD's `TestOverdispersion` was ported first
-and reproduced polyRAD's scores to four decimal places on three simulated
-tables, but both chose 10 for a tetraploid table simulated with 50 and 4 for a
-hexaploid table simulated with 20 (and 25 for a diploid table simulated with
-20). It tests the read counts of samples that a rough estimate assigns one
-allele copy, and in polyploids that estimate is wrong often enough to make the
-counts look more scattered than they are. The port was dropped. The
-maximum-likelihood estimate, on 200 simulated markers and 150 samples per
-case (20–150 reads unless stated, no stray reads), with the simulated value in
-the first column. The table is from the estimate as it now stands, with free
-weights for the dosages and the background-read rate estimated alongside
-(both described further down):
+(`estimate_overdispersion`). A port of polyRAD's `TestOverdispersion` came
+first and reproduced polyRAD's scores to four decimal places on three
+simulated tables, but both chose 10 for a tetraploid table simulated with 50
+and 4 for a hexaploid table simulated with 20 (and 25 for a diploid table
+simulated with 20). It tests the read counts of samples that a rough estimate
+assigns one allele copy, and in polyploids that estimate is wrong often
+enough to make the counts look more scattered than they are. MADCATS dropped
+the port. The table below gives the maximum-likelihood estimate on 200
+simulated markers and 150 samples per case (20–150 reads unless stated, no
+stray reads), with the simulated value in the first column. It shows the
+estimate as it now stands, with free weights for the dosages and the
+background-read rate estimated alongside (both described further down):
 
 | Simulated | 2x | 4x | 6x | mixed 2x/4x/6x | 4x, 8–40 reads | 4x F1 | 6x F1 | 2x inbred |
 |---|---|---|---|---|---|---|---|---|
@@ -1975,26 +2024,27 @@ weights for the dosages and the background-read rate estimated alongside
 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 50 | 2 |
 | none (binomial) | 500 | 500 | 500 | 500 | 500 | 500 | 500 | 2 |
 
-From 10 upward every value is recovered. The first version of the estimate,
-which assumed Hardy-Weinberg proportions, read 12–30 for the F1 columns at
-10 and 20, and 75 for the hexaploid F1 at 50. At a simulated 5, scatter wider
-than anything seen in the real tables, polyploid estimates are 6 to 8,
-because part of the scatter is taken for background reads. The
-background-read rate came out at the lowest value tried, 0.0002, in 36 of the
-40 cases, and at 0.001 to 0.01 in the other four: random-mating tetraploids
-and hexaploids at 5, and the low-depth tetraploids at 5 and 10.
+From 10 upward the estimate recovers every value. The first version of the
+estimate, which assumed Hardy-Weinberg proportions, read 12–30 for the F1
+columns at 10 and 20, and 75 for the hexaploid F1 at 50. At a simulated 5,
+scatter wider than anything seen in the real tables, polyploid estimates are
+6 to 8, because the estimate takes part of the scatter for background reads.
+The background-read rate came out at the lowest value tried, 0.0002, in 36
+of the 40 cases, and at 0.001 to 0.01 in the other four. Those four are
+random-mating tetraploids and hexaploids at 5, and the low-depth tetraploids
+at 5 and 10.
 
 The inbred diploids here have no heterozygotes and no stray reads, so there is
-no scatter to measure and the estimate ends at the lowest value; `call` then
+no scatter to measure and the estimate ends at the lowest value. `call` then
 warns and uses 9. On the two real alfalfa F1 populations below the first
 version chose 40 and 50, and the finished one 30 and 40 with a background-read
 rate of 0.003.
 
-**Real alfalfa DArTag data (tetraploid, 3K panel).** Three processed MADCs
-were called as tetraploids with the `call` model and with polyRAD 2.0.1
-(`IterateHWE`, overdispersion 9, then `GetProbableGenotypes` with
-`multiallelic = "correct"`) on the same counts: the two F1 populations of the
-G3 article jkag131 (I195 × J432, 186 samples; E115 × F628, 374 samples) and
+**Real alfalfa DArTag data (tetraploid, 3K panel).** The `call` model and
+polyRAD 2.0.1 (`IterateHWE`, overdispersion 9, then `GetProbableGenotypes`
+with `multiallelic = "correct"`) called three processed MADCs as tetraploids
+on the same counts. They are the two F1 populations of the G3 article
+jkag131 (I195 × J432 with 186 samples, and E115 × F628 with 374 samples) and
 project DAl22-7249 (615 samples from 20 crosses and their parents).
 
 | MADC | Target genotype values identical | Haplotype genotype values identical |
@@ -2004,19 +2054,19 @@ project DAl22-7249 (615 samples from 20 crosses and their parents).
 | DAl22-7249 (tolerance 1e-6) | 3,485,814 of 3,485,820 | 5,306,214 of 5,306,220 |
 
 Every difference is at one marker (E115 × F628) or two (DAl22-7249) where
-polyRAD had stopped while that marker's allele frequency was still moving: its
+polyRAD had stopped while that marker's allele frequency was still moving. Its
 stopping rule is the mean change over all loci, and those frequencies were
 0.01–0.03 from where they settle. Elsewhere the two tools' allele frequencies
 differ by 1e-7 at the median.
 
 The article publishes the dosages used for its linkage maps. Of its markers,
-974 and 986 are panel targets, and the rest are off-target SNPs. Target calls
-against the published dosages, over 166 and 338 progeny (the published tables
-count Ref copies, and count the other allele at 38 and 43 markers, which were
-re-oriented). These rows were measured with a contamination rate of 0.001 and
-no background-read rate, which is how `call` ran at that point:
+974 and 986 are panel targets, and the rest are off-target SNPs. The table
+compares target calls with the published dosages over 166 and 338 progeny
+(the published tables count Ref copies, and count the other allele at 38 and
+43 markers, which were re-oriented). These rows use a contamination rate of
+0.001 and no background-read rate, which is how `call` ran at that point:
 
-| Settings | I195 × J432: called / same dosage | E115 × F628: called / same dosage |
+| Settings | I195 × J432, called / same dosage | E115 × F628, called / same dosage |
 |---|---|---|
 | Overdispersion 9, no filters (what polyRAD calls) | 100% / 88.81% | 100% / 86.33% |
 | `--overdispersion auto`, no filters | 100% / 90.80% | 100% / 89.93% |
@@ -2030,11 +2080,11 @@ necessarily an error of either. Calling from the Ref and Alt rows alone,
 without the Match rows, lowered agreement to 80%, so the published calls also
 counted Match rows.
 
-polyRAD's other priors were run on the same target counts at the published
-markers, with the overdispersion `call` estimated (40 and 50), to see what a
-port would gain on these families:
+To see what a port would gain on these families, polyRAD's other priors ran
+on the same target counts at the published markers, with the overdispersion
+`call` estimated (40 and 50):
 
-| polyRAD prior | I195 × J432: called / same dosage | E115 × F628: called / same dosage |
+| polyRAD prior | I195 × J432, called / same dosage | E115 × F628, called / same dosage |
 |---|---|---|
 | `IterateHWE` | 100% / 90.80% | 100% / 89.93% |
 | `IteratePopStruct` | 100% / 90.74% | 100% / 89.91% |
@@ -2044,14 +2094,14 @@ A single F1 family has no population structure, so the population-structure
 prior changes nothing here. At these depths (medians of about 180 and 430
 reads per sample and marker) the prior matters little.
 
-**Against updog's norm model.** updog 2.1.7 (`flexdog`, `model = "norm"`) was
-run on the same target counts at the published markers. Unfiltered agreement
+**Against updog's norm model.** updog 2.1.7 (`flexdog`, `model = "norm"`) ran
+on the same target counts at the published markers. Unfiltered agreement
 with the published dosages was 92.98% and 92.68%, against 90.80% and 89.93%
-for `call` with the HWE prior; updog took 235 s and 453 s on four cores. The
-two callers give the same dosage for 96.99% and 96.54% of genotypes, and where
-they differ the published dosage sides with updog about nine times in ten, so
-the published dosages probably come from updog or a similar caller. Split by
-the allelic bias updog fitted for each marker:
+for `call` with the HWE prior, and updog took 235 s and 453 s on four cores.
+The two callers give the same dosage for 96.99% and 96.54% of genotypes, and
+where they differ the published dosage sides with updog about nine times in
+ten, so the published dosages probably come from updog or a similar caller.
+Split by the allelic bias updog fitted for each marker:
 
 | Fitted bias of the marker | Share of genotypes | updog = `call` | updog = published | `call` = published |
 |---|---|---|---|---|
@@ -2066,7 +2116,7 @@ single values `call` estimated for these tables (40 and 50) are lower because
 they absorb the bias, which `call` did not model at that point.
 
 On simulated tetraploid tables with known genotypes (100 markers, 150 samples,
-20–60 reads, overdispersion 40, 0.5% read errors; one table per case),
+20–60 reads, overdispersion 40, 0.5% read errors, one table per case),
 accuracy of the most probable dosage:
 
 | Population | updog norm | `call` defaults | `call`, contamination 0.01 and overdispersion 40 |
@@ -2082,7 +2132,7 @@ accuracy of the most probable dosage:
 
 Biased markers had a bias of 2^N(0, 0.5). Three things separate the columns.
 (1) Read errors above the contamination rate pull the overdispersion estimate
-down: with a true value of 40 it was 30, 16, 12 and 8 at error rates of 0.1%,
+down. With a true value of 40 it was 30, 16, 12 and 8 at error rates of 0.1%,
 0.3%, 0.5% and 1%, and 40–50 throughout once the contamination rate was 0.01.
 (2) The estimate assumed Hardy-Weinberg proportions and failed on the
 two-subpopulation table (7) and on inbred lines (fell back to 9). (3) With
@@ -2091,44 +2141,46 @@ unbiased markers and trails it by 2–4 points on biased ones. A prototype of a
 normal-shaped prior in the `call` engine (not in the repository) changed these
 figures by at most 1.5 points. The background-read rate, the free-weights
 estimate and the allelic bias, all described below, answer these three points
-in turn; the same eight tables are called again with the finished model under
-"Tables from updog's and polyRAD's simulators".
+in turn, and the same eight tables come back, called with the finished model,
+under "Tables from updog's and polyRAD's simulators".
 
-**The norm prior (`--prior norm`).** updog's `norm` genotype distribution was
-added as a prior: dosage probabilities proportional to a normal density, with
-a mean and standard deviation fitted to the summed posteriors in every
-iteration. The fit is exact, since the prior depends on the samples only
-through those sums. It uses Newton's method on the two natural parameters,
-where the function has a single peak, and searches the edges of updog's
-parameter limits when the peak lies outside them; it takes 0.2 ms on average.
-On 130 sets of dosage weights no point of a fine grid fitted better.
+**The norm prior (`--prior norm`).** updog's `norm` genotype distribution
+became a prior. It makes dosage probabilities proportional to a normal
+density, with a mean and standard deviation fitted to the summed posteriors
+in every iteration. The fit is exact, since the prior depends on the samples
+only through those sums. It uses Newton's method on the two natural
+parameters, where the function has a single peak, and searches the edges of
+updog's parameter limits when the peak lies outside them, and it takes
+0.2 ms on average. On 130 sets of dosage weights no point of a fine grid
+fitted better.
 
-A Newton step that does not improve the fit is shortened by adding to the
+The fit shortens a Newton step that does not improve it by adding to the
 diagonal of the curvature (Levenberg-Marquardt). The first version halved the
 step instead, and stopped at its starting values when they put almost all of
-the prior on one dosage: the curvature there is next to nothing and the step
-is too long by tens of orders of magnitude. The audit found it in 1 of 40
-single fits (weights 0.0003, 0.27 and 14.0 on the dosages of a diploid, start
-at mean 1.98 and standard deviation 0.137), 0.39 below updog's optimum in mean
-log prior. On 2,954 fits with many near-zero weights and arbitrary starts the
-damped fit was never worse than the halved one and better in 337. Calls
-changed little: the potato comparison below is the same to the last digit
+the prior on one dosage, because the curvature there is next to nothing and
+the step is too long by tens of orders of magnitude. The audit found it in 1
+of 40 single fits (weights 0.0003, 0.27 and 14.0 on the dosages of a diploid,
+start at mean 1.98 and standard deviation 0.137), 0.39 below updog's optimum
+in mean log prior. On 2,954 fits with many near-zero weights and arbitrary
+starts the damped fit was never worse than the halved one and better in 337.
+Calls changed little. The potato comparison below is the same to the last digit
 (92.10% with `norm`, 96.57% with `norm` and the bias), and of twelve stored
 runs the three that use `norm` changed in 8 of 257,400 target and haplotype
 genotypes and in the off-target records of three markers, each with a higher
 penalised likelihood than before.
 
 `scripts/make_updog_fixture.R` stores updog 2.1.7 values in
-`tests/fixtures/updog_norm.json`. For 14 sets of weights (ploidies 2 to 8;
-one peak, rare and common alleles, two peaks, flat, a single class) the fitted
-priors agree to 2e-5. For four simulated markers (random-mating tetraploid,
-one hexaploid family, inbred diploid, rare-allele tetraploid), fitted by
-updog with its bias, sequencing error and overdispersion held fixed, the
-priors agree to 1e-5 and every genotype is the same. Posteriors agree to
-1e-6 except for samples with a few reads of an allele, where updog's minimum
-sequencing-error rate of 1e-6 leaves dosage 0 a probability of up to 5e-4.
+`tests/fixtures/updog_norm.json`. For 14 sets of weights (ploidies 2 to 8
+and the shapes one peak, rare and common alleles, two peaks, flat and a
+single class) the fitted priors agree to 2e-5. For four simulated markers
+(random-mating tetraploid, one hexaploid family, inbred diploid, rare-allele
+tetraploid), fitted by updog with its bias, sequencing error and
+overdispersion held fixed, the priors agree to 1e-5 and every genotype is
+the same. Posteriors agree to 1e-6 except for samples with a few reads of an
+allele, where updog's minimum sequencing-error rate of 1e-6 leaves dosage 0
+a probability of up to 5e-4.
 
-Each ploidy among the samples is fitted separately, and a ploidy with fewer
+Each ploidy among the samples gets its own fit, and a ploidy with fewer
 than 10 samples uses Hardy-Weinberg proportions. On the two alfalfa F1
 populations the norm prior agreed with the published dosages as often as HWE
 did (90.38% against 90.80%, and 89.78% against 89.93%, unfiltered) and took
@@ -2142,71 +2194,72 @@ samples, which `call` skips.
 the sample does not carry can only come from contamination, at the allele's
 frequency among the other samples. That cannot account for stray reads of an
 allele that is rare in the table, and read errors beyond the contamination
-rate were taken for scatter and pulled the overdispersion estimate down (point
+rate counted as scatter and pulled the overdispersion estimate down (point
 1 above). `call` therefore has updog's sequencing-error term, under the name
-background-read rate: a read shows the other allele with probability *e*, so
+background-read rate. A read shows the other allele with probability *e*, so
 an expected fraction *f* becomes *f*(1 − *e*) + (1 − *f*)*e*. It is one value
 for the table, where updog fits one per marker, and the default contamination
 rate became 0. With polyRAD's settings a diploid with 10 Ref reads and 1 Alt
-read is called heterozygous (posterior 0.95 in a table of 21 samples); with a
-background rate of 0.002 and an overdispersion of 40 the same sample is
-homozygous with a posterior of 0.69.
+read comes out heterozygous (posterior 0.95 in a table of 21 samples), while
+with a background rate of 0.002 and an overdispersion of 40 the same sample
+is homozygous with a posterior of 0.69.
 
-The rate is estimated together with the overdispersion
-(`estimate_read_model`). For a given rate the overdispersion is the
-maximum-likelihood value on its grid, and the rate kept is the one at which
-the counts are most probable, found by starting at 0.002 and moving to a
-neighbouring rate (eight values from 0.0002 to 0.02) for as long as that
-raises the likelihood. The two can be told apart because they show in
-different samples: stray reads in samples that do not carry an allele, scatter
-in samples that carry both.
+`estimate_read_model` estimates the rate together with the overdispersion.
+For a given rate the overdispersion is the maximum-likelihood value on its
+grid, and the rate kept is the one at which the counts are most probable,
+found by starting at 0.002 and moving to a neighbouring rate (eight values
+from 0.0002 to 0.02) for as long as that raises the likelihood. The estimate
+can separate the two because they show in different samples. Stray reads
+show in samples that do not carry an allele, and scatter in samples that
+carry both.
 
-Eighty simulated tables of 50 markers and 120 samples were estimated: random
-mating, one F1 family, two subpopulations and inbred lines, each with a
-background rate of 0.001, 0.003 and 0.01 at an overdispersion of 40, and with
-0.003 at 150. Estimates of the overdispersion, and the number of tables whose
-background rate was the simulated one:
+The estimate ran on eighty simulated tables of 50 markers and 120 samples.
+They cover random mating, one F1 family, two subpopulations and inbred
+lines, each with a background rate of 0.001, 0.003 and 0.01 at an
+overdispersion of 40, and with 0.003 at 150. Estimates of the
+overdispersion, and the number of tables whose background rate was the
+simulated one:
 
 | Samples | Reads per sample | Simulated 40 (12 tables) | Simulated 150 (4 tables) | Background rate |
 |---|---|---|---|---|
 | 4x | 20–120 | 40 in all 12 | 150 in all 4 | 16 of 16 |
 | 2x | 20–120 | 40 in all 12 | 150 in 3, 200 in 1 | 16 of 16 |
-| 6x | 30–150 | 40 in 8; 14–50 | 150 in all 4 | 15 of 16 |
-| 4x | 6–25 | 40 in 6; 30–75 | 150 in 2; 100–500 | 15 of 16 |
-| 2x | 6–25 | 40 in 10; 30–50 | 100–300 | 16 of 16 |
+| 6x | 30–150 | 40 in 8, all within 14–50 | 150 in all 4 | 15 of 16 |
+| 4x | 6–25 | 40 in 6, all within 30–75 | 150 in 2, all within 100–500 | 15 of 16 |
+| 2x | 6–25 | 40 in 10, all within 30–50 | 100–300 | 16 of 16 |
 
 The background rate is the simulated one in 78 of the 80 tables and one grid
 step away in the other two. The overdispersion is the simulated one in 31 of
 the 32 diploid and tetraploid tables with 20 or more reads. The two
 hexaploid estimates furthest out (14 and 25) are at a background rate of 1%.
-With 6 to 25 reads an overdispersion of 150 cannot be measured: at that depth
-scatter that small is hidden by the sampling of reads, and for the same
+With 6 to 25 reads the estimate cannot measure an overdispersion of 150. At
+that depth the sampling of reads hides scatter that small, and for the same
 reason it changes the calls little. Inbred lines are estimable here because
 their homozygotes carry stray reads.
 
 On the alfalfa populations the estimate is a background rate of 0.003 with an
 overdispersion of 30 (I195 × J432) and 40 (E115 × F628). With the bias fitted
 it is 0.0005 with 150, and 0.001 with 150, nearer updog's per-marker medians
-for the same tables (0.09% and 0.24%; 395 and 183).
+for the same tables (0.09% and 0.24%, and 395 and 183).
 
 **Free weights for the estimate.** The estimate sums the genotypes out, so it
 needs genotype proportions for each marker. With Hardy-Weinberg proportions it
 failed on two subpopulations and on inbred lines (point 2 above). With the
 `norm` shape, which cannot describe an excess of both homozygotes, it still
 failed on inbred and partly inbred tables. The estimate now gives every dosage
-its own probability at each marker (`PRIOR_FREE`: the summed posteriors,
-normalised), whatever `--prior` the run uses. This is the form of updog's
+its own probability at each marker (`PRIOR_FREE`, the summed posteriors
+normalised), under any `--prior` the run uses. This is the form of updog's
 `flex` model. updog's default is `norm`, and it suggests `norm` in place of
 `flex` when there are fewer than 10 × (ploidy + 1) samples, since `flex` has
-one free weight per dosage at every marker. Here it is used only for the
-estimate, which pools the markers, and never for the calls.
+one free weight per dosage at every marker. Here only the estimate, which
+pools the markers, uses it, and the calls never do.
 Estimates without bias fitting,
 as overdispersion and background rate, on eight of the simulated tables
 described under "Tables from updog's and polyRAD's simulators":
 
 | Table | Simulated | `norm` shape | Free weights |
 |---|---|---|---|
-| polyRAD 4x, inbreeding 0.5 | 20; 0.001 contamination and 0.001 errors | 2 (fails), 0.0002 | 20, 0.001 |
+| polyRAD 4x, inbreeding 0.5 | 20 with 0.001 contamination and 0.001 errors | 2 (fails), 0.0002 | 20, 0.001 |
 | polyRAD 4x outbred | same | 20, 0.001 | 20, 0.001 |
 | polyRAD 6x outbred | same | 20, 0.001 | 20, 0.001 |
 | updog 4x random mating, biased | 49–499, 0.005 | 25, 0.01 | 25, 0.01 |
@@ -2217,55 +2270,58 @@ described under "Tables from updog's and polyRAD's simulators":
 
 Free weights give the same values as the `norm` shape where that worked, and
 the simulated values on both tables where it failed. On biased tables both
-read low unless the bias is fitted, when both gave 100 and 0.005 on the two
-updog tables. The inbred table is estimable because its homozygotes carry
-stray reads; a table with neither heterozygotes nor stray reads still ends at
-the lowest overdispersion tried, and `call` then warns and uses 9.
+read low unless the run fits the bias, and then both gave 100 and 0.005 on
+the two updog tables. The inbred table is estimable because its homozygotes
+carry stray reads. A table with neither heterozygotes nor stray reads still
+ends at the lowest overdispersion tried, and `call` then warns and uses 9.
 
 **Allelic bias (`--allele-bias fit`).** The comparison with updog put the gap
 at markers where a copy of one allele yields more reads than a copy of the
-other (point 3 above). updog's bias was added for records with two alleles:
-with bias *h*, an expected reference fraction *f* becomes
+other (point 3 above). updog's bias now applies to records with two alleles.
+With bias *h*, an expected reference fraction *f* becomes
 *f* / (*h*(1 − *f*) + *f*). As in updog, the log of the bias has a normal
 prior (mean 0, standard deviation 0.7), the search starts from five values
-(exp(−1) to exp(1)), and the fit with the highest log-likelihood after that
-prior is kept. Two things differ from updog:
+(exp(−1) to exp(1)), and it keeps the fit with the highest log-likelihood
+after that prior. Two things differ from updog:
 
-- The bias is applied to the sample's own allele copies, and background reads
-  are added afterwards. updog applies its sequencing error first. In updog's
-  order, samples that do not carry an allele inform its bias through their
-  stray reads; with one background rate for the whole table that would turn
-  markers with more or fewer stray reads than average into biased ones.
+- MADCATS applies the bias to the sample's own allele copies and adds
+  background reads afterwards. updog applies its sequencing error first. In
+  updog's order, samples that do not carry an allele inform its bias through
+  their stray reads, and with one background rate for the whole table that
+  would turn markers with more or fewer stray reads than average into biased
+  ones.
 - The search is over the bias alone. Each trial value is a complete fit of the
   record at that bias, scored by its log-likelihood with the genotypes summed
-  out. The five starting values are fitted from scratch, and every one that
-  scores at least as high as its neighbours is refined by a golden-section
-  search within half a log unit of it, to 0.01 in the log of the bias. updog
-  optimises bias, sequencing error and overdispersion together from each
-  start. The range searched is exp(−2) to exp(2), 0.14 to 7.4.
+  out. The search fits the five starting values from scratch and refines
+  every one that scores at least as high as its neighbours by a
+  golden-section search within half a log unit of it, to 0.01 in the log of
+  the bias. updog optimises bias, sequencing error and overdispersion
+  together from each start. The range searched is exp(−2) to exp(2), 0.14 to
+  7.4.
 
 `tests/fixtures/updog_norm.json` holds ten updog fits with the bias estimated
-and the other parameters fixed: five simulated markers (tetraploids simulated
-with a bias of 0.6, 1.9 and 1; a diploid with 0.5; a hexaploid family with
-1.5), each under updog's `norm` and `hw` models. The fitted biases agree to
-0.07%, the priors to 1e-4 and the posteriors to 1e-3, and all 1,140 genotypes
-are the same. For the hexaploid family both tools fit a bias of 2.1 (`norm`)
-and 2.7 (`hw`) where 1.5 was simulated: with few dosage classes a bias and a
-shift of every dosage explain the counts about equally well.
+and the other parameters fixed. They cover five simulated markers (a diploid
+simulated with a bias of 0.5, a hexaploid family with 1.5, and tetraploids
+with 0.6, 1.9 and 1), each under updog's `norm` and `hw` models. The fitted
+biases agree to 0.07%, the priors to 1e-4 and the posteriors to 1e-3, and
+all 1,140 genotypes are the same. For the hexaploid family both tools fit a
+bias of 2.1 (`norm`) and 2.7 (`hw`) where the simulation used 1.5, because
+with few dosage classes a bias and a shift of every dosage explain the
+counts about equally well.
 
 The first version of the search refined only the best starting value. On
 updog-simulated F1 markers with one or two dosage classes it then kept the
-wrong one (90.7% of genotypes correct against updog's 94.0%); refining every
+wrong one (90.7% of genotypes correct against updog's 94.0%). Refining every
 start that scores at least as high as its neighbours gave 93.3%.
 
-Haplotype records and sites with three or more bases are called without a
-bias: updog's bias is defined for two alleles, and a bias per allele of a
-multi-allele record has not been worked out or tested.
+Haplotype records and sites with three or more bases get calls without a
+bias, because updog defines its bias for two alleles, and a bias per allele
+of a multi-allele record has not been worked out or tested.
 
 **Finished model on the alfalfa populations.** Target calls against the
 published dosages, without filters, with the estimates above:
 
-| Settings | I195 × J432: same dosage | E115 × F628: same dosage |
+| Settings | I195 × J432, same dosage | E115 × F628, same dosage |
 |---|---|---|
 | polyRAD's settings (overdispersion 9, contamination 0.001) | 88.81% | 86.33% |
 | `--prior hwe` (the defaults) | 90.87% | 90.04% |
@@ -2286,14 +2342,14 @@ probably come from updog, so they cannot say whether updog or `call` is nearer
 the truth. The potato data of Endelman et al. (2024, The Plant Genome,
 doi:10.1002/tpg2.20484) have genotypes from a second technology. The
 polyBreedR repository (`inst/vignette_data`) carries the part of that dataset
-from a five-parent half-diallel: 85 tetraploid clones in ten F1 families, with
-DArTag read counts (`diallel_DArTag.vcf.gz`, the `AD` field) and Infinium
-array genotypes called with fitPoly (`diallel_array.vcf.gz`). The two files
-share 1,544 markers with the same REF and ALT; the median depth is 304 reads
-per sample and marker. The VCF has no tag sequences, so `call` was given the
-reference and alternate counts as a two-row-per-marker MADC with stand-in
-sequences. Most probable dosage against the array dosage, without filters,
-over the 131,224 genotypes with reads:
+from a five-parent half-diallel. It has 85 tetraploid clones in ten F1
+families, with DArTag read counts (`diallel_DArTag.vcf.gz`, the `AD` field)
+and Infinium array genotypes called with fitPoly (`diallel_array.vcf.gz`).
+The two files share 1,544 markers with the same REF and ALT, and the median
+depth is 304 reads per sample and marker. The VCF has no tag sequences, so
+`call` got the reference and alternate counts as a two-row-per-marker MADC
+with stand-in sequences. Most probable dosage against the array dosage,
+without filters, over the 131,224 genotypes with reads:
 
 | Caller | Same dosage | RMSE | Markers with under 10% wrong | Bias 0.8–1.25 (1,135 markers) | Bias outside (409) |
 |---|---|---|---|---|---|
@@ -2312,14 +2368,14 @@ Every row has 99.8–99.9% of calls within one copy.
 
 - `call` with polyRAD's settings and polyRAD give the same share to two
   decimals, as on the alfalfa data.
-- The estimated read model (overdispersion 75, background rate 0.003) is
-  worth 4.3 points over polyRAD's defaults.
-- Fitting the bias is worth another 4.3 points, 15 at the 409 markers updog
+- The estimated read model (overdispersion 75, background rate 0.003) adds
+  4.3 points over polyRAD's defaults.
+- Fitting the bias adds another 4.3 points, 15 at the 409 markers updog
   found biased. The estimate with the bias fitted is 300 and 0.001, and 31% of
   the fitted biases are outside 0.8–1.25.
 - With the bias fitted, `call` is 0.1 points below updog on the same samples
   and took 52–56 s on four workers against updog's 150 s (CPU 197–214 s
-  against 394 s; memory 150 MB against 693 MB). Without the bias it took 6–7 s.
+  against 394 s, memory 150 MB against 693 MB). Without the bias it took 6–7 s.
 - polyRAD's population-structure prior adds 2.6 points at an overdispersion
   of 9, where the prior carries more weight, and still ends below `call` with
   the HWE prior and estimated values. With an overdispersion of 75 polyRAD's
@@ -2332,17 +2388,18 @@ a copy on Zenodo (record 11286799). File S1 has the DArTag read counts of 703
 tetraploid samples at the 2,503 markers of the first panel version, File S5
 the array genotypes of 298 of them, and File S12 the paper's error of the
 DArTag genotypes (updog's `norm`, stored in File S1) against the array for
-each of the 1,862 markers that are in both files with the same alleles. All
-703 samples were called together, without filters, and scored on the 298 with
-array genotypes. The median depth is 201 reads per sample and marker.
+each of the 1,862 markers that are in both files with the same alleles. Each
+caller called all 703 samples together, without filters, and the scores use
+the 298 with array genotypes. The median depth is 201 reads per sample and
+marker.
 
 The first three columns are File S12's measures, per marker over the genotypes
-with an array dosage, as mean and median over the 1,862 markers: the root mean
-squared error, the share with another dosage, and the share in another class
-of absent, mixed and fixed. The last column is the share of all 550,052
-genotypes with reads that have the array's dosage.
+with an array dosage, as mean and median over the 1,862 markers. They are the
+root mean squared error, the share with another dosage, and the share in
+another class of absent, mixed and fixed. The last column is the share of all
+550,052 genotypes with reads that have the array's dosage.
 
-| Caller | RMSE: mean, median | Another dosage: mean, median | Another class: mean, median | Same dosage, all genotypes |
+| Caller | RMSE, mean and median | Another dosage, mean and median | Another class, mean and median | Same dosage, all genotypes |
 |---|---|---|---|---|
 | File S12 as published | 0.363, 0.224 | 13.4%, 5.0% | 6.5%, 0.7% | |
 | updog `norm` as stored in File S1 | 0.363, 0.224 | 13.4%, 5.0% | 6.5%, 0.7% | 87.15% |
@@ -2359,39 +2416,40 @@ genotypes with reads that have the array's dosage.
 
 - The stored genotypes scored here give File S12's figures to the last
   decimal, so these columns measure what the paper measured.
-- With the bias fitted `call` has the paper's median error and a lower mean:
+- With the bias fitted `call` has the paper's median error and a lower mean,
   12.9% of genotypes with another dosage against 13.4%. The estimate was an
   overdispersion of 150 and a background rate of 0.003.
 - Without the bias (estimate 75 and 0.005) `call` is 4.6 points behind, level
   with polyRAD given the same overdispersion and 5 points ahead of polyRAD's
-  defaults. Fitting the bias is worth as much here as on the 85 clones.
+  defaults. Fitting the bias gains as much here as on the 85 clones.
 - The structure priors add 0.2 points in both tools. polyRAD's finished at an
-  overdispersion of 75 with 703 samples; with 85 it stopped with an error.
+  overdispersion of 75 with 703 samples, but with 85 it stopped with an error.
 - Agreement is lower than on the 85 clones for every caller because the
-  markers are not selected: at 331 of the 1,862 markers fewer than 80% of the
+  markers had no selection. At 331 of the 1,862 markers fewer than 80% of the
   stored genotypes have the array's dosage, and at 153 fewer than half. No
   sample is under 60%, and the median marker is at 95%. The disagreement is
   between the two assays at particular markers, which is why the medians say
   more than the means.
 - On four workers that other jobs were also using, `call` took 19 s with the
   HWE prior, 38 s with the structure prior, and 233 s (HWE) and 432 s (norm)
-  with the bias fitted; polyRAD's structure model took 90 s.
+  with the bias fitted, while polyRAD's structure model took 90 s.
 
 **A vendor MADC with diploid and tetraploid samples (potato, second panel
 version).** File S4 of the same deposit is the MADC as DArT delivered it for
-the second panel version: 375 samples, 52 of them diploid, and 3,915 markers.
-File S3 has the paper's genotypes of those samples, and File S13 its error
-against the array per marker, as the share of genotypes in another class of
-absent, mixed and fixed (the measure that suits both ploidies). `call` read
-File S4 as it is, with `--ploidy 4` and a `--ploidy-file` naming the diploids
-(each sample's ploidy was read from its genotypes in File S3). It wrote 3,906
-target records, 5,879 records in the `all` VCF and 3,915 haplotype records;
-nine markers have no target record because their Ref and Alt tags differ at
-more than one position. The median depth is 273 reads. 78 samples are on the
-array (38 diploid, 40 tetraploid), and 2,603 markers are in both files with
-the same alleles and have a target record: 202,143 genotypes with reads.
+the second panel version, with 375 samples, 52 of them diploid, and 3,915
+markers. File S3 has the paper's genotypes of those samples, and File S13
+its error against the array per marker, as the share of genotypes in another
+class of absent, mixed and fixed (the measure that suits both ploidies).
+`call` read File S4 as it is, with `--ploidy 4` and a `--ploidy-file` naming
+the diploids (each sample's ploidy came from its genotypes in File S3). It
+wrote 3,906 target records, 5,879 records in the `all` VCF and 3,915
+haplotype records. Nine markers have no target record because their Ref and
+Alt tags differ at more than one position. The median depth is 273 reads.
+78 samples are on the array (38 diploid, 40 tetraploid), and 2,603 markers
+are in both files with the same alleles and have a target record, which
+gives 202,143 genotypes with reads.
 
-| Caller | Same dosage: all | Diploids (98,339) | Tetraploids (103,804) | Another class, per marker: mean, median |
+| Caller | Same dosage, all | Diploids (98,339) | Tetraploids (103,804) | Another class per marker, mean and median |
 |---|---|---|---|---|
 | File S13 as published | | | | 5.3%, 3% |
 | Genotypes stored in File S3 | 91.83% | 92.61% | 91.09% | 5.3%, 2.6% |
@@ -2406,43 +2464,43 @@ the same alleles and have a target record: 202,143 genotypes with reads.
 | polyRAD `IterateHWE`, overdispersion 9 | 86.23% | 92.60% | 80.20% | 6.6%, 3.8% |
 | polyRAD `IteratePopStruct`, overdispersion 9 | 87.80% | 92.64% | 83.22% | 6.2%, 3.8% |
 
-File S13 is rounded to two decimals; the stored genotypes scored here give a
+File S13 rounds to two decimals, and the stored genotypes scored here give a
 mean of 5.30% against its 5.28%.
 
-- A vendor MADC of mixed ploidy is called in one run, and with the bias
-  fitted the result is level with the paper's genotypes for the diploids and
-  0.2 points above them for the tetraploids. The estimate was an
-  overdispersion of 100 and a background rate of 0.003; 1,507 of the 3,904
-  fitted biases are outside 0.8 to 1.25.
+- One run calls a vendor MADC of mixed ploidy, and with the bias fitted the
+  result is level with the paper's genotypes for the diploids and 0.2 points
+  above them for the tetraploids. The estimate was an
+  overdispersion of 100 and a background rate of 0.003, and 1,507 of the
+  3,904 fitted biases are outside 0.8 to 1.25.
 - Without the bias (estimate 30 and 0.005) the tetraploids are 4.8 points
   behind, level with polyRAD at the same overdispersion and 6.2 points ahead
   of polyRAD's defaults.
 - For the diploids the defaults are 0.6 points behind polyRAD's settings. The
   two differ in 1,512 diploid genotypes at 528 markers. In 1,034 the array has
   a heterozygote that the defaults call as fixed and polyRAD's settings as
-  mixed; in 445 the array has a fixed genotype that the defaults get right.
-  These are markers where one allele gives few reads: a diploid heterozygote
-  with 210 reference and 47 alternate reads, at a marker with a fitted bias of
-  0.27, is called without the alternate allele under an overdispersion of 30,
-  because with a background rate the homozygote's distribution has a long
-  tail, and as mixed under an overdispersion of 9, which lets a heterozygote
-  stray further from half. Fitting the bias settles it: 92.61%.
-- With the default filters 87.5% of the genotypes are called (98.4% of the
-  diploid, 77.1% of the tetraploid) and 92.2% of those have the array's
-  dosage.
+  mixed, and in 445 the array has a fixed genotype that the defaults get
+  right. These are markers where one allele gives few reads. For example, a
+  diploid heterozygote with 210 reference and 47 alternate reads, at a marker
+  with a fitted bias of 0.27, gets a call without the alternate allele under
+  an overdispersion of 30, because with a background rate the homozygote's
+  distribution has a long tail. Under an overdispersion of 9, which lets a
+  heterozygote stray further from half, it comes out mixed. Fitting the bias
+  settles it and gives 92.61%.
+- The default filters keep 87.5% of the genotypes (98.4% of the diploid,
+  77.1% of the tetraploid), and 92.2% of those have the array's dosage.
 - On shared workers the run that wrote all three VCFs took 88 s, the norm
   prior 34 s, the structure prior 63 s, and the runs with the bias 159 to
-  169 s; polyRAD's structure model took 113 to 200 s.
+  169 s, while polyRAD's structure model took 113 to 200 s.
 
 **Which rows a target genotype counts.** `call` counts every row of a marker
 by the base it has at the target, so a RefMatch or AltMatch haplotype adds
 its reads to the allele it carries. A workflow that takes the exact Ref and
 Alt rows only, as the sweetpotato study below did, leaves those reads out.
-The potato vendor MADC and the array decide between the two:
+The potato vendor MADC and the array decide between the two.
 File S4 was cut down to its 7,830 Ref and Alt rows (of 13,187) and called
 again.
 
-| Counts | `--prior hwe`: all, diploids, tetraploids | With the bias fitted |
+| Counts | `--prior hwe`, for all, diploids and tetraploids | With the bias fitted |
 |---|---|---|
 | Every row, by its base at the target | 89.14%, 92.02%, 86.41% | 91.91%, 92.61%, 91.25% |
 | Ref and Alt rows only | 82.06%, 85.25%, 79.04% | 84.36%, 85.77%, 83.03% |
@@ -2452,15 +2510,16 @@ dosage, and 2.1% of the genotypes have no reads at all. The reads on the
 other rows are reads of the target's alleles.
 
 **Which thresholds on the VCF remove the worst markers.** The two potato
-panels have array dosages for every marker and were not selected for good
+panels have array dosages for every marker and no selection for good
 behaviour, so they show which statistics of a `call` VCF pick out the markers
-that disagree with the array. Both were called with `--prior hwe --allele-bias
-fit` and without filters, so that every genotype has its GQ. A marker is
-"bad" when fewer than 80% of its genotypes have the array's dosage: 324 of
-1,862 on the first panel and 229 of 2,602 on the second.
+that disagree with the array. Both runs used `--prior hwe --allele-bias
+fit` and no filters, so that every genotype has its GQ. A marker is
+"bad" when fewer than 80% of its genotypes have the array's dosage. That
+holds for 324 of 1,862 on the first panel and 229 of 2,602 on the second.
 
 For a genotype, on the first panel (550,052 genotypes) and the second
-(202,143): share with the array's dosage among those kept, and share kept.
+(202,143), the table gives the share with the array's dosage among those
+kept, and the share kept.
 
 | Genotype kept when | First panel | Second panel |
 |---|---|---|
@@ -2472,8 +2531,8 @@ For a genotype, on the first panel (550,052 genotypes) and the second
 | GQ 10 or more and depth 10 or more (the defaults) | 91.3% of 89.4% | 93.3% of 96% |
 
 For a marker, how well each statistic separates the bad markers from the
-others (the probability that a bad marker ranks worse than a good one; 0.5 is
-chance), with every sample of the VCF used and no truth:
+others (the probability that a bad marker ranks worse than a good one, where
+0.5 is chance), with every sample of the VCF used and no truth:
 
 | Statistic | First panel | Second panel |
 |---|---|---|
@@ -2491,57 +2550,58 @@ filters at the markers left (91.3% and 93.3% with no marker filter):
 
 | Marker removed when | First panel | Second panel |
 |---|---|---|
-| Call rate under 0.8 | 284; 64%; 56%; 92.8% | 205; 36%; 32%; 94.0% |
-| Call rate under 0.9 | 555; 45%; 77%; 94.1% | 530; 28%; 65%; 95.0% |
-| `BIAS` outside 0.5 to 2 | 162; 62%; 31%; 92.8% | 179; 32%; 25%; 93.9% |
-| `BIAS` outside 0.33 to 3 | 94; 73%; 21%; 92.5% | 69; 42%; 13%; 93.6% |
-| Estimated share miscalled over 0.15 | 90; 88%; 24%; 91.5% | 33; 70%; 10%; 93.4% |
-| Heterozygous calls 0.2 under expectation | 25; 92%; 7%; 91.8% | 20; 95%; 8%; 93.6% |
-| Mean depth under 30 | 120; 79%; 29%; 91.7% | 63; 51%; 14%; 93.4% |
-| Call rate under 0.8, or `BIAS` outside 0.5 to 2 | 369; 58%; 66%; 93.6% | 333; 31%; 45%; 94.4% |
+| Call rate under 0.8 | 284 / 64% / 56% / 92.8% | 205 / 36% / 32% / 94.0% |
+| Call rate under 0.9 | 555 / 45% / 77% / 94.1% | 530 / 28% / 65% / 95.0% |
+| `BIAS` outside 0.5 to 2 | 162 / 62% / 31% / 92.8% | 179 / 32% / 25% / 93.9% |
+| `BIAS` outside 0.33 to 3 | 94 / 73% / 21% / 92.5% | 69 / 42% / 13% / 93.6% |
+| Estimated share miscalled over 0.15 | 90 / 88% / 24% / 91.5% | 33 / 70% / 10% / 93.4% |
+| Heterozygous calls 0.2 under expectation | 25 / 92% / 7% / 91.8% | 20 / 95% / 8% / 93.6% |
+| Mean depth under 30 | 120 / 79% / 29% / 91.7% | 63 / 51% / 14% / 93.4% |
+| Call rate under 0.8, or `BIAS` outside 0.5 to 2 | 369 / 58% / 66% / 93.6% | 333 / 31% / 45% / 94.4% |
 
-- GQ sorts genotypes as far as 20; beyond that the genotypes lost are mostly
-  right ones. A genotype with a GQ of 30 or more is wrong 6 to 7 times in 100
-  here, where its posterior says once in 1,000: the errors left are at
+- GQ sorts genotypes as far as 20, and beyond that the genotypes lost are
+  mostly right ones. A genotype with a GQ of 30 or more is wrong 6 to 7 times
+  in 100 here, where its posterior says once in 1,000. The errors left are at
   markers where the model is confident and the array differs, which a
   genotype threshold cannot reach.
 - The call rate under the default filters is the best single marker
   statistic on both panels. At an equal number of markers removed, the lowest
   call rates take out more bad markers than the most extreme biases, the
   highest miscall estimates or the lowest depths (of 200 removed on the first
-  panel: 146, 111, 133 and 125 bad).
-- `BIAS` is worth less as a filter than its use in updog suggests. A marker
-  with a strong bias is called right once the bias is fitted, so the range
-  0.5 to 2 removes 62 good markers of 162 on the first panel and 121 of 179
-  on the second. Added to a call-rate filter it gains 0.2 to 0.3 points on
-  the first panel over removing the same number by call rate alone, and
+  panel, 146, 111, 133 and 125 are bad).
+- `BIAS` helps less as a filter than its use in updog suggests. A marker
+  with a strong bias gets the right calls once the run fits the bias, so the
+  range 0.5 to 2 removes 62 good markers of 162 on the first panel and 121 of
+  179 on the second. Added to a call-rate filter it gains 0.2 to 0.3 points
+  on the first panel over removing the same number by call rate alone, and
   nothing on the second.
-- Two statistics remove few markers and almost only bad ones: a deficit of
-  heterozygous calls of 0.2, which is what a null allele gives, and a miscall
-  estimate over 0.15.
+- Two statistics remove few markers and almost only bad ones. They are a
+  deficit of heterozygous calls of 0.2, which is what a null allele gives,
+  and a miscall estimate over 0.15.
 - Without the bias fitted the GQs of a biased panel are lower and a call-rate
-  threshold removes far more: under 0.8, 454 markers on the first panel and
-  1,125 on the second. The thresholds above belong to a run with the bias.
+  threshold removes far more. Under 0.8 it removes 454 markers on the first
+  panel and 1,125 on the second. The thresholds above belong to a run with
+  the bias.
 - On the delta smelt panel, which has no such markers, the same rules remove
-  little: 16 or 17 of 983 records have a call rate under 0.8, and 37 of 946 a
+  little. Of 983 records 16 or 17 have a call rate under 0.8, and 37 of 946 a
   bias outside 0.5 to 2 (16 outside 0.33 to 3).
 - No filter finds every bad marker, and the worst are not a calling problem.
   Of the 132 and 84 markers with under half their genotypes right, the
   called dosage follows the array's closely (correlation 0.9 or more) at 5
-  and 2; at the others the two assays measure something different. The
+  and 2, and at the others the two assays measure something different. The
   strictest filter in the table, a call rate under 0.9, still leaves 30% and
   38% of them.
 
-**Hexaploid sweetpotato: replicates of eight clones.** The deposit of a study
+**Replicates of eight hexaploid sweetpotato clones.** The deposit of a study
 of DNA from sweetpotato leaves and roots (Zenodo record 22288064, CC-BY) has
 a vendor MADC of 80 samples, ten of each of eight clones, and the study's
 genotypes from updog's `norm` model (`multidog`, ploidy 6, written by BIGr's
 `updog2vcf`). There is no second assay, so the measure is how often two
 samples of one clone get the same dosage. The MADC as delivered names each
 sample twice, once per extraction method, and `call` refuses repeated sample
-names; the second of each pair was given a suffix.
+names, so the second of each pair got a suffix.
 
-The study's genotypes use the exact Ref and Alt rows, so `call` was first run
+The study's genotypes use the exact Ref and Alt rows, so `call` first ran
 on those rows alone (6,240 of 19,319), which gives both tools the same
 counts. 2,636 markers are in every output and 622,513 pairs of samples of one
 clone both have reads:
@@ -2560,29 +2620,29 @@ clone both have reads:
 - On the same counts `call` with the norm prior and the bias fitted is 0.6
   points behind updog in agreement between replicates and gives the study's
   genotype in 91% of cases. The eight clones are ten samples each, which is
-  not a population in Hardy-Weinberg proportions; the norm prior suits it
+  not a population in Hardy-Weinberg proportions, and the norm prior suits it
   better than the HWE prior by 1 to 1.4 points.
 - The estimate was an overdispersion of 50 and a background rate of 0.002,
-  and 150 and 0.001 with the bias fitted. With the default filters two
-  thirds or less of the pairs are called, and 97 to 99% of those agree.
-- With every row counted, as `call` does by default, the picture is another
-  one: 72.8% (HWE) to 75.9% (norm) of pairs agree, the clones show 3.2
+  and 150 and 0.001 with the bias fitted. The default filters leave two
+  thirds or less of the pairs called, and 97 to 99% of those agree.
+- With every row counted, as `call` does by default, the picture changes.
+  Then 72.8% (HWE) to 75.9% (norm) of pairs agree, the clones show 3.2
   different dosages per marker instead of 2.2, and only 36% of the genotypes
   are the study's. At Chr01_000084128 the Alt row has 7 reads in all 80
-  samples and the study's genotypes have no alternate allele; AltMatch rows
+  samples and the study's genotypes have no alternate allele. AltMatch rows
   with the alternate base carry 7 to 29% of each sample's reads, alike within
   a clone and different between clones, and `call` gives dosages of 1 and 2.
 - Agreement between replicates cannot rank the two count sets, because a
   marker that looks monomorphic agrees with itself. The potato comparison
-  above can: there the rows left out are reads of the target's alleles. The
-  lower agreement with every row counted is what more heterozygous
-  genotypes cost in a hexaploid at this overdispersion, and no truth for
-  these clones is at hand to say how many of them are right.
+  above can, because there the rows left out are reads of the target's
+  alleles. The lower agreement with every row counted is what more
+  heterozygous genotypes cost in a hexaploid at this overdispersion, and no
+  truth for these clones is at hand to say how many of them are right.
 
 **Tables from updog's and polyRAD's simulators.** To have truth that does not
-come from MADCATS code, read counts were also drawn with the simulators the
-two packages ship (`rgeno` and `rflexdog` in updog; `SimGenotypes` and
-`SimAlleleDepth` in polyRAD), 150 markers by 150 samples per table, with
+come from MADCATS code, the simulators the two packages ship (`rgeno` and
+`rflexdog` in updog, and `SimGenotypes` and `SimAlleleDepth` in polyRAD) also
+drew read counts, 150 markers by 150 samples per table, with
 negative-binomial depths of mean 150, or 25 where the table is marked low
 depth. updog's tables have a sequencing-error rate of 0.5%, an overdispersion
 of 49–499 on polyRAD's scale drawn per marker and, where marked biased, a bias
@@ -2590,8 +2650,8 @@ of exp(N(0, 0.5)) per marker. polyRAD's have an overdispersion of 20, a
 contamination rate of 0.001 and an error rate of 0.001. The first eight rows
 are the tetraploid tables of the earlier comparison (100 markers, 150 samples,
 20–60 reads, overdispersion 40, 0.5% read errors, bias 2^N(0, 0.5) where
-marked). Share of genotypes whose most probable dosage is the true one,
-without filters; polyRAD is `IterateHWE` with its defaults:
+marked). The table gives the share of genotypes whose most probable dosage is
+the true one, without filters, and polyRAD is `IterateHWE` with its defaults:
 
 | Table | polyRAD | updog `norm` | `call` hwe | `call` norm | hwe + bias | norm + bias |
 |---|---|---|---|---|---|---|
@@ -2616,14 +2676,15 @@ without filters; polyRAD is `IterateHWE` with its defaults:
 | polyRAD 6x outbred | 73.1% | 65.7% | 75.3% | 75.2% | 71.7% | 65.3% |
 | polyRAD 4x outbred, low depth | 81.5% | 79.2% | 82.4% | 82.4% | 81.8% | 81.7% |
 
-`call` leaves a sample without reads uncalled and the other two call it from
-the prior; such samples are 0.1% of the low-depth tables and are not counted
-for `call`. What the table shows:
+`call` leaves a sample without reads uncalled, and the other two call it from
+the prior. Such samples are 0.1% of the low-depth tables, and the scores for
+`call` leave them out. What the table shows:
 
 - Without bias in the data, `call` without bias fitting is within half a point
-  of updog or ahead of it on every table: ahead by 0 to 3 points on outbred
-  tetraploids, 10 on the polyRAD hexaploid and 14 to 15 on inbred lines. On
-  polyRAD's partly inbred table `hwe` is 0.4 behind and `norm` 0.3 ahead.
+  of updog or ahead of it on every table. It is ahead by 0 to 3 points on
+  outbred tetraploids, 10 on the polyRAD hexaploid and 14 to 15 on inbred
+  lines. On polyRAD's partly inbred table `hwe` is 0.4 behind and `norm` 0.3
+  ahead.
 - With bias in the data, `--prior norm --allele-bias fit` is within 0.7 points
   of updog on all seven of updog's tables and ahead of it on the four biased
   tables of the first group. Without bias fitting `call` is 8 to 20 points
@@ -2635,9 +2696,9 @@ for `call`. What the table shows:
   heterozygotes, or with seven dosage classes of scattered counts, a bias and
   a shift of the dosages are hard to tell apart.
 - `--prior hwe --allele-bias fit` fails where the samples are not in
-  Hardy-Weinberg proportions: 72–73% on inbred lines, and 86–88% on the three
-  F1 tables against 89–93% with `norm`. The bias needs a prior that can follow
-  the genotype proportions.
+  Hardy-Weinberg proportions, with 72–73% on inbred lines, and 86–88% on the
+  three F1 tables against 89–93% with `norm`. The bias needs a prior that can
+  follow the genotype proportions.
 - polyRAD with its default overdispersion of 9 is 2 to 12.5 points below
   `call` hwe, the same model with estimated values, on updog's polyploid
   tables, whose scatter is far smaller than 9 allows. On polyRAD's own tables,
@@ -2647,18 +2708,19 @@ for `call`. What the table shows:
   With `--prior norm --allele-bias fit` it is within 3 points on the outbred
   tetraploid tables, apart from updog's F1 table (4 above). updog's is 4.5 to
   8 points above its accuracy on the outbred tetraploid tables that are not
-  its own and 0 to 4 above on its own, 21 above on the polyRAD hexaploid and
-  22 below on inbred lines.
+  its own and 0 to 4 above on its own tables, 21 above on the polyRAD
+  hexaploid and 22 below on inbred lines.
 - With the bias fitted, the overdispersion estimate was one grid step high on
   several unbiased tables (50 for a simulated 40, 25 for 20), and wrong on the
-  polyRAD hexaploid: 10 with a background rate of 0.0002, where 20 and 0.001
-  were simulated and the estimate without bias gave 20 and 0.001.
+  polyRAD hexaploid, at 10 with a background rate of 0.0002, where the
+  simulation used 20 and 0.001 and the estimate without bias gave 20 and
+  0.001.
 
 **Other seeds, and samples of mixed ploidy.** The tables above are one draw
 each. Fifteen scenarios of the same two simulators were drawn again with
-other seeds (150 samples, 150 markers) and called by `call`, polyRAD and, for
-the first seed, updog. Two seeds finished all fifteen tables and two more
-finished part of them before the runs reached their time limit, so each
+other seeds (150 samples, 150 markers), and `call`, polyRAD and, for the
+first seed, updog called them. Two seeds finished all fifteen tables and two
+more finished part of them before the runs reached their time limit, so each
 scenario has two to four draws.
 
 Three of the scenarios have diploid, tetraploid and hexaploid samples in one
@@ -2666,7 +2728,7 @@ table, which the tables above did not test (polyRAD's simulator,
 overdispersion 20). Share of dosages right, in all and by ploidy, as means
 over the draws:
 
-| Scenario | `call` hwe: all, 2x, 4x, 6x | `call` structure | polyRAD `IterateHWE`, overdispersion 20 | polyRAD `IteratePopStruct`, overdispersion 20 |
+| Scenario | `call` hwe for all, 2x, 4x and 6x | `call` structure | polyRAD `IterateHWE`, overdispersion 20 | polyRAD `IteratePopStruct`, overdispersion 20 |
 |---|---|---|---|---|
 | One population, 25 reads | 85.6%, 99.1%, 82.1%, 65.5% | 85.6%, 99.1%, 82.1%, 65.5% | 85.5%, 99.0%, 82.1%, 65.5% | 84.3%, 99.0%, 80.5%, 62.5% |
 | Three groups, 25 reads | 86.8%, 99.2%, 83.9%, 67.7% | 87.9%, 99.3%, 85.2%, 70.8% | 86.7%, 99.1%, 83.8%, 67.7% | 87.5%, 99.1%, 84.6%, 70.3% |
@@ -2687,25 +2749,25 @@ over the draws:
   92.1% against 90.6% on the F1 table, and is 1.1 points behind at low depth
   (84.7% against 85.8%).
 - Draws of one scenario differ by 1.5 points at most for `call` on the
-  tables without bias, and by up to 3 where a bias in the data is left
-  unfitted. The F1 table is apart: the parents' genotypes are drawn anew, and
-  `--prior hwe` ranges from 75.2% to 82.7% where `--prior norm --allele-bias
+  tables without bias, and by up to 3 where a bias in the data stays
+  unfitted. The F1 table stands apart. Each draw picks new parental genotypes,
+  and `--prior hwe` ranges from 75.2% to 82.7% where `--prior norm --allele-bias
   fit` ranges from 91.0% to 93.6%.
 - The overdispersion estimate was the simulated 20 on polyRAD's tables in
   most draws (18 or 25 in the others), and 30 or 40 on the mixed-ploidy table
   at 8 reads.
 
-**Time and memory.** One table was called by all three tools: the first 1,000
-markers of I195 × J432 (186 tetraploid samples, 2,486 MADC rows), target
-records, default filters, on a four-core Intel Xeon at 2.1 GHz with 15 GB of
-memory. Each command ran in its own session, and every process in that session
-was sampled ten times a second: wall time, the CPU time of all its processes
-together, and the peak of their summed proportional memory, which counts a
-page shared by several processes once. polyRAD is `IterateHWE` with an
-overdispersion of 9 followed by `GetProbableGenotypes`, and updog is
-`multidog` with `model = "norm"`; both read the reference and alternate counts
-`call` derives from the MADC rows. `IterateHWE` has no option to use more than
-one core.
+**Time and memory.** All three tools called one table, the first 1,000
+markers of I195 × J432 (186 tetraploid samples, 2,486 MADC rows), with target
+records and default filters, on a four-core Intel Xeon at 2.1 GHz with 15 GB
+of memory. Each command ran in its own session, and every process in that
+session was sampled ten times a second for the wall time, the CPU time of all
+its processes together, and the peak of their summed proportional memory,
+which counts a page shared by several processes once. polyRAD is
+`IterateHWE` with an overdispersion of 9 followed by `GetProbableGenotypes`,
+and updog is `multidog` with `model = "norm"`. Both read the reference and
+alternate counts `call` derives from the MADC rows. `IterateHWE` has no
+option to use more than one core.
 
 | Tool and settings | Cores | Wall | CPU | Peak memory |
 |---|---|---|---|---|
@@ -2727,7 +2789,7 @@ one core.
 The estimate of the overdispersion and the background-read rate is a fixed
 cost, because it works on at most 20,000 sample-by-marker cells however large
 the table is (107 of the 1,000 markers here). The same runs on one core with
-the two values given as numbers, so that nothing is estimated:
+the two values given as numbers, so that the run estimates nothing:
 
 | Settings, values given | Wall | Share of the full run |
 |---|---|---|
@@ -2739,8 +2801,8 @@ the two values given as numbers, so that nothing is estimated:
   5 s, in a fifth of the memory, and 2 s on four cores.
 - A default run spends 18 of its 23 s on the estimate. Calling alone takes
   4.5 s with `hwe` and 7 s with `norm`.
-- With the bias fitted the estimate takes about 115 s, since the bias of every
-  sampled marker is fitted again for each pair of values tried. Calling with
+- With the bias fitted the estimate takes about 115 s, since it fits the bias
+  of every sampled marker again for each pair of values tried. Calling with
   the bias takes 57 s, eight times as long as without.
 - The whole run with the bias is 6.5 times as fast as updog on one core and 7
   times on four, with the accuracy shown above. Without the bias,
@@ -2749,62 +2811,64 @@ the two values given as numbers, so that nothing is estimated:
 - Four workers give 3.1 to 3.6 times the speed of one. Memory with four
   workers is that of five Python processes, 110–205 MB.
 
-The `call` rows were measured again after a review of the code for work done
-more than once; polyRAD's and updog's rows are from the first measurement.
-Before the review the default run took 33 s on one core and 10 s on four,
-`norm` 38 s and 10 s, and `norm` with the bias 301 s and 80 s; calling alone
-took 6 s, 10 s and 97 s. `call` with polyRAD's settings, whose code changed
-least, took 7 s then and 6.5 s now, so the two measurements are of comparable
-machines. Three changes account for the gain, and none changes a result (51
-output files of twelve runs were the same byte for byte before and after):
+The `call` rows come from a second measurement, after a review of the code
+for work done more than once. polyRAD's and updog's rows are from the first
+measurement. Before the review the default run took 33 s on one core and 10 s
+on four, `norm` 38 s and 10 s, and `norm` with the bias 301 s and 80 s.
+Calling alone took 6 s, 10 s and 97 s. `call` with polyRAD's settings, whose
+code changed least, took 7 s then and 6.5 s now, so the two measurements are
+of comparable machines. Three changes account for the gain, and none changes
+a result (51 output files of twelve runs were the same byte for byte before
+and after):
 
-- The likelihoods of a record's read counts are computed once and not in
-  every pass. They depend on the allele frequencies only through polyRAD's
-  contamination term, so they are computed in every pass only when
-  `--contamination-rate` is above 0.
+- The code computes the likelihoods of a record's read counts once and not
+  in every pass. They depend on the allele frequencies only through
+  polyRAD's contamination term, so it recomputes them in every pass only
+  when `--contamination-rate` is above 0.
 - The estimate chose its markers again for every background-read rate it
   tried, and now chooses them once.
-- The binomial coefficient of a sample's counts and the terms that depend
-  only on the overdispersion tried are computed once per sample and once per
+- The code computes the binomial coefficient of a sample's counts once per
+  sample and the terms that depend only on the overdispersion tried once per
   value, not once per dosage.
 
-**Shortening the estimate when the bias is fitted: tried, and not done.** With
-the bias fitted, two thirds of a run is the read-model estimate (113 of 170 s
-above). On the benchmark table, in one process, the estimate takes 108 s
-against 17 s without the bias: it works on 107 markers, tries five background
+**Shortening the estimate when the bias is fitted was tried and not done.**
+With the bias fitted, two thirds of a run is the read-model estimate (113 of
+170 s above). On the benchmark table, in one process, the estimate takes 108 s
+against 17 s without the bias. It works on 107 markers, tries five background
 rates and passes over the markers nine times, and each pass fits every
 marker's bias again, 963 fits of 0.1 s. A fit calls the record at about 21
 bias values (17 to 43), and each call takes 3 passes with `hwe`, 4 with `norm`
 and 6 with the free weights the estimate uses. A profile of the fit found no
-step done twice: the time is in the passes themselves, not in the read-count
-likelihoods, which are already computed once per bias value.
+step done twice. The time is in the passes themselves, not in the read-count
+likelihoods, which the fit already computes once per bias value.
 
-That leaves fitting the bias less often, which was tried in three ways:
+That leaves fitting the bias less often, tried in three ways:
 
 | Change | Estimate on the benchmark table | What it cost |
 |---|---|---|
-| None | 108 s; 150 and 0.0005 | |
-| Fit each marker's bias once, under the read model the search starts from | not run | The bias depends on the overdispersion it is fitted under: against the fit under the final read model, the log bias differed by a median of 0.14 and by more than 0.05 at 64 of the 107 markers (9 of 107 when fitted under an overdispersion of 100 where 150 is final) |
-| Keep each marker's bias for an overdispersion when the search moves to another background rate | 86 s; 150 and 0.001 | A different background rate on both real tables (potato: 0.003 where it is 0.001), for a whole run that is 19% shorter on the benchmark table and 5% longer on potato. Potato accuracy was unchanged (96.59% against 96.57%) |
-| Start the search from an estimate made on a quarter of the markers | 53 s; 150 and 0.0005 | No gain without the bias (17.3 s against 16.9 s); with an eighth of the markers, 91 s with the bias and 24 s without. The gain depends on the pilot landing near the answer |
+| None | 108 s, 150 and 0.0005 | |
+| Fit each marker's bias once, under the read model the search starts from | not run | The bias depends on the overdispersion the fit uses. Against the fit under the final read model, the log bias differed by a median of 0.14 and by more than 0.05 at 64 of the 107 markers (9 of 107 when fitted under an overdispersion of 100 where 150 is final) |
+| Keep each marker's bias for an overdispersion when the search moves to another background rate | 86 s, 150 and 0.001 | A different background rate on both real tables (0.003 on potato where it is 0.001), for a whole run that is 19% shorter on the benchmark table and 5% longer on potato. Potato accuracy did not change (96.59% against 96.57%) |
+| Start the search from an estimate made on a quarter of the markers | 53 s, 150 and 0.0005 | No gain without the bias (17.3 s against 16.9 s). With an eighth of the markers, 91 s with the bias and 24 s without. The gain depends on the pilot landing near the answer |
 
-None was kept. The first two change what is estimated, because two
+None was kept. The first two change what the estimate finds, because two
 neighbouring background rates often fit almost equally well and any change in
-the biases decides between them; the third leaves the estimate alone but does
-not reliably save time. A run with the bias is shortened by more workers, by
-giving `--overdispersion` and `--background-rate` as numbers once a first run
-has estimated them (57 s where the full run takes 170 s), or by a compiled
-kernel, which is not planned.
+the biases decides between them. The third leaves the estimate alone but does
+not reliably save time. A run with the bias gets shorter with more workers,
+with `--overdispersion` and `--background-rate` given as numbers once a first
+run has estimated them (57 s where the full run takes 170 s), or with a
+compiled kernel, which is not planned.
 
 **Keeping a fitted bias only where it earns its place (`--allele-bias auto`).**
 Fitting the bias raises agreement with the array by 4 points on the potato
 data and lowers accuracy on tables without bias, by up to 8 points for
 hexaploids pooled from real diploid reads (below). A rule was tried in a
-scratch copy of the module, and then built: a record keeps its fitted bias
-only when the fit raises the log-likelihood, after the prior on the bias, by
-a set margin over calling without one. Each data set was called with
-`--prior hwe` under the read model its own run with the bias had estimated,
-so that only the rule differs. Share of genotypes right, without filters:
+scratch copy of the module, and then built. Under it, a record keeps its
+fitted bias only when the fit raises the log-likelihood, after the prior on
+the bias, by a set margin over calling without one. Each run used
+`--prior hwe` and the read model that the data set's own run with the bias
+had estimated, so that only the rule differs. Share of genotypes right,
+without filters:
 
 | Data set | No bias (its own read model) | Bias always | Margin 2 | Margin 5 | Margin 10 | Margin 20 |
 |---|---|---|---|---|---|---|
@@ -2817,39 +2881,39 @@ so that only the rule differs. Share of genotypes right, without filters:
 | Pooled hexaploids, 50 reads, targets | 77.60% | 69.83% | 75.53% | 77.17% | 77.60% | 77.60% |
 | Pooled hexaploids, off-target | 89.03% | 85.92% | 88.03% | 88.56% | 88.99% | 89.03% |
 
-Records that keep a bias at margins 0, 2, 5, 10 and 20: potato 1,513, 1,153,
-965, 789 and 590 of 1,544; the vendor MADC 3,851, 3,266, 2,949, 2,591 and
-2,155 of 3,904; smelt 905, 330, 195, 137 and 84 of 946; pooled tetraploids
-920, 123, 53, 29 and 19 of 946; pooled hexaploids 926, 89, 40, 26 and 18 of
-944.
+Potato keeps a bias at 1,513, 1,153, 965, 789 and 590 of 1,544 records at
+margins 0, 2, 5, 10 and 20. The vendor MADC keeps one at 3,851, 3,266, 2,949,
+2,591 and 2,155 of 3,904. Smelt keeps one at 905, 330, 195, 137 and 84 of 946.
+Pooled tetraploids keep one at 920, 123, 53, 29 and 19 of 946. Pooled
+hexaploids keep one at 926, 89, 40, 26 and 18 of 944.
 
-- A margin of 10 keeps the gain where there is bias (96.47% of 96.60%;
+- A margin of 10 keeps the gain where there is bias (96.47% of 96.60%,
   91.19% of 91.25%) and removes the loss where there is none (90.53% against
-  90.56%; 77.60% against 77.60%). On real unbiased reads nine records in ten
-  give the bias up; on potato half to two thirds keep it.
+  90.56%, 77.60% against 77.60%). On real unbiased reads nine records in ten
+  give the bias up, while on potato half to two thirds keep it.
 - Smelt stays 0.14 points (targets) and 0.31 (off-target) under the run
   without bias at every margin. There the loss does not come with the many
-  small biases; it comes with the read model the bias run estimated
+  small biases. It comes with the read model the bias run estimated
   (overdispersion 200 where the run without bias has 150) or with the few
   records that keep a large bias.
 - The rule is now `--allele-bias auto`, with a margin of 10
-  (`BIAS_AUTO_MIN_GAIN`). A record that gives its bias up is called exactly as
-  without one, since the call at a bias of 1 is among those the search makes.
-  Its fitted bias is still written: `INFO/BIAS` and the bias table hold the
-  fit for every two-allele record, the same values a run with `fit` writes,
-  and a record called without it carries `INFO/BIASUNUSED` (`Used` 0 in the
-  table). On the potato data 755 of 1,544 records are called without their
-  bias; 26 of those have a fitted bias outside 0.8 to 1.25, down to 0.37,
-  which a filter on the bias would not see if the field held the bias used.
-  With the read model estimated by the run itself, `auto` gives the figures
-  of the margin-10 column for all five data sets, and on the potato data the
-  same records and bias table as the scratch copy.
+  (`BIAS_AUTO_MIN_GAIN`). A record that gives its bias up gets the same call
+  as without one, since the call at a bias of 1 is among those the search
+  makes. The output still holds its fitted bias. `INFO/BIAS` and the bias
+  table hold the fit for every two-allele record, the same values a run with
+  `fit` writes, and a record called without it carries `INFO/BIASUNUSED`
+  (`Used` 0 in the table). On the potato data 755 of 1,544 records are called
+  without their bias, and 26 of those have a fitted bias outside 0.8 to 1.25,
+  down to 0.37, which a filter on the bias would not see if the field held
+  the bias used. With the read model the run itself estimates, `auto` gives
+  the figures of the margin-10 column for all five data sets, and on the
+  potato data the same records and bias table as the scratch copy.
 - The estimate of the overdispersion and background rate fits every record's
   bias and keeps it, as under `fit`. Applying the rule in the estimate too
-  was tried: the estimates were the same or one step of the background rate
-  apart (potato 300 and 0.002 against 0.001; pooled tetraploids 500 and 0.002
-  against 0.003), and the calls were the same or 0.02 to 0.07 points worse
-  (potato 96.45% against 96.47%; pooled tetraploids 90.46% against 90.53%).
+  gave estimates that were the same or one step of the background rate apart
+  (potato 300 and 0.002 against 0.001, pooled tetraploids 500 and 0.002
+  against 0.003), and calls that were the same or 0.02 to 0.07 points worse
+  (potato 96.45% against 96.47%, pooled tetraploids 90.46% against 90.53%).
 - `off` stays the default. `auto` takes as long as `fit`, several times a run
   without a bias, and on smelt it is 0.14 points under `off`.
 
@@ -2859,7 +2923,7 @@ comparison above (the same draws) were called again with each prior and each
 setting of `--allele-bias`, every run with the read model it estimates. Share
 of dosages right, without filters, and the records whose bias `auto` used:
 
-| Table | hwe: `off` | `fit` | `auto` | norm: `off` | `fit` | `auto` | Biases `auto` used: hwe, norm |
+| Table | hwe, `off` | `fit` | `auto` | norm, `off` | `fit` | `auto` | Biases `auto` used with hwe and norm |
 |---|---|---|---|---|---|---|---|
 | 4x random mating | 89.5% | 89.1% | 89.5% | 89.5% | 89.0% | 89.4% | 0 of 100, 0 of 100 |
 | 4x F1 | 89.5% | 85.6% | 89.5% | 90.7% | 90.0% | 90.7% | 0 of 100, 0 of 100 |
@@ -2883,39 +2947,39 @@ of dosages right, without filters, and the records whose bias `auto` used:
 | polyRAD 4x outbred, low depth | 82.4% | 81.8% | 82.4% | 82.4% | 81.7% | 82.4% | 0 of 150, 0 of 150 |
 
 Eighty of these figures repeat the earlier table. Seventy-nine came out the
-same; `--prior norm --allele-bias fit` on updog's F1 table gives 93.9% where
-93.3% was recorded, and the earlier table now has 93.9%.
+same. `--prior norm --allele-bias fit` on updog's F1 table gives 93.9% where
+the earlier table recorded 93.3%, and that table now has 93.9%.
 
 - Without bias in the data, `auto` uses no record's bias in one population or
   an F1 family (six tables) and is within 0.1 points of `off`, where `fit`
   loses up to 3.8 points. In two subpopulations it uses 9 and 1 of 100 and
-  loses 1.2 points with `hwe` and 0.2 with `norm`; with half-inbred samples
+  loses 1.2 points with `hwe` and 0.2 with `norm`. With half-inbred samples
   it uses 14 and 2 of 150 and is within 0.3 points of `off`.
 - With bias in the data, how much of the gain `auto` keeps goes with the depth
   and the size of the biases. On updog's tetraploid tables at 150 reads it
   uses three quarters of the biases and is within 0.2 points of `fit` (ahead
-  of it by 3.0 on the F1 table with `hwe`); at 25 reads it uses 4 in 10 and is
-  1.6 to 2.1 points behind; on the hexaploids it uses half and is 2.7 to 3.7
-  behind. On the first group's biased tables (20 to 60 reads, smaller biases)
-  it uses an eighth to a fifth and is 0.8 to 2.4 points behind `fit`, and 0.3
-  below `off` on the F1 table with `hwe`.
+  of it by 3.0 on the F1 table with `hwe`). At 25 reads it uses 4 in 10 and
+  is 1.6 to 2.1 points behind, and on the hexaploids it uses half and is 2.7
+  to 3.7 behind. On the first group's biased tables (20 to 60 reads, smaller
+  biases) it uses an eighth to a fifth and is 0.8 to 2.4 points behind
+  `fit`, and 0.3 below `off` on the F1 table with `hwe`.
 - On the polyRAD hexaploid table `auto` uses no record's bias and is still
   1.9 points (`hwe`) and 3.2 (`norm`) under `off`. The loss comes with the
-  read model a run with a bias estimates: an overdispersion of 10 and a
-  background rate of 0.0002, where 20 and 0.001 were simulated and are what
-  the run without a bias estimates.
+  read model a run with a bias estimates. It has an overdispersion of 10 and
+  a background rate of 0.0002, where the simulation used 20 and 0.001, the
+  values the run without a bias estimates.
 - On inbred lines `auto` fails as `fit` does. Every record's bias ends at a
   limit of the search (0.135 or 7.39) with a gain of 19 to 115, over the
-  margin of 10, so every one is used. A bias changes the expected read
-  fraction of the heterozygous dosages only; pushed to the limit under a
+  margin of 10, so the rule uses every one. A bias changes the expected read
+  fraction of the heterozygous dosages only. Pushed to the limit under a
   prior that expects heterozygotes, it lets samples with all their reads on
-  one allele pass for one to three copies. With `hwe`, 2,222 of 6,965
-  samples without the allele are called with one to three copies, where the
+  one allele pass for one to three copies. With `hwe`, the run calls 2,222
+  of 6,965 samples without the allele with one to three copies, where the
   run without a bias miscalls 208.
 
 For inbred lines the setting that matters is the selfing rate. The two inbred
-tables with `--prior hwe`, and how many of the 100 records ended at a limit
-and were used by `auto`:
+tables with `--prior hwe`, how many of the 100 records ended at a limit, and
+how many `auto` used:
 
 | Table, selfing rate | `off` | `fit` | `auto` | At a limit | `auto` used |
 |---|---|---|---|---|---|
@@ -2928,11 +2992,11 @@ and were used by `auto`:
 
 With the selfing rate given, the prior no longer wants heterozygotes and the
 bias has little to gain (at 0.99 no gain reaches 3). The bias in the data
-makes no difference to these samples: without a bias fitted, the biased and
+makes no difference to these samples. Without a bias fitted, the biased and
 unbiased tables are within 0.1 points of each other.
 
-A change to the rule was tried in a scratch copy: under `auto`, a bias that
-ends at a limit of the search is not used. Each data set under the read model
+A scratch copy tried a change to the rule, so that under `auto` a bias that
+ends at a limit of the search goes unused. Each data set under the read model
 of its run with `auto`, with `--prior hwe`:
 
 | Data set | `auto` | `auto`, biases at a limit not used | At a limit and used |
@@ -2950,22 +3014,23 @@ of its run with `auto`, with `--prior hwe`:
 It restores the inbred tables (98.7% and 98.5% with `--prior norm`) and costs
 0.1 points on both potato sets, where the few markers at a limit are strongly
 biased in truth. The share of records at a limit separates the cases without
-changing a call: 0.3 to 2.5% on the five real data sets and all of them on
-inbred lines.
+changing a call. It is 0.3 to 2.5% on the five real data sets and all of them
+on inbred lines.
 
-The rule was then built (`ModelSettings.reject_bias_at_limit`): the gain on
-inbred lines was judged worth the 0.1 points on potato. Under `auto` a bias
-at a limit of the search is not used, `call` warns, the bias table gives the
-reason in a `Rejected` column and the QC JSON lists the records. `fit` still
-uses such a bias, and warns when a fifth or more of the fits end at a limit.
+The rule was then built (`ModelSettings.reject_bias_at_limit`), because the
+gain on inbred lines was judged worth the 0.1 points lost on potato. Under
+`auto`, `call` does not use a bias at a limit of the search and warns, the
+bias table gives the reason in a `Rejected` column and the QC JSON lists the
+records. `fit` still uses such a bias, and warns when a fifth or more of the
+fits end at a limit.
 
 **What `auto` changed on the unbiased hexaploid table, and the read model of
 a record called without its bias.** On the polyRAD hexaploid table `auto`
-used no record's bias and was still 1.85 points under `off`. The records were
-called exactly as without a bias, so the difference had to be in the two
-values every record shares, and it was: an overdispersion of 10 where `off`
-estimates 20, and a background rate of 0.0002 where it estimates 0.001. Run
-without a bias at each pair:
+used no record's bias and was still 1.85 points under `off`. Every record got
+the same call as without a bias, so the difference had to be in the two
+values every record shares, and it was. The run had an overdispersion of 10
+where `off` estimates 20, and a background rate of 0.0002 where it estimates
+0.001. Run without a bias at each pair:
 
 | Overdispersion, background rate | Share of dosages right |
 |---|---|
@@ -2994,15 +3059,15 @@ polyRAD's 9 the search moved to 10 and stayed. Two changes followed:
   table it then finds 20, and `fit` goes from 71.75% to 73.78% (73.88% under
   the read model of `off`, so 1.4 of its 3.5 points under `off` are the
   biases themselves).
-- Under `auto`, a record called without its bias is called with the estimate
-  made without a bias, exactly as `off` calls it; only the records that keep
-  their bias use the estimate made with the bias fitted. On this table `auto`
-  then has the genotypes of `off`.
+- Under `auto`, a record called without its bias uses the estimate made
+  without a bias, the same way `off` does. Only the records that keep their
+  bias use the estimate made with the bias fitted. On this table `auto` then
+  has the genotypes of `off`.
 
-Four ways of choosing the read model under `auto` were compared, each with
-the limit rule, `--prior hwe`. Share of dosages right, and in brackets how
-far the mean probability `call` gives its called dosage lies above that share
-(positive: over-confident):
+The table compares four ways of choosing the read model under `auto`, each
+with the limit rule and `--prior hwe`. It gives the share of dosages right,
+and in brackets how far the mean probability `call` gives its called dosage
+lies above that share (positive means over-confident):
 
 | Table | Every record under the estimate with every bias fitted (as before) | Records without their bias under the estimate without a bias (built) | Every record under the estimate without a bias | One estimate that applies the rule itself |
 |---|---|---|---|---|
@@ -3020,39 +3085,39 @@ far the mean probability `call` gives its called dosage lies above that share
 | Pooled tetraploids, 50 reads | 90.46% | 90.46% | 90.46% | 90.46% |
 | Pooled hexaploids, 50 reads | 77.60% | 77.60% | 77.60% | 77.60% |
 
-- Refitting the read model is worth having for the records that keep their
-  bias: with every record under the estimate without a bias, 1 to 3 points
-  are lost on the biased simulated tables and 0.3 on the vendor MADC.
+- Refitting the read model pays off for the records that keep their bias.
+  With every record under the estimate without a bias, the biased simulated
+  tables lose 1 to 3 points and the vendor MADC 0.3.
 - One estimate that applies the rule itself did not move from where it
   started. Started from the estimate without a bias, few biases gain the
   margin under its wide scatter, so the scatter stays wide (first row).
 - For the records called without their bias, the estimate with every bias
   fitted is between 0.1 points worse and 0.8 better on the simulated tables
   and no better on the real data. It is over-confident on every simulated
-  table, by 0.6 to 5.8 points; with the estimate without a bias the four
+  table, by 0.6 to 5.8 points. With the estimate without a bias the four
   random-mating tables with bias are within 1.2 points and the table
-  without bias within 0.1, as `off` is. The estimate without a bias was
-  built for them: a record `auto` leaves without a bias is then the record
-  `off` writes, on every table.
+  without bias within 0.1, as `off` is. These records now get the estimate
+  without a bias, so a record `auto` leaves without a bias is then the
+  record `off` writes, on every table.
 
 **Replicates and calibration of `off`, `fit` and `auto`.** The comparisons
-above are one draw per scenario, and several were made before the rules were
+above are one draw per scenario, and several came before the rules were
 final. With the rules as built, three sets of simulated tables were called
 with each setting of `--allele-bias`, without filters:
 
-- ten scenarios drawn with stated seeds, five draws each: the model of the
-  first group of tables (100 markers, 150 samples, 20 to 60 reads, an
+- Ten scenarios drawn with stated seeds, five draws each, from the model of
+  the first group of tables (100 markers, 150 samples, 20 to 60 reads, an
   overdispersion of 40, 0.5% of reads showing the wrong allele, and where
-  marked a bias of 2^N(0, 0.5) per marker), tetraploid and hexaploid;
-- seven scenarios of updog's simulator, four draws each (150 markers, 150
-  samples, 150 reads or 25 at low depth, a bias of exp(N(0, 0.5)));
-- eight scenarios of polyRAD's simulator, four draws each, three of them
+  marked a bias of 2^N(0, 0.5) per marker), tetraploid and hexaploid.
+- Seven scenarios of updog's simulator, four draws each (150 markers, 150
+  samples, 150 reads or 25 at low depth, a bias of exp(N(0, 0.5))).
+- Eight scenarios of polyRAD's simulator, four draws each, three of them
   with diploid, tetraploid and hexaploid samples in one table.
 
 Share of dosages right with `--prior hwe`, as the mean over the draws, and
 for `auto` against `off` the difference within each draw:
 
-| Scenario | Draws | `off` | `auto` | `fit` | `auto` minus `off`: mean (lowest to highest draw) | Biases `auto` used |
+| Scenario | Draws | `off` | `auto` | `fit` | `auto` minus `off`, mean (lowest to highest draw) | Biases `auto` used |
 |---|---|---|---|---|---|---|
 | 4x random mating | 5 | 89.69% | 89.69% | 89.23% | +0.00 (+0.00 to +0.00) | 0% |
 | 4x random mating, biased | 5 | 83.90% | 86.98% | 88.68% | +3.08 (+2.71 to +3.61) | 24% |
@@ -3080,10 +3145,10 @@ for `auto` against `off` the difference within each draw:
 | polyRAD 2x, 4x and 6x, three groups, 25 reads | 4 | 86.81% | 86.80% | 86.54% | -0.01 (-0.03 to +0.00) | 0% |
 | polyRAD 2x, 4x and 6x, three groups, 8 reads | 4 | 79.33% | 79.31% | 79.04% | -0.02 (-0.10 to +0.00) | 0% |
 
-Calibration. The probability `call` gives a called genotype is read from its
+Calibration. The probability `call` gives a called genotype comes from its
 GQ. The figure is the mean of that probability over the called genotypes
 minus the share of them that are right, in points, as the mean over the
-draws: positive when the calls are over-confident.
+draws, and is positive when the calls are over-confident.
 
 | Scenario | `off` | `auto` | `fit` |
 |---|---|---|---|
@@ -3114,36 +3179,36 @@ draws: positive when the calls are over-confident.
 | polyRAD 2x, 4x and 6x, three groups, 8 reads | +0.7 | +0.8 | +2.1 |
 
 - Where the data have no bias and the samples are one population or inbred
-  lines, `auto` is `off` in every draw: no record keeps a bias, and the
+  lines, `auto` is `off` in every draw. No record keeps a bias, and the
   genotypes are the same. That holds for diploids, tetraploids and
   hexaploids from all three simulators, and for diploid, tetraploid and
-  hexaploid samples in one table, where `fit` loses up to 1.8 points; and
+  hexaploid samples in one table, where `fit` loses up to 1.8 points, and
   for inbred lines, where `fit` loses 24 to 26. The polyRAD hexaploid
   scenario is the one on which `auto` was 1.9 points under `off` before a
-  record without its bias was given the read model of `off`. With three
-  groups of samples of mixed ploidy `auto` is within 0.1 points of `off`.
+  record without its bias got the read model of `off`. With three groups of
+  samples of mixed ploidy `auto` is within 0.1 points of `off`.
 - Where the data have a bias, what `auto` keeps of the gain of `fit` goes
-  with the depth and the size of the biases: 97 to 100% at 150 reads in
-  diploids and tetraploids and 83% in hexaploids, 78% at 25 reads, and at 20
-  to 60 reads with the smaller biases 54 to 68% in tetraploids and 19% in
-  hexaploids, where it uses 7 records in 100.
+  with the depth and the size of the biases. It keeps 97 to 100% at 150
+  reads in diploids and tetraploids and 83% in hexaploids, 78% at 25 reads,
+  and at 20 to 60 reads with the smaller biases 54 to 68% in tetraploids and
+  19% in hexaploids, where it uses 7 records in 100.
 - `auto` is the best calibrated of the three where the samples mate at
-  random and the data have a bias: within 0.6 points on the five such
+  random and the data have a bias. It is within 0.6 points on the five such
   tetraploid and diploid scenarios and exact on updog's hexaploids, where
   `off` is over-confident by up to 10.8 points and `fit` by up to 2.2. The
   exception is the hexaploids at 20 to 60 reads, where it uses few biases
   and stays near `off` (+3.7 against +4.6).
 - In F1 families, two subpopulations and half-inbred samples without bias,
   `auto` with `--prior hwe` uses a bias at 2, 4 and 12 records in 100 and
-  loses 0.7, 0.6 and 0.8 points (`fit`: 4.8, 2.0 and 2.9). The prior does
-  not fit such samples, and a bias can make up for it; none of these biases
-  ends at a limit of the search, so the limit rule does not see them. On
-  updog's F1 tables with bias every setting is over-confident under `hwe`,
-  by 9 to 15 points.
+  loses 0.7, 0.6 and 0.8 points (`fit` loses 4.8, 2.0 and 2.9). The prior
+  does not fit such samples, and a bias can make up for it. None of these
+  biases ends at a limit of the search, so the limit rule does not see them.
+  On updog's F1 tables with bias every setting is over-confident under
+  `hwe`, by 9 to 15 points.
 
-The same with `--prior norm`, on the scenarios it was run on:
+The same with `--prior norm`, on the scenarios it ran on:
 
-| Scenario | Draws | `off` | `auto` | `fit` | `auto` minus `off`: mean (lowest to highest draw) | Biases `auto` used |
+| Scenario | Draws | `off` | `auto` | `fit` | `auto` minus `off`, mean (lowest to highest draw) | Biases `auto` used |
 |---|---|---|---|---|---|---|
 | 4x random mating | 5 | 89.66% | 89.66% | 89.15% | +0.00 (+0.00 to +0.00) | 0% |
 | 4x random mating, biased | 5 | 83.37% | 86.26% | 88.56% | +2.89 (+2.37 to +3.77) | 20% |
@@ -3169,7 +3234,7 @@ The same with `--prior norm`, on the scenarios it was run on:
 
 - With `norm`, `auto` on F1 families without bias uses no record's bias and
   is `off` in every draw, and in two subpopulations it loses 0.1 points.
-- `norm` is ahead of `hwe` in F1 families: by 1.0 point without a bias (0.6
+- `norm` is ahead of `hwe` in F1 families, by 1.0 point without a bias (0.6
   to 1.5 over the draws), by 2.5 with `auto` and 4.4 with `fit` where the
   data have a bias, and on updog's F1 tables by 7.6 with `auto` and 10.2
   with `fit` (91.5% and 91.6% against 84.0% and 81.4%). In two
@@ -3177,14 +3242,14 @@ The same with `--prior norm`, on the scenarios it was run on:
   inbred lines it is 1.1 ahead without a selfing rate.
 - In one randomly mating population `norm` is level with `hwe` where the
   data have no bias (0.03 points below) and 0.5 to 0.7 below it where they
-  have one and it is not fitted or `auto` is used; with `fit` it is 0.1
-  below.
+  have one and the run leaves it unfitted or uses `auto`. With `fit` it is
+  0.1 below.
 - On the half-inbred samples, where `auto` with `hwe` loses 0.8 points, a
-  prior that fits them removes the loss: with `norm`, `auto` uses 2 records
+  prior that fits them removes the loss. With `norm`, `auto` uses 2 records
   in 100 and is 0.1 points under its `off`, which is itself 0.6 above
-  `hwe`. With `--prior hwe --selfing-rate 0.5`, 93.91% without a bias
-  (`hwe` alone: 93.47%) and 93.70% with `auto`, which uses 2 to 7 records
-  of 150.
+  `hwe`. With `--prior hwe --selfing-rate 0.5` the share is 93.91% without
+  a bias (93.47% for `hwe` alone) and 93.70% with `auto`, which uses 2 to 7
+  records of 150.
 - `--prior structure`, which takes no bias, is 0.6 points ahead of `hwe` in
   two subpopulations without bias and 1.1 with (five draws each, 40
   neighbours chosen in each), and equals `hwe` in one F1 family, where it
@@ -3192,7 +3257,7 @@ The same with `--prior norm`, on the scenarios it was run on:
 
 The real data sets with the rules as built, `--prior hwe`:
 
-| Data set | `off` | `auto` | `fit` | Biases `auto` used | Calibration: `off`, `auto`, `fit` |
+| Data set | `off` | `auto` | `fit` | Biases `auto` used | Calibration of `off`, `auto`, `fit` |
 |---|---|---|---|---|---|
 | Potato, 85 clones, against the array | 92.26% | 96.37% | 96.59% | 785 of 1,544 | +4.8, +2.3, +2.5 |
 | Potato vendor MADC | 89.14% | 91.76% | 91.91% | 2,566 of 3,904 | |
@@ -3211,48 +3276,50 @@ The real data sets with the rules as built, `--prior hwe`:
   see, so the gap is not all the caller's). On the pooled reads its
   calibration is that of `off`, and `fit` is over-confident by 2 and 8
   points.
-- Rejected at a limit under `auto`: 4 records on the potato clones, 25 on
-  the vendor MADC, 10 on smelt and 14 to 23 on the pooled tables.
+- The limit rule under `auto` rejected 4 records on the potato clones, 25
+  on the vendor MADC, 10 on smelt and 14 to 23 on the pooled tables.
 
-**`MPP` and `PMC`: updog's two summaries of the posterior.** BIGr's
+**`MPP` and `PMC`, updog's two summaries of the posterior.** BIGr's
 `updog2vcf` writes updog's `maxpostprob` for each sample as `MPP` and its
 `prop_mis` for each marker as `PMC`, and its `filterVCF` filters on both.
-`call` writes them under those names on two-allele records. updog 2.1.7 was
-read first for what the two values are:
+`call` writes them under those names on two-allele records. The source of
+updog 2.1.7 shows what the two values are:
 
 - `flexdog_full` (`R/ashdog.R`) takes each individual's posterior over the
-  dosages from `get_wik_mat` (`src/flexdog.cpp`): prior times beta-binomial
-  likelihood at the fitted bias, sequencing error and overdispersion,
-  normalised. `geno` is the first dosage with the largest posterior,
-  `maxpostprob` is that posterior, and `prop_mis` is `1 - mean(maxpostprob)`.
-- Individuals with a missing count are removed before the fit and take no
-  part in the mean. Individuals with a depth of 0 stay: their posterior is
-  the prior and their `maxpostprob` its largest probability. `multidog` drops
-  a marker only when every individual has a depth of 0 or is missing.
+  dosages from `get_wik_mat` (`src/flexdog.cpp`). That posterior is the
+  prior times the beta-binomial likelihood at the fitted bias, sequencing
+  error and overdispersion, normalised. `geno` is the first dosage with the
+  largest posterior, `maxpostprob` is that posterior, and `prop_mis` is
+  `1 - mean(maxpostprob)`.
+- updog removes individuals with a missing count before the fit, and they
+  take no part in the mean. Individuals with a depth of 0 stay. Their
+  posterior is the prior and their `maxpostprob` its largest probability.
+  `multidog` drops a marker only when every individual has a depth of 0 or
+  is missing.
 - The documentation calls `prop_mis` the posterior proportion of individuals
   mis-genotyped, and gives as an example discarding markers over 0.05 and
   individuals with a `maxpostprob` under 0.95. The vignettes use 0.05
   together with a bias between exp(-1) and exp(1), and call 0.2 a loose cut
   to start from. Gerard et al.
   (2018) define the two values and report the estimated minus the true
-  proportion misgenotyped; Gerard and Ferrão (2020) report it by prior.
+  proportion misgenotyped, and Gerard and Ferrão (2020) report it by prior.
 - BIGr 0.7.2 writes `maxpostprob` and `prop_mis` unchanged. `filterVCF` sets
   a genotype to missing where `MPP` is under `filter.MPP` and keeps markers
   with `PMC` under `filter.PMC`. It reads `PMC` with the pattern
   `PMC=([0-9.]+)`, which a number written with an exponent does not match,
   and takes the INFO and FORMAT keys of a file from its first record.
 
-In `call` the posterior of a two-allele record is the same object: prior
-times beta-binomial likelihood, normalised over the dosages
-(`dosage_posterior`), for whichever prior, bias and read model the record was
-called with. `MPP` is the largest value of `GP`, `GQ` is `MPP` on the Phred
-scale, and `PMC` is one minus the mean of `MPP`. Both are written with four
-decimals and no exponent. Three points needed a decision:
+In `call` the posterior of a two-allele record is the same object, the prior
+times the beta-binomial likelihood normalised over the dosages
+(`dosage_posterior`), for whichever prior, bias and read model the call used.
+`MPP` is the largest value of `GP`, `GQ` is `MPP` on the Phred scale, and
+`PMC` is one minus the mean of `MPP`. Both have four decimals and no
+exponent. Three points needed a decision:
 
-- Samples without reads are left out of `PMC` and have no `MPP`. `call`
+- `PMC` leaves out samples without reads, and they have no `MPP`. `call`
   writes no genotype for them, and counting them would mix missing data into
-  a statement about genotypes. This is what updog gives when such samples
-  are passed as missing; passed with a depth of 0 they raise its value.
+  a statement about genotypes. This is what updog gives when it gets such
+  samples as missing. Given a depth of 0 they raise its value.
 - `--min-dp` and `--min-gq` do not enter `PMC`. It describes the model's fit
   at the marker, as in updog, which filters nothing before computing it.
 - Records with more than two alleles carry neither. They have one posterior
@@ -3277,14 +3344,15 @@ reads. With updog's prior, bias and overdispersion, the record `call` writes:
 
 In the fit with 8 samples without reads, updog's `prop_mis` is 0.15484 with
 them given a depth of 0 (each at 0.4046, the largest probability of the
-prior) and 0.11653 with them given as missing; `call` writes 0.1165.
+prior) and 0.11653 with them given as missing, and `call` writes 0.1165.
 
 *Against known genotypes.* On the replicate tables above, called without
 filters, `PMC` and the share of samples whose most probable dosage is wrong
 were compared marker by marker. Averaged over a table, `PMC` minus that
-share is the calibration gap of the table above with its sign turned: the two
-were computed by different scripts, one from `GQ` and one from `GP`, and
-agree. Mean over the draws, in points, `--prior hwe`; negative is too low:
+share is the calibration gap of the table above with its sign turned.
+Different scripts computed the two, one from `GQ` and one from `GP`, and
+they agree. Mean over the draws, in points, `--prior hwe`, where negative is
+too low:
 
 | Table | `off` | `auto` | `fit` | Mean difference at one marker, `auto` |
 |---|---|---|---|---|
@@ -3304,7 +3372,7 @@ agree. Mean over the draws, in points, `--prior hwe`; negative is too low:
 | polyRAD 4x outbred, low depth | −0.1 | −0.1 | −0.5 | 2.2 |
 | polyRAD 2x, 4x and 6x, three groups, 8 reads | −0.8 | −0.8 | −2.2 | 2.5 |
 
-updog's `prop_mis` on the tables it was run on (one draw each), beside
+updog's `prop_mis` on the tables it ran on (one draw each), beside
 `call` with `auto` on the same draw:
 
 | Table | `call`, hwe | `call`, norm | updog `norm` |
@@ -3323,84 +3391,85 @@ updog's `prop_mis` on the tables it was run on (one draw each), beside
 - Where the model fits the samples, `PMC` is the share of wrong genotypes to
   within 0.4 points with `off` and `auto`. For one marker of 150 samples it
   is off by 1.7 to 2.7 points on average.
-- Where the model does not fit, `PMC` is too low: a bias in the data and
-  none fitted (2 to 11 points), a bias fitted on inbred lines (14), a biased
-  F1 family under `hwe` (9 to 15).
+- Where the model does not fit, `PMC` is too low, as with a bias in the data
+  and none fitted (2 to 11 points), a bias fitted on inbred lines (14) and a
+  biased F1 family under `hwe` (9 to 15).
 - updog's value is further from the truth than `call`'s on every polyploid
   table but the F1 one under `hwe`. On polyRAD's tables its overdispersion,
-  fitted at every marker, read less scatter than was simulated: a median of
-  41, 95 and 248 on `call`'s scale in the three tables, for a simulated 20,
-  and in the hexaploid table 23% of markers got a bias beyond 1.5-fold where
-  none was simulated.
+  fitted at every marker, read less scatter than the simulation put in. It
+  had a median of 41, 95 and 248 on `call`'s scale in the three tables, for
+  a simulated 20, and in the hexaploid table 23% of markers got a bias
+  beyond 1.5-fold where the simulation had none.
 - `PMC` depends on ploidy and depth as much as on the marker. Of the 4x
   random-mating markers at 20 to 60 reads, 17% have a `PMC` under 0.05, and
-  of the 6x ones under 1%; nothing is wrong with the others.
+  of the 6x ones under 1%. Nothing is wrong with the others.
 
-*As a marker filter.* On the two potato panels of the filter study above,
-called again with the code as committed (`--allele-bias fit`; the figures of
-that study reproduce), where a marker is bad when fewer than 80% of its
-genotypes have the array's dosage. Markers removed, share of them bad, share
-of the bad removed, and agreement of the genotypes that pass the default
-filters at the markers left (91.3% and 93.3% with no marker filter):
+*As a marker filter.* The test uses the two potato panels of the filter
+study above, called again with the code as committed (`--allele-bias fit`,
+which reproduces the figures of that study). A marker is bad when fewer than
+80% of its genotypes have the array's dosage. Markers removed, share of them
+bad, share of the bad removed, and agreement of the genotypes that pass the
+default filters at the markers left (91.3% and 93.3% with no marker filter):
 
 | Marker removed when | First panel | Second panel |
 |---|---|---|
-| `PMC` of 0.05 or more | 356; 52%; 57%; 92.7% | 290; 32%; 40%; 94.2% |
-| `PMC` of 0.1 or more | 164; 71%; 36%; 91.8% | 86; 51%; 19%; 93.6% |
-| `PMC` of 0.2 or more | 53; 94%; 15%; 91.3% | 17; 94%; 7%; 93.4% |
-| Call rate under 0.9 | 555; 45%; 77%; 94.1% | 530; 28%; 65%; 95.0% |
-| As many markers as the row above, by highest `PMC` | 555; 40%; 69%; 93.2% | 530; 25%; 58%; 94.7% |
+| `PMC` of 0.05 or more | 356, 52%, 57%, 92.7% | 290, 32%, 40%, 94.2% |
+| `PMC` of 0.1 or more | 164, 71%, 36%, 91.8% | 86, 51%, 19%, 93.6% |
+| `PMC` of 0.2 or more | 53, 94%, 15%, 91.3% | 17, 94%, 7%, 93.4% |
+| Call rate under 0.9 | 555, 45%, 77%, 94.1% | 530, 28%, 65%, 95.0% |
+| As many markers as the row above, by highest `PMC` | 555, 40%, 69%, 93.2% | 530, 25%, 58%, 94.7% |
 
 - The call rate under the default filters finds more of the bad markers than
   `PMC` at an equal number removed. On both panels every marker with a
   `PMC` of 0.05 or more also has a call rate under 0.9.
-- With `auto` the figures are close: on the first panel a `PMC` of 0.05 or
+- With `auto` the figures are close. On the first panel a `PMC` of 0.05 or
   more removes 383 markers and leaves 92.2% agreement (90.9% with no marker
-  filter), and a call rate under 0.9 removes 590 and leaves 93.8%; on the
-  second, 555 and 94.1% (from 93.3%) against 811 and 94.8%.
+  filter), and a call rate under 0.9 removes 590 and leaves 93.8%. On the
+  second they give 555 and 94.1% (from 93.3%) against 811 and 94.8%.
 - On the 85 potato clones, with `auto`, a `PMC` under 0.05 keeps 1,438 of
-  1,544 markers and raises agreement of all genotypes from 96.4% to 97.0%;
-  updog's `prop_mis` under 0.05 keeps 1,466 of its markers and raises its
-  agreement from 96.7% to 97.4%.
+  1,544 markers and raises agreement of all genotypes from 96.4% to 97.0%,
+  while updog's `prop_mis` under 0.05 keeps 1,466 of its markers and raises
+  its agreement from 96.7% to 97.4%.
 
-*Read by BIGr.* BIGr could not be installed here (its dependency vcfR is not
-available), so `filterVCF` itself was not run. Its two functions that read
-INFO were copied from its source and run on the potato VCF of `call`: they
-find `PMC` and `BIAS` among the keys of the first record and read all 1,544
+*Read by BIGr.* BIGr failed to install here (its dependency vcfR is not
+available), so `filterVCF` itself never ran. Its two functions that read
+INFO, copied from its source and run on the potato VCF of `call`, find
+`PMC` and `BIAS` among the keys of the first record and read all 1,544
 values of each as written. `filter.PMC = 0.05` keeps 1,438 records. `MPP`
 taken by its place in FORMAT, as vcfR's `extract.gt` takes it, is a number in
-131,224 cells and missing in the 16 without reads; `filter.MPP = 0.95` would
-set 2,687 of 126,058 genotypes to missing. In an `all` VCF whose first record
-has more than two alleles, `filterVCF` would not find the two keys.
+131,224 cells and missing in the 16 without reads, and `filter.MPP = 0.95`
+would set 2,687 of 126,058 genotypes to missing. In an `all` VCF whose first
+record has more than two alleles, `filterVCF` would not find the two keys.
 
 **The structure prior (`--prior structure`).** polyRAD's `IteratePopStruct`
-gives each sample its own allele frequencies: it runs a principal component
+gives each sample its own allele frequencies. It runs a principal component
 analysis of the genotype estimates of all markers, regresses every allele on
 the components, and repeats both with the calling until they settle. A port
 would need a matrix library and would replace the marker-by-marker design
 with an iteration over the whole table. `call` instead finds, once, the
 samples most like each sample (`find_neighbours`) and then calls each record
-on its own with Hardy-Weinberg proportions at the allele frequency among a
-sample's neighbours: a second run of the record's iteration
+separately with Hardy-Weinberg proportions at the allele frequency among a
+sample's neighbours. This is a second run of the record's iteration
 (`_iterate_record`), started from the result of the first. Likeness is the
 sum of squared
 differences between two samples' expected allele shares over the markers,
 from a first pass with the `hwe` prior, which ranks pairs as a genomic
 relationship matrix would. The number of neighbours (0, 5, 10, 20, 40 or 80)
 is the one whose neighbours, found on one half of the markers, best predict
-the samples' shares at the other half; 0 is the `hwe` prior.
+the samples' shares at the other half. A choice of 0 is the `hwe` prior.
 
-Test tables: tetraploids, 300 samples, 500 markers, read counts from
-polyRAD's `SimAlleleDepth` (overdispersion 20, contamination and error rates
-0.001), negative-binomial depths of mean 8, 25 or 150. The populations are
-three groups of 100 with Balding-Nichols allele frequencies at three values
-of FST; a cline in which every sample is a different mixture of two sources
-(FST 0.3 between them); fifteen full-sib families of twenty; and one
-random-mating population. The last two rows are the 85 potato clones above
-with every read kept with probability 10/366 or 25/366, scored against the
-array genotypes. polyRAD was given the simulated overdispersion (75 for the
-potato rows) and `call` that value and a background rate of 0.001 (0.003).
-Share of genotypes with reads whose most probable dosage is the true one:
+The test tables are tetraploid, with 300 samples and 500 markers, read
+counts from polyRAD's `SimAlleleDepth` (overdispersion 20, contamination and
+error rates 0.001) and negative-binomial depths of mean 8, 25 or 150. The
+populations are three groups of 100 with Balding-Nichols allele frequencies
+at three values of FST, a cline in which every sample is a different mixture
+of two sources (FST 0.3 between them), fifteen full-sib families of twenty,
+and one random-mating population. The last two rows are the 85 potato clones
+above with every read kept with probability 10/366 or 25/366, scored against
+the array genotypes. polyRAD got the simulated overdispersion (75 for the
+potato rows), and `call` got that value and a background rate of 0.001
+(0.003). Share of genotypes with reads whose most probable dosage is the true
+one:
 
 | Population | Mean depth | polyRAD `IterateHWE` | polyRAD `IteratePopStruct` | `call` hwe | `call` structure | Neighbours chosen |
 |---|---|---|---|---|---|---|
@@ -3421,66 +3490,64 @@ Share of genotypes with reads whose most probable dosage is the true one:
 - The structure prior calls as many genotypes correctly as `IteratePopStruct`
   on every table or more, by up to 0.7 points. The cline is the case
   principal components describe best, and the two are level there.
-- On the six tables with three groups it equals what calling each group on
-  its own with the `hwe` prior gives (72.0%, 75.1%, 84.8%, 90.5%, 79.4% and
-  87.3%), which is the most a prior can gain from knowing the groups.
+- On the six tables with three groups it equals what calling each group
+  separately with the `hwe` prior gives (72.0%, 75.1%, 84.8%, 90.5%, 79.4%
+  and 87.3%), which is the most a prior can gain from knowing the groups.
 - With one population `IteratePopStruct` kept 51 components and lost 3.4
   points. The structure prior chose 0 neighbours.
-- The gain over `hwe` falls with depth: 0.8 to 5.5 points at 8 reads, 0.5 to
-  2.5 at 25, and 0.8 at 150. At full depth the potato clones go from 92.3% to
-  92.3% (10 neighbours), and the two alfalfa populations from 90.87% and
-  90.04% agreement with the published dosages to 90.89% and 89.98% (20
-  neighbours each).
-- With the read model estimated instead of given, three of the tables that
-  were run again gave the same shares (79.4%, 73.8% and 71.8%).
+- The gain over `hwe` falls with depth. It is 0.8 to 5.5 points at 8 reads,
+  0.5 to 2.5 at 25, and 0.8 at 150. At full depth the potato clones go from
+  92.3% to 92.3% (10 neighbours), and the two alfalfa populations from
+  90.87% and 90.04% agreement with the published dosages to 90.89% and
+  89.98% (20 neighbours each).
+- With the read model estimated instead of given, three of the tables, run
+  again, gave the same shares (79.4%, 73.8% and 71.8%).
 
-Three ways of using the same relationships were compared on a test bench
-with one likelihood and one first pass (not in the repository; it used
-numpy): the nearest samples, as above; principal components, their number
-chosen on held-out markers; and a ridge predictor from the whole relationship
-matrix, its shrinkage chosen the same way. On the group and cline tables the
-three were within 0.3 points of each other. On the families the nearest
+A test bench with one likelihood and one first pass (not in the repository,
+built on numpy) compared three ways of using the same relationships. They
+were the nearest samples as above, principal components with their number
+chosen on held-out markers, and a ridge predictor from the whole relationship
+matrix with its shrinkage chosen the same way. On the group and cline tables
+the three were within 0.3 points of each other. On the families the nearest
 samples gave 73.8% and 83.9%, the components 73.1% and 83.8%, and the ridge
 predictor 72.7% and 83.4%. On the thinned potato counts the ridge predictor
 failed (33.9% and 56.0%, with the least shrinkage offered), and the other two
-were level (71.9% and 81.3% against 71.7% and 81.4%). A sample's own value
-was left out of its own prediction in all three.
+were level (71.9% and 81.3% against 71.7% and 81.4%). All three left a
+sample's own value out of its own prediction.
 
 The number of neighbours, components or the shrinkage has to be chosen on
 markers that took no part in measuring the relationships. Chosen on the same
-markers, the bench took the least shrinkage and the most components it was
-offered (44.1% and 72.9% on the first table, against 72.3% for `hwe`),
-because each marker is then one of the features its own prediction is made
-from.
+markers, the bench took the least shrinkage and the most components on offer
+(44.1% and 72.9% on the first table, against 72.3% for `hwe`), because each
+marker is then one of the features its own prediction uses.
 
 On the benchmark table of "Time and memory" the structure prior took 30 s on
 one worker against 23 s for `hwe`, and 9 s against 6.5 s on four, with 204 MB
-against 159 MB; 18 s of both is the read-model estimate. With the read model
-given it took 10.6 s against 4.0 s on one worker: the first pass over the
-markers that the samples are compared on, the comparison, and the second run
-of every record. (An earlier version of this paragraph gave 34.6 s against
-33.4 s for the whole run, which understated the difference: that code,
-measured again with the read model given, took 12.5 s against 5.1 s.) On the
-simulated tables, 500 markers and 300 samples, it took 4 to 5 s against 2 s
-on four workers with the read model given.
+against 159 MB. The read-model estimate is 18 s of both. With the read model
+given it took 10.6 s against 4.0 s on one worker. That time covers the first
+pass over the markers that the samples are compared on, the comparison, and
+the second run of every record. (An earlier version of this paragraph gave
+34.6 s against 33.4 s for the whole run, which understated the difference.
+That code, measured again with the read model given, took 12.5 s against
+5.1 s.) On the simulated tables, 500 markers and 300 samples, it took 4 to
+5 s against 2 s on four workers with the read model given.
 
-Not tested for accuracy: ploidies other than four, samples of mixed ploidy,
-and read counts from other simulators. A run with diploid and tetraploid
+No accuracy test covers ploidies other than four, samples of mixed ploidy,
+or read counts from other simulators. A run with diploid and tetraploid
 samples and all three VCF types completes, and `bcftools view` reads its
-output. The prior is not combined with the allelic bias or the selfing rate;
-`call` refuses both combinations.
+output. The prior does not combine with the allelic bias or the selfing
+rate, and `call` refuses both combinations.
 
 **Family priors, measured and not built.** updog's `f1` model and polyRAD's
 `PipelineMapping2Parents` give the offspring of a cross the dosages their
-parents' genotypes can segregate into. Whether `call` needs such a prior was
-measured with a test bench (not in the repository) that uses the `call`
-likelihood and, per family and marker, the pair of parental dosages that
-makes the reads most probable, under polysomic inheritance without double
-reduction and with 1% of the prior spread evenly over the dosages for
-off-types.
+parents' genotypes can segregate into. A test bench (not in the repository)
+measured whether `call` needs such a prior. It uses the `call` likelihood
+and, per family and marker, the pair of parental dosages that makes the
+reads most probable, under polysomic inheritance without double reduction
+and with 1% of the prior spread evenly over the dosages for off-types.
 
 One biparental population with both parents among the samples is the common
-case. The two alfalfa populations have that; their reads were also thinned,
+case. The two alfalfa populations have that. Their reads were also thinned,
 parents included, and the calls of the 974 and 986 published markers compared
 with the published dosages, which come from the full depth:
 
@@ -3495,7 +3562,7 @@ with the published dosages, which come from the full depth:
 
 With both parents' reads the F1 prior is 0.1 to 0.3 points above the best of
 the three priors `call` has at full depth, 0.5 to 0.6 at 25 reads and 0.4 to
-0.7 at 10. The parents' reads account for 0.1 to 0.4 of that; the rest comes
+0.7 at 10. The parents' reads account for 0.1 to 0.4 of that. The rest comes
 from the segregation shape, which a family of this size shows by itself.
 
 Many small families are the other case. On the potato half-diallel (ten
@@ -3509,20 +3576,21 @@ families of 1 to 20) and on fifteen simulated full-sib families of 20:
 | Potato, thinned | 25 | 80.7% | 81.4% | 81.1% | 84.1% |
 | Potato, full depth | about 300 | 92.3% | 92.3% | 92.3% | 93.4% |
 
-Only parental genotypes known from elsewhere help much here; those given were
+Only parental genotypes known from elsewhere help much here. Those given were
 the article's phased parents, from array data and linkage analysis, which are
 better than a parent's own reads would give. That needs a pedigree, which is
 often not available, and is not built. A single biparental population gains
-under a point from an F1 prior, so that is not built either.
+under a point from an F1 prior, so that prior is not built either.
 
-The biparental case was also simulated, with the parent models of the other
-two tools: polyRAD's `PipelineMapping2Parents` (F1, no linkage, given the
-overdispersion `call` estimated) and updog's `f1` model with both parents
-named, against updog's `norm`. Tetraploid, 200 progeny and both parents, 300
-markers; genotypes and reads from polyRAD's simulators (`SimGenotypesMapping`
-and `SimAlleleDepth`, overdispersion 20, no bias) or updog's (`rgeno` and
-`rflexdog`, sequencing error 0.5%, overdispersion 49–499 and a bias of
-exp(N(0, 0.5)) per marker). The parents were sequenced like the progeny.
+A simulation of the biparental case also tried the parent models of the
+other two tools, polyRAD's `PipelineMapping2Parents` (F1, no linkage, given
+the overdispersion `call` estimated) and updog's `f1` model with both
+parents named, against updog's `norm`. The tables are tetraploid, with 200
+progeny and both parents and 300 markers, and their genotypes and reads come
+from polyRAD's simulators (`SimGenotypesMapping` and `SimAlleleDepth`,
+overdispersion 20, no bias) or updog's (`rgeno` and `rflexdog`, sequencing
+error 0.5%, overdispersion 49–499 and a bias of exp(N(0, 0.5)) per marker).
+The parents were sequenced like the progeny.
 Share of the progeny's genotypes called correctly:
 
 | Reads from | Mean depth | `call` hwe | `call` norm | `call` norm + bias | F1 prior on `call`'s likelihood | polyRAD mapping | updog `norm` | updog `f1` |
@@ -3535,7 +3603,7 @@ Share of the progeny's genotypes called correctly:
 | updog | 150 | 85.2% | 84.5% | 97.1% | 85.5% | 84.9% | 97.1% | 97.3% |
 
 On unbiased reads the `norm` prior is within 0.4 points of the F1 prior and
-of polyRAD's mapping prior: it fits the narrow spread of one family's
+of polyRAD's mapping prior, because it fits the narrow spread of one family's
 dosages. On biased reads `call` with `norm` and the bias fitted is within 0.3
 points of updog's `norm` and `f1` at 25 and 150 reads. The structure prior
 gave the same shares as `hwe` on all six tables. polyRAD's mapping prior left
@@ -3562,11 +3630,11 @@ A family prior costs 3 to 11 points on the samples that are not of the
 family, because it leaves them only the family's dosage classes, and gains
 at most 2.5 points on those that are.
 
-The same parent models were run on the alfalfa populations, with the parents
+The same parent models ran on the alfalfa populations, with the parents
 named and polyRAD given the overdispersion `call` estimated. Agreement with
-the published dosages, which were themselves called by updog from the full
-depth; for polyRAD's mapping prior the share of genotypes it called is in
-brackets, and its agreement is among those:
+the published dosages, which updog itself called from the full depth. For
+polyRAD's mapping prior the brackets give the share of genotypes it called,
+and its agreement is among those:
 
 | Population | Mean depth | `call` hwe | `call` norm | `call` norm + bias | polyRAD `IterateHWE` | polyRAD mapping | updog `norm` | updog `f1` |
 |---|---|---|---|---|---|---|---|---|
@@ -3576,17 +3644,17 @@ brackets, and its agreement is among those:
 | E115 × F628 | 424 | 90.04% | 89.80% | 92.00% | 89.93% | 90.42% (93.7%) | 92.68% | 93.06% |
 | E115 × F628 | 25 | 82.23% | 82.25% | 84.36% | 81.81% | 83.23% (90.9%) | 84.53% | 84.39% |
 
-E115 × F628 at 10 reads is missing: the run reached its time limit twice
-before that row. updog's `f1` model is 0.3 to 0.4 points above its `norm` at
-full depth and, in the first family, at 25 reads; in the second it is 0.1
-below at 25 reads, and in the first 0.3 below at 10. polyRAD's mapping prior
-is 0.05 to 1.5 points above its `IterateHWE` on the genotypes it calls and
-leaves 6 to 13% uncalled. `call` with `norm` and the bias is 0.2 to 0.7 points
-below updog's `norm` at full depth and at 25 reads and level with it at 10.
-The truth here favours updog, whose calls it is.
+E115 × F628 at 10 reads is missing because the run reached its time limit
+twice before that row. updog's `f1` model is 0.3 to 0.4 points above its
+`norm` at full depth and, in the first family, at 25 reads. In the second it
+is 0.1 below at 25 reads, and in the first 0.3 below at 10. polyRAD's mapping
+prior is 0.05 to 1.5 points above its `IterateHWE` on the genotypes it calls
+and leaves 6 to 13% uncalled. `call` with `norm` and the bias is 0.2 to 0.7
+points below updog's `norm` at full depth and at 25 reads and level with it
+at 10. The truth here favours updog, whose calls it is.
 
 **Priors on haplotype records.** Neither polyRAD's paper nor its package
-gives accuracy figures for multi-allele (haplotype) calls: the paper scores
+gives accuracy figures for multi-allele (haplotype) calls. The paper scores
 two-allele SNPs with array truth, and the package has import examples and
 small demonstration datasets without expected genotypes. On polyRAD's own
 DArTag example (`inst/extdata/DArTag_example.csv`, two markers with three and
@@ -3594,13 +3662,14 @@ five haplotypes, four tetraploid samples) `call --vcf haplotype` with
 polyRAD's settings gives polyRAD's genotype for all eight sample-by-marker
 genotypes.
 
-Accuracy was measured on microhaplotype tables from polyRAD's simulators
-(`SimGenotypes`, `SimGenotypesMapping`, `SimAlleleDepth`; overdispersion 20,
-contamination and error rates 0.001): 300 markers of 3 to 6 alleles, 300
-samples, as one population, three groups (FST 0.15) or fifteen full-sib
-families of 20. polyRAD was given the overdispersion, and `call` that and a
-background rate of 0.001. Share of genotypes with reads in which the dosage
-of every allele is right, without filters:
+The accuracy test used microhaplotype tables from polyRAD's simulators
+(`SimGenotypes`, `SimGenotypesMapping` and `SimAlleleDepth`, with
+overdispersion 20 and contamination and error rates 0.001). They have 300
+markers of 3 to 6 alleles and 300 samples, as one population, three groups
+(FST 0.15) or fifteen full-sib families of 20. polyRAD got the
+overdispersion, and `call` that and a background rate of 0.001. Share of
+genotypes with reads in which the dosage of every allele is right, without
+filters:
 
 | Ploidy | Population | Mean depth | polyRAD `IterateHWE` | polyRAD `IteratePopStruct` | `call` hwe | `call` norm | `call` structure | `call` uniform |
 |---|---|---|---|---|---|---|---|---|
@@ -3615,7 +3684,7 @@ of every allele is right, without filters:
 
 - `hwe` is within 0.4 points of polyRAD's HWE prior, as it should be.
 - `structure` is never below `hwe` and gains 1 to 4 points in tetraploids
-  with groups or families; it is within 0.1 points of `IteratePopStruct` or
+  with groups or families. It is within 0.1 points of `IteratePopStruct` or
   above it on every table, by 1.8 points on the low-depth families. With one
   population it chooses 0 neighbours.
 - `norm` is never below `hwe` and gains at most 1.7 points. It takes two to
@@ -3629,21 +3698,21 @@ share kept at this overdispersion is 4 to 37% in tetraploids and 74 to 83% in
 diploids, and is 3 to 8 points higher with `structure` than with `hwe` where
 there are groups or families.
 
-Not covered: read counts from other simulators, real haplotype data with
-known genotypes, and hexaploids.
+The tests do not cover read counts from other simulators, real haplotype
+data with known genotypes, or hexaploids.
 
 **Off-target records (`--vcf all`).** The same eight tables give truth for
-the off-target records, which no earlier comparison scored: every haplotype
+the off-target records, which no earlier comparison scored. Every haplotype
 other than Ref and Alt carries one substitution of its own, so the true
-dosage of a substitution is that of its haplotype. `call --vcf all` was run
-with its defaults, so the overdispersion and background rate were estimated
-(18 to 20 where 20 was simulated, and 30 on the tetraploid families at 8
-reads; 0.0002 to 0.001). Share of genotypes with reads called correctly, for
-target and off-target records, without filters; and for `hwe` with the
+dosage of a substitution is that of its haplotype. `call --vcf all` ran with
+its defaults, so it estimated the overdispersion (18 to 20 where 20 was
+simulated, and 30 on the tetraploid families at 8 reads) and the background
+rate (0.0002 to 0.001). Share of genotypes with reads called correctly, for
+target and off-target records, without filters, and for `hwe` with the
 default filters (`--min-dp 10`, `--min-gq 10`), the share of the off-target
 genotypes kept that are right and the share kept:
 
-| Ploidy | Population | Mean depth | Off-target records | hwe: target, off-target | structure: target, off-target | norm: target, off-target | hwe, default filters: right, kept |
+| Ploidy | Population | Mean depth | Off-target records | hwe, target and off-target | structure, target and off-target | norm, target and off-target | hwe with default filters, right and kept |
 |---|---|---|---|---|---|---|---|
 | 4 | One population | 25 | 760 | 86.8%, 88.2% | 86.8%, 88.2% | 86.7%, 88.2% | 97.8%, 61% |
 | 4 | Three groups | 8 | 758 | 78.4%, 80.5% | 80.6%, 82.2% | 79.2%, 81.0% | 96.8%, 22% |
@@ -3654,11 +3723,11 @@ genotypes kept that are right and the share kept:
 | 2 | Three groups | 8 | 747 | 96.5%, 96.9% | 96.7%, 97.1% | 96.6%, 97.0% | 99.8%, 33% |
 | 2 | Families | 8 | 750 | 96.4%, 96.6% | 96.8%, 96.9% | 96.5%, 96.7% | 99.8%, 33% |
 
-- Off-target records are called as well as target records: 0.2 to 2.1 points
-  more of their genotypes are right. Their alternate alleles are a little
+- Off-target records are called as well as target records, with 0.2 to 2.1
+  points more of their genotypes right. Their alternate alleles are a little
   rarer in these tables (mean frequency 0.14 to 0.23, against 0.25 for the
   target's).
-- The priors rank as they do on target records: `structure` gains up to 2.2
+- The priors rank as they do on target records. `structure` gains up to 2.2
   points on targets and 1.7 on off-target records where there are groups or
   families and nothing with one population, and `norm` is within 0.1 points
   below and 0.8 above `hwe`.
@@ -3667,17 +3736,17 @@ genotypes kept that are right and the share kept:
 
 **Off-target substitutions shared by haplotypes.** In the tables above a
 substitution is on one haplotype only and never on the Alt tag. In real tags
-several haplotypes can carry the same one, and their reads are then added
-together for its record. The same reads and true haplotype dosages were given
-other stand-in tags: one substitution is on two of the haplotypes with the
-reference base at the target, a second is on two as well, and a third is on a
+several haplotypes can carry the same one, and its record then adds their
+reads together. The same reads and true haplotype dosages got other stand-in
+tags. One substitution is on two of the haplotypes with the reference base
+at the target, a second is on two as well, and a third is on a
 haplotype that has the target's alternate base, so that the target's record
 adds two haplotypes too. The true dosage of a substitution is the sum over the
 haplotypes that carry it. Of the 760 off-target records 311 add two
 haplotypes, and 149 of the 300 target records do. Share of genotypes with
 reads called correctly, as in the table above:
 
-| Ploidy | Population | Mean depth | hwe: target, off-target | structure: target, off-target | norm: target, off-target | hwe, default filters: target right, kept | hwe, default filters: off-target right, kept |
+| Ploidy | Population | Mean depth | hwe, target and off-target | structure, target and off-target | norm, target and off-target | hwe with default filters, target right and kept | hwe with default filters, off-target right and kept |
 |---|---|---|---|---|---|---|---|
 | 4 | One population | 25 | 82.8%, 85.4% | 82.8%, 85.4% | 82.8%, 85.4% | 97.0%, 47% | 97.4%, 53% |
 | 4 | Three groups | 8 | 73.4%, 76.5% | 75.9%, 78.8% | 74.2%, 77.3% | 96.2%, 16% | 96.6%, 19% |
@@ -3691,23 +3760,23 @@ reads called correctly, as in the table above:
 - A record that adds the reads of several haplotypes is the same call as a
   two-allele marker with those reads. The reads of the carriers and of the
   other haplotypes were added up outside `call` and called as two-row markers
-  under the same overdispersion and background rate: all 2,538,900 genotypes
+  under the same overdispersion and background rate. All 2,538,900 genotypes
   of the eight tables are the same as in the `all` VCF.
 - Fewer genotypes are right than in the tables with one haplotype per
   substitution (by 1 to 6 points for tetraploids, under 1 for diploids)
-  because the added alleles are more frequent: a mean of 0.33 against 0.25 at
-  targets and 0.29 against 0.21 at off-target records, so more genotypes have
-  a dosage in the middle, where neighbouring dosages are harder to tell
-  apart.
+  because the added alleles are more frequent, with a mean of 0.33 against
+  0.25 at targets and 0.29 against 0.21 at off-target records. More
+  genotypes then have a dosage in the middle, where neighbouring dosages are
+  harder to tell apart.
 - Off-target records are still called as well as target records, the priors
   rank as before, and with the default filters 96 to 99.8% of the genotypes
   kept are right.
 
 **Hexaploid microhaplotype tables.** The haplotype and off-target tables
-above are diploid and tetraploid. Five hexaploid tables were drawn with the
-same simulator (300 samples, 300 markers of three to six haplotypes,
-overdispersion 20) and scored the same three ways. A haplotype genotype is
-right when the dosage of every allele is right:
+above are diploid and tetraploid. The same simulator drew five hexaploid
+tables (300 samples, 300 markers of three to six haplotypes, overdispersion
+20), scored the same three ways. A haplotype genotype is right when the
+dosage of every allele is right:
 
 | Population, mean depth | polyRAD `IterateHWE` | polyRAD `IteratePopStruct` | `call` hwe | `call` norm | `call` structure |
 |---|---|---|---|---|---|
@@ -3719,47 +3788,47 @@ right when the dosage of every allele is right:
 
 Target and off-target records of `--vcf all`, share of genotypes right
 without filters, with one haplotype per substitution and with substitutions
-shared by haplotypes; and for `hwe` with the default filters, the share of
+shared by haplotypes, and for `hwe` with the default filters, the share of
 the target and off-target genotypes kept that are right and the share kept:
 
-| Population, mean depth | hwe: target, off-target | structure | norm | Shared: hwe | Shared: structure | Shared: norm | hwe, default filters: right, kept | Shared, default filters |
+| Population, mean depth | hwe, target and off-target | structure | norm | Shared, hwe | Shared, structure | Shared, norm | hwe with default filters, right and kept | Shared, default filters |
 |---|---|---|---|---|---|---|---|---|
-| One population, 25 | 74.2%, 76.0% | 74.2%, 76.0% | 74.1%, 75.9% | 67.4%, 71.3% | 67.4%, 71.3% | 67.3%, 71.2% | 96.3%, 36%; 96.0%, 39% | 95.8%, 22%; 95.8%, 29% |
-| Three groups, 8 | 65.7%, 68.4% | 69.1%, 71.3% | 66.8%, 69.3% | 57.7%, 62.9% | 62.5%, 66.6% | 59.4%, 64.2% | 95.0%, 14%; 94.7%, 16% | 94.2%, 8%; 94.4%, 12% |
-| Three groups, 25 | 74.8%, 77.2% | 77.3%, 79.4% | 75.8%, 78.0% | 68.8%, 72.9% | 71.9%, 75.6% | 70.0%, 73.9% | 97.1%, 40%; 97.1%, 44% | 96.5%, 28%; 96.7%, 36% |
-| Three groups, 150 | 81.2%, 83.3% | 83.0%, 84.8% | 81.8%, 83.8% | 76.7%, 80.0% | 78.9%, 81.8% | 77.5%, 80.6% | 98.5%, 55%; 98.6%, 60% | 98.2%, 44%; 98.4%, 52% |
-| Families, 25 | 74.2%, 76.1% | 76.0%, 77.9% | 74.2%, 76.1% | 67.3%, 71.4% | 69.9%, 73.6% | 67.4%, 71.4% | 96.0%, 37%; 96.0%, 40% | 95.2%, 24%; 95.5%, 31% |
+| One population, 25 | 74.2%, 76.0% | 74.2%, 76.0% | 74.1%, 75.9% | 67.4%, 71.3% | 67.4%, 71.3% | 67.3%, 71.2% | 96.3%, 36% and 96.0%, 39% | 95.8%, 22% and 95.8%, 29% |
+| Three groups, 8 | 65.7%, 68.4% | 69.1%, 71.3% | 66.8%, 69.3% | 57.7%, 62.9% | 62.5%, 66.6% | 59.4%, 64.2% | 95.0%, 14% and 94.7%, 16% | 94.2%, 8% and 94.4%, 12% |
+| Three groups, 25 | 74.8%, 77.2% | 77.3%, 79.4% | 75.8%, 78.0% | 68.8%, 72.9% | 71.9%, 75.6% | 70.0%, 73.9% | 97.1%, 40% and 97.1%, 44% | 96.5%, 28% and 96.7%, 36% |
+| Three groups, 150 | 81.2%, 83.3% | 83.0%, 84.8% | 81.8%, 83.8% | 76.7%, 80.0% | 78.9%, 81.8% | 77.5%, 80.6% | 98.5%, 55% and 98.6%, 60% | 98.2%, 44% and 98.4%, 52% |
+| Families, 25 | 74.2%, 76.1% | 76.0%, 77.9% | 74.2%, 76.1% | 67.3%, 71.4% | 69.9%, 73.6% | 67.4%, 71.4% | 96.0%, 37% and 96.0%, 40% | 95.2%, 24% and 95.5%, 31% |
 
 - In hexaploids the priors rank as in tetraploids. `call` with the HWE prior
   has polyRAD's share to 0.1 points on every table, and `structure` equals or
   passes polyRAD's population-structure model (by 2.1 points for families).
   Where there is one population polyRAD's structure model loses 2.7 points to
   its own HWE model and `structure` loses nothing, because it found no
-  neighbours worth using.
+  useful neighbours.
 - Fewer genotypes are right than in tetraploids at the same depth (74% of
   target genotypes at 25 reads against 87%), as seven dosage classes leave
   less room between neighbours than five. With the default filters 94 to
-  98.6% of the genotypes kept are right, and fewer are kept: 36 to 44% at 25
-  reads against 61%.
-- At 8 reads the overdispersion was estimated at 100 and at 50 where 20 was
-  simulated; from 25 reads on the estimate is 20. At that depth hexaploid
-  counts hold too little to tell scatter from dosage.
+  98.6% of the genotypes kept are right, and the filters keep fewer, 36 to
+  44% at 25 reads against 61%.
+- At 8 reads the estimate put the overdispersion at 100 and 50 where the
+  simulation used 20, while from 25 reads on it is 20. At that depth
+  hexaploid counts hold too little to tell scatter from dosage.
 
-Real off-target genotypes are tested in the delta smelt comparison below.
+The delta smelt comparison below tests real off-target genotypes.
 
 **The polyRAD paper's own benchmark.** Clark et al. (2019) tested polyRAD on
-read depths simulated from real genotypes: SNP-array and GoldenGate genotypes
-of diversity panels and mapping populations, with reads drawn binomially at a
+read depths simulated from the real SNP-array and GoldenGate genotypes of
+diversity panels and mapping populations, with reads drawn binomially at a
 mean depth of about 10 (15 to 21% of the cells have no reads). The data, the
 scripts and the results are in the Illinois Data Bank
 (doi:10.13012/B2IDB-9729830_V2), with the error of every marker under each
-model of polyRAD 0.4-0 and under EBG and GATK-style calls. `call` was run on
-the same read depths and scored as the paper did: the root mean squared error
-between true and estimated copy number at each marker, over the cells with
-reads, for the posterior mean ("continuous") and for the most probable
-genotype ("discrete"), averaged over the markers. Lower is better. `call`
-estimated an overdispersion of 500, the highest it tries, as it should for
-binomial reads (100 on the soybean set). Continuous and discrete error:
+model of polyRAD 0.4-0 and under EBG and GATK-style calls. `call` ran on the
+same read depths and was scored as the paper did. The score is the root mean
+squared error between true and estimated copy number at each marker, over
+the cells with reads, for the posterior mean ("continuous") and for the most
+probable genotype ("discrete"), averaged over the markers. Lower is better.
+`call` estimated an overdispersion of 500, the highest it tries, as it should
+for binomial reads (100 on the soybean set). Continuous and discrete error:
 
 | Data set | Samples × markers | polyRAD HWE (archive) | `call` hwe | polyRAD PopStruct (archive) | `call` structure | `call` norm |
 |---|---|---|---|---|---|---|
@@ -3770,7 +3839,7 @@ binomial reads (100 on the soybean set). Continuous and discrete error:
 | *Glycine soja*, 2x, selfing rate 0.95 | 1,179 × 2,957 | 0.037, 0.034 | 0.037, 0.034 | 0.038, 0.037 | not with a selfing rate | |
 
 Two sets are F1 populations, which polyRAD called with its mapping prior and
-the parents named; `call` has no family prior:
+the parents named, while `call` has no family prior:
 
 | Data set | Samples × markers scored | polyRAD mapping (archive) | `call` hwe | `call` norm |
 |---|---|---|---|---|
@@ -3784,16 +3853,16 @@ the parents named; `call` has no family prior:
   on apple, where polyRAD's model was worse than its HWE.
 - `norm`, told nothing about the cross, matches polyRAD's mapping prior on
   the *Miscanthus* F1 and is 0.006 below it on the potato F1 in continuous
-  error; in discrete error it is within 0.008.
+  error. In discrete error it is within 0.008.
 - polyRAD's models that use linkage between markers are better than `call` on
-  five of the seven sets, by 0.003 to 0.044 in continuous error: 0.137 on
-  *Miscanthus* (`call` at its best 0.140), 0.412 on potato (0.428), 0.164 on
-  apple (0.172), and 0.170 and 0.340 on the two F1 populations (0.186 and
-  0.385). `call` treats markers independently. On the simulated tetraploids
-  `structure` is below polyRAD's structure-and-linkage model (0.326 against
-  0.335), and on soybean linkage made polyRAD worse.
+  five of the seven sets, by 0.003 to 0.044 in continuous error. They reach
+  0.137 on *Miscanthus* (`call` at its best 0.140), 0.412 on potato (0.428),
+  0.164 on apple (0.172), and 0.170 and 0.340 on the two F1 populations
+  (0.186 and 0.385). `call` treats markers independently. On the simulated
+  tetraploids `structure` is below polyRAD's structure-and-linkage model
+  (0.326 against 0.335), and on soybean linkage made polyRAD worse.
 - Without the selfing rate the soybean errors are 0.157 with `hwe`, 0.124 with
-  `norm` and 0.110 with `structure`, against 0.037 with it: for inbred
+  `norm` and 0.110 with `structure`, against 0.037 with it, so for inbred
   samples the selfing rate has to be given.
 - EBG's HWE model, the other caller in the archive with a population prior,
   has the discrete error of `call` with `hwe` (0.464 against 0.464 on the
@@ -3805,11 +3874,12 @@ the parents named; `call` has no family prior:
   tetraploids.
 
 The archive's eighth set is a simulated allohexaploid (soybean genotypes on
-one of three subgenomes: 0 to 2 copies of the allele out of 6, mean depth 30).
-polyRAD modelled it as three diploid genomes and has 0.194 and 0.219 with HWE
-and 0.178 and 0.199 with population structure. `call` has no such model and
-called it as an autohexaploid: 0.360 and 0.429 with `hwe` (82.1% of genotypes
-right), 0.312 and 0.365 with `norm` (87.3%), 0.336 and 0.402 with `structure`.
+one of three subgenomes, so 0 to 2 copies of the allele out of 6, at a mean
+depth of 30). polyRAD modelled it as three diploid genomes and has 0.194 and
+0.219 with HWE and 0.178 and 0.199 with population structure. `call` has no
+such model and called it as an autohexaploid. It has 0.360 and 0.429 with
+`hwe` (82.1% of genotypes right), 0.312 and 0.365 with `norm` (87.3%), and
+0.336 and 0.402 with `structure`.
 Markers that sit on one subgenome of an allopolyploid are outside what `call`
 models, because it spreads the prior over all 0 to 6 copies.
 
@@ -3818,23 +3888,24 @@ example data of gtseq_microhap (Zenodo, doi:10.5281/zenodo.19069550,
 CC-BY-4.0) are 96 delta smelt, 410 loci, 150,000 read pairs per fish, with the
 panel's primer file and a VCF of 2,787 biallelic SNPs called from the same
 reads by BWA and bcftools on the reference genome. `generate` has been
-measured on them (see "External benchmarks on public datasets"); here they
-test `call` on real diploid reads, at targets and at off-target SNPs, against
-genotypes from an alignment-based caller.
+measured on them (see "External benchmarks on public datasets"), and here
+they test `call` on real diploid reads, at targets and at off-target SNPs,
+against genotypes from an alignment-based caller.
 
-Every locus was placed on the genome (GCA_021917145.1) by its two primers,
-all 410 once. For the 368 loci with a polymorphic SNP of the comparison VCF in
-the first 81 bases, the tag is the genome sequence from the forward primer and
-the target is the SNP with the highest minor allele frequency; `generate` on
+Its two primers placed every locus on the genome (GCA_021917145.1), all 410
+once. For the 368 loci with a polymorphic SNP of the comparison VCF in the
+first 81 bases, the tag is the genome sequence from the forward primer and
+the target is the SNP with the highest minor allele frequency. `generate` on
 the R1 reads gave 1,527 allele rows and assigned about 100,000 reads per
-fish, some 280 per marker. `call --vcf all --ploidy 2` wrote 368 target records and 615
-off-target records; 467 of the off-target records are a SNP of the comparison
-VCF with the same two bases (111 are not in it, 36 have more than two alleles
-and 1 has other bases). Agreement with the comparison genotype:
+fish, some 280 per marker. `call --vcf all --ploidy 2` wrote 368 target
+records and 615 off-target records. Of these off-target records, 467 are a
+SNP of the comparison VCF with the same two bases (111 are not in it, 36
+have more than two alleles and 1 has other bases). Agreement with the
+comparison genotype:
 
 | Caller | Targets (35,073 genotypes) | Off-target SNPs (44,777) |
 |---|---|---|
-| `call --prior hwe` (the defaults; overdispersion 150, background 0.003) | 99.57% of the 98.8% called | 99.80% of the 99.1% called |
+| `call --prior hwe` (the defaults, with overdispersion 150 and background 0.003) | 99.57% of the 98.8% called | 99.80% of the 99.1% called |
 | `call --prior norm` | 99.58% of 98.8% | 99.81% of 99.1% |
 | `call --prior structure` (5 neighbours) | 99.58% of 98.8% | 99.80% of 99.1% |
 | `call --prior hwe --allele-bias fit` | 99.42% of 98.8% | 99.48% of 99.1% |
@@ -3845,26 +3916,27 @@ and 1 has other bases). Agreement with the comparison genotype:
 | polyRAD `IterateHWE`, overdispersion 150 | 99.38% of the 99.7% called | 99.66% |
 | updog `norm` | 99.27% | 99.38% |
 
-Every row is scored on the same genotypes: those where the sample has reads
-at the record and the comparison genotype rests on 10 or more reads. polyRAD
-and updog also give a genotype where a sample has no reads; those are left
-out.
+Every row uses the same genotypes, those where the sample has reads at the
+record and the comparison genotype rests on 10 or more reads. polyRAD and
+updog also give a genotype where a sample has no reads, and the scores leave
+those out.
 
-polyRAD and updog were given the reference and alternate counts of the 947
+polyRAD and updog got the reference and alternate counts of the 947
 two-allele records and call every genotype, so the row to compare them with is
 `call` without filters.
 
 - On real diploid reads `call` with its defaults agrees with the
   alignment-based genotypes more often than polyRAD or updog do on the same
-  counts: by 0.14 points on targets and 0.32 on off-target SNPs over updog,
+  counts, by 0.14 points on targets and 0.32 on off-target SNPs over updog,
   and by 0.70 and 0.62 over polyRAD's defaults.
-- Off-target SNPs are called as well as targets, here on real reads; the
+- Off-target SNPs are called as well as targets, here on real reads, and the
   simulated tables under "Off-target records" said the same.
 - Fitting the bias lowers the agreement, by 0.15 points on targets and 0.3 on
-  off-target SNPs. updog, which always fits one (median 0.98 here; 176 of 946
-  outside 0.8 to 1.25), is also below `call` without it. On the potato data
-  fitting the bias raised agreement with the array by 4.3 points. Whether it
-  helps depends on the data, which is a reason to leave it off by default.
+  off-target SNPs. updog, which always fits one (median 0.98 here, with 176
+  of 946 outside 0.8 to 1.25), is also below `call` without it. On the
+  potato data fitting the bias raised agreement with the array by 4.3
+  points. Whether it helps depends on the data, which is a reason to leave
+  it off by default.
 - polyRAD's population-structure model stopped with an error at an
   overdispersion of 150, as it did on the potato data at 75.
 - The comparison genotypes come from the same reads, so this measures
@@ -3874,21 +3946,21 @@ two-allele records and call every genotype, so the row to compare them with is
 vendor-style read table and independent dosages for a polyploid at low depth,
 so polyploids with known dosages were made from the smelt reads, as Cooke et
 al. (2022, Genome Research 32:766) made synthetic polyploids from human
-samples: the 96 diploids were divided at random into groups of two
-(tetraploids, 48 samples) or three (hexaploids, 32), at each marker every
+samples. The 96 diploids were divided at random into groups of two
+(tetraploids, 48 samples) or three (hexaploids, 32). At each marker every
 member gave the same number of reads, drawn without replacement, and the
 group's true dosage at a SNP is the sum of its members' alignment-based
 genotypes, known where every member's genotype rests on 10 or more reads.
 The pooled reads were also thinned to a mean of 50, 25 and 10 per sample and
-marker (524 for tetraploids and 744 for hexaploids before thinning). The reads are real, with their real
-scatter and without allelic bias beyond what diploid reads have; the
-genotype frequencies are those of pooled individuals, not of a polyploid
-population. Share of genotypes with reads called correctly, targets and
-off-target SNPs, without filters; means over three random groupings (two
-for the hexaploids at 25 and 10 reads, where the run reached its time limit),
-which differ from one another by 0.9 points at most for `call` without the
-bias and 1.9 for the other columns (updog was run on the first grouping
-only):
+marker (524 for tetraploids and 744 for hexaploids before thinning). The
+reads are real, with their real scatter and without allelic bias beyond what
+diploid reads have, but the genotype frequencies are those of pooled
+individuals, not of a polyploid population. Share of genotypes with reads
+called correctly, targets and off-target SNPs, without filters, as means
+over three random groupings (two for the hexaploids at 25 and 10 reads,
+where the run reached its time limit), which differ from one another by 0.9
+points at most for `call` without the bias and 1.9 for the other columns
+(updog ran on the first grouping only):
 
 | Ploidy, mean depth | `call --prior hwe` | `call --prior norm` | `call --prior hwe --allele-bias fit` | `call` with polyRAD's settings | polyRAD `IterateHWE`, overdispersion 9 | polyRAD at the overdispersion `call` estimated | updog `norm` |
 |---|---|---|---|---|---|---|---|
@@ -3902,10 +3974,10 @@ only):
 | 6x, 10 | 53.7%, 74.1% | 52.0%, 73.6% | 48.6%, 72.2% | 50.4%, 72.9% | 49.5%, 72.7% | 52.8%, 73.9% | 47.2%, 70.8% |
 
 - `call` estimated an overdispersion of 500, the highest value it tries, in
-  all but two tables (150 for tetraploids at 10 reads in two groupings): pooled
-  reads of well-behaved diploid markers scatter little. With that value in
-  place of polyRAD's 9, 5 points more tetraploid and 12 to 25 points more
-  hexaploid target genotypes are right at 50 reads and above.
+  all but two tables (150 for tetraploids at 10 reads in two groupings),
+  because pooled reads of well-behaved diploid markers scatter little. With
+  that value in place of polyRAD's 9, 5 points more tetraploid and 12 to 25
+  points more hexaploid target genotypes are right at 50 reads and above.
 - polyRAD given the same overdispersion is 0.3 to 0.9 points below `call`
   with the HWE prior, which also has a background rate. At full depth its
   iteration did not end in 300 s at an overdispersion of 500, in any
@@ -3913,37 +3985,38 @@ only):
 - updog, which fits a bias and an overdispersion for every SNP, equals `call`
   at full depth and is 1 to 4 points behind it for tetraploids and 6 to 10
   for hexaploids once the reads are thinned. `call` with the bias fitted
-  loses the same way, up to 7.6 points for hexaploids at 25 reads: on reads
-  without bias, a parameter per SNP is fitted to noise.
+  loses the same way, up to 7.6 points for hexaploids at 25 reads, because
+  on reads without bias a parameter per SNP fits noise.
 - With the default filters 95.7 to 98.9% of the tetraploid target genotypes
   kept are right, with 98%, 74%, 52% and 20% of them kept from full depth
-  down to 10 reads; for hexaploids 93.3 to 98.4%, with 96%, 40%, 17% and 4%
-  kept.
-- Off-target SNPs are called better than targets in every row; the targets
-  are the most polymorphic SNP of each tag, so more of their genotypes are
+  down to 10 reads. For hexaploids the figures are 93.3 to 98.4%, with 96%,
+  40%, 17% and 4% kept.
+- Off-target SNPs score better than targets in every row. The targets are
+  the most polymorphic SNP of each tag, so more of their genotypes are
   heterozygous.
 
-**Audit against both packages' sources.** Every function of `madcats_call.py`
-was read against polyRAD 2.0.1's and updog 2.1.7's source and run against the
-packages on the same inputs, to settle what is adopted, what is adapted and
-what is MADCATS's own. The module's opening comment and the functions'
-comments now say so, with the full references.
+**Audit against both packages' sources.** The audit read every function of
+`madcats_call.py` against polyRAD 2.0.1's and updog 2.1.7's source and ran
+it against the packages on the same inputs, to settle what is adopted, what
+is adapted and what is MADCATS's own. The module's opening comment and the
+functions' comments now record the origin of each part, with the full
+references.
 
 | Compared | Result |
 |---|---|
-| Six simulated records (ploidy 2, 4, 6 and mixed; 2 to 4 alleles; one with selfing) against `IterateHWE` | likelihoods, posteriors, frequencies and corrected genotypes agree to 1e-13 |
+| Six simulated records (ploidy 2, 4, 6 and mixed, with 2 to 4 alleles and one with selfing) against `IterateHWE` | likelihoods, posteriors, frequencies and corrected genotypes agree to 1e-13 |
 | 366 random corrections of dosages to the ploidy against `CorrectGenos` | 366 the same |
-| The same where no step has any probability | `call` gives no call; polyRAD returned all-zero dosages in 33 cases and did not return in one |
-| Ties between dosages | `BestGenos` compares in single precision and takes the first: posteriors 0.4, 0.4, 0.2 give dosage 0 in polyRAD and no call in `call` |
+| The same where no step has any probability | `call` gives no call, while polyRAD returned all-zero dosages in 33 cases and did not return in one |
+| Ties between dosages | `BestGenos` compares in single precision and takes the first, so posteriors 0.4, 0.4, 0.2 give dosage 0 in polyRAD and no call in `call` |
 | Prior on the bias, bias formula at error rate 0, limits of `norm` | identical to updog's `pen_bias`, `xi_fun` and bounds |
-| 40 single `norm` fits against updog's | 39 agree to 4e-5; the fortieth is the stalled fit described under "The norm prior", since fixed |
+| 40 single `norm` fits against updog's | 39 agree to 4e-5, and the fortieth is the stalled fit described under "The norm prior", since fixed |
 
-Three statements were wrong and are corrected: this record listed the
-free-weights prior as MADCATS's own (it is updog's `flex`; only its use for
-the estimate is new), the command's description said "The model is
+Three statements were wrong and are corrected. This record listed the
+free-weights prior as MADCATS's own (it is updog's `flex`, and only its use
+for the estimate is new), the command's description said "The model is
 polyRAD's", and a comment described the frequency floor of 1 / (2 × samples)
 as polyRAD's for a diploid population (polyRAD divides by the largest locus
-ploidy it is given, which is 2 in the stored comparisons, whatever the
+ploidy it receives, which is 2 in the stored comparisons, regardless of the
 samples' ploidy).
 
 **Other checks.** On the bundled example all 96 target and 96 haplotype
@@ -3955,18 +4028,19 @@ all three VCF types.
 ## Downstream fixed allele IDs
 
 This pipeline's responsibility ends with generation of the raw MADC-like
-microhaplotype count table — and that boundary is certified end-to-end:
-MADCATS output has been carried through the full production stack
+microhaplotype count table, and end-to-end tests certify that boundary.
+They carried MADCATS output through the full production stack
 (HapApp_utils fixed allele IDs -> `BIGr::madc2vcf_all()` -> updog
-dosage) on two platforms and scored against external truth at the far
+dosage) on two platforms and scored it against external truth at the far
 end. On GT-seq the whole downstream stack costs 0.25 points (98.42% at
 the end of the chain vs 98.67% at the MADC), and the off-target SNPs
 recovered from Match haplotypes score *higher* than the targets (98.79%
 on 38,244 additional cells). On the 192-sample capture cohort the chain
 delivers 95.13% on 295,068 target cells and reproduces the source
-publication's population-genetic findings from MADCATS calls alone. Fixed allele-ID assignment and maintenance of the
-cross-project panel allele database are downstream HapApp responsibilities;
-the former `--allele-catalogue` reprocessing mode was removed accordingly.
+publication's population-genetic findings from MADCATS calls alone. Fixed
+allele-ID assignment and maintenance of the cross-project panel allele
+database are downstream HapApp responsibilities, so MADCATS dropped the
+former `--allele-catalogue` reprocessing mode.
 
 ## Input contracts
 
@@ -3974,45 +4048,45 @@ The DArT primer CSV must contain:
 `MarkerName, LeftPrimerSequence, RightPrimerSequence, VariantRef, VariantAlt,
 VariantPositionInTagSequence`. Indel markers use dash notation (`-` on the
 empty side, the inserted or deleted bases on the other) with the position
-naming where the affected span begins; the pipeline's stored variant
+naming where the affected span begins. The pipeline's stored variant
 position becomes the first base at which the two tags actually differ,
 which can sit beyond the declared position when the flank repeats the indel
 content. Primers may contain IUPAC codes (degenerate oligos over flanking
-SNPs); tags are reconstructed as the primer sequence verbatim plus the
-genomic continuation, matching the vendor's representation.
+SNPs). The pipeline reconstructs tags as the primer sequence verbatim plus
+the genomic continuation, matching the vendor's representation.
 
 The probe-design TSV/CSV must contain `MarkerName` and `TargetSequence`,
-with a single bracketed variant — a SNP such as `[C/T]` or an
+with a single bracketed variant, either a SNP such as `[C/T]` or an
 anchored-base indel such as `[A/ACTTG]` or `[TTTTTTG/T]`. Panel
 construction rejects designs whose variant lies inside the left primer
 (Alt reads could never carry the primer), identical alleles, and SNP
 designs whose constructed Alt tag does not appear among the bracket
 expansions (a primer-table/probe-design disagreement). An optional
 `LocusGroup` column declares markers as tiles of one physical locus
-(see the 0.9.0 section); members of a group must present the same
-target region — identical Ref expansions, differing only in which
-variant is bracketed — and violations are load-time errors. The
+(see the 0.9.0 section). Members of a group must present the same
+target region, with identical Ref expansions that differ only in which
+variant carries the brackets, and violations are load-time errors. The
 reference-tags CSV accepts and emits the same optional column, and it
 only appears in output when some locus actually uses it, keeping
 ungrouped panels byte-identical to earlier versions.
 
 The platform-neutral reference-tag CSV must contain:
 `MarkerName, LeftPrimerSequence, RefSequence, AltSequence`. Add
-`VariantPositionInTagSequence` when Ref and Alt differ at more than one base;
-it is validated as an in-range number pointing at an actual Ref/Alt
-difference. Identical Ref/Alt sequences or alleles are rejected.
+`VariantPositionInTagSequence` when Ref and Alt differ at more than one base.
+The pipeline checks that it is an in-range number pointing at an actual
+Ref/Alt difference, and rejects identical Ref/Alt sequences or alleles.
 `VariantRef`, `VariantAlt` (validated for IUPAC compatibility with the tag
 bases), and `RightPrimerSequence` are optional. Curated tags may contain
-IUPAC codes; see the classification note above for what that means for
+IUPAC codes. The classification note above explains what that means for
 canonical counts.
 
-Left primers that are strict prefixes of other panel primers are supported,
-and under the default `--primer-mismatches 1` every primer within the
-mismatch budget is considered regardless of depth or mismatch count — an
-exact short primer cannot suppress a longer one-mismatch primer. Reads
-matching several primers are resolved by full-tag identity, and
-unresolvable ties are dropped as ambiguous. The default changed from 0 to
-1 in 0.9.0: every validated benchmark on every platform ran with 1, and
+The pipeline supports left primers that are strict prefixes of other panel
+primers, and under the default `--primer-mismatches 1` it considers every
+primer within the mismatch budget regardless of depth or mismatch count, so
+an exact short primer cannot suppress a longer one-mismatch primer.
+Full-tag identity resolves reads matching several primers, and the pipeline
+drops unresolvable ties as ambiguous. The default changed from 0 to 1 in
+0.9.0, because every validated benchmark on every platform ran with 1, and
 exact-only matching silently drops Match-haplotype reads whose
 distinguishing SNP falls inside the assignment anchor, which biases depth
 by haplotype. Pass `--primer-mismatches 0` to restore exact-only
@@ -4022,24 +4096,23 @@ Process a cohort in ONE `generate` invocation whenever novel-allele
 discovery matters. The evidence model's reproducibility route counts
 supporting samples within the invocation, so splitting a cohort into
 several smaller `generate` runs weakens discovery in proportion to the
-split: a real haplotype spread thinly across sample subsets can fail
-the `--reproducible-min-samples` gate in every subset while easily
-passing it cohort-wide (measured on a 192-sample capture cohort
-processed as 8 batches: a materially thinner Match-row catalogue than
-one full-cohort pass). Batch the expensive `normalize-reads` stage
-freely — its outputs are per-sample and windows stay frozen — but feed
-all samples to a single `generate`. The per-sample cache
-(`--cache-dir`) makes re-running one large invocation cheap after the
-first pass.
+split. A real haplotype spread thinly across sample subsets can fail
+the `--reproducible-min-samples` gate in every subset while passing it
+cohort-wide (a 192-sample capture cohort processed as 8 batches gave a
+materially thinner Match-row catalogue than one full-cohort pass).
+Batch the expensive `normalize-reads` stage freely, since its outputs
+are per-sample and windows stay frozen, but feed all samples to a
+single `generate`. The per-sample cache (`--cache-dir`) makes
+re-running one large invocation cheap after the first pass.
 
 FASTQ input to `generate` is one primer-started single-end file per
-sample; `normalize-reads` accepts any read that contains a panel window.
-Paired-end data enters through one of the two 0.9.0 routes — `merge-pairs`
-for overlapping pairs, or pooling both mates into one per-sample FASTQ for
-non-overlapping dual-anchored designs — chosen explicitly from the assay's
-measured geometry. Target manifests (`targets_*.csv`) are optional and used
-only for sample names/metadata; by default sample columns use the unique
-FASTQ filename stem.
+sample, while `normalize-reads` accepts any read that contains a panel
+window. Paired-end data enters through one of the two 0.9.0 routes,
+`merge-pairs` for overlapping pairs or pooling both mates into one
+per-sample FASTQ for non-overlapping dual-anchored designs. Choose the
+route explicitly from the assay's measured geometry. Target manifests
+(`targets_*.csv`) are optional and serve only for sample names/metadata.
+By default sample columns use the unique FASTQ filename stem.
 
 ## Tests
 
@@ -4089,16 +4162,17 @@ reads counted as window-scan churn, and length validation in the named
 FASTQ parser). The diagnostic scripts in `scripts/` refuse
 cache directories holding multiple fingerprints for one sample (pass
 `--cache-fingerprint` to select one) and are runnable directly without
-`PYTHONPATH` tricks. The 0.5.0 refactor was additionally gated on
-byte-for-byte regressions: fresh per-sample processing reproduces every
-0.4.0 cache payload exactly on all 80 samples, and the new quality-only
+`PYTHONPATH` tricks. Byte-for-byte regressions also gated the 0.5.0
+refactor. Fresh per-sample processing reproduces every 0.4.0 cache
+payload exactly on all 80 samples, and the new quality-only
 configuration reproduces the 0.3.x `full_s5` output file byte-for-byte.
 
 ## Interpretation and references
 
 Breeding Insight describes MADC rows as 81-bp amplicon microhaplotypes with
-per-sample counts. Ref and Alt contain only the designed target difference;
-RefMatch and AltMatch have the respective target base plus other differences.
+per-sample counts. Ref and Alt contain only the designed target difference,
+while RefMatch and AltMatch have the respective target base plus other
+differences.
 The official format overview is at
 <https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/>.
 

@@ -467,6 +467,82 @@ class UpdogParityTests(unittest.TestCase):
                     msg=f"{label} sample {sample}",
                 )
 
+    def written_mpp_and_pmc(self, marker, settings):
+        """MPP per sample (None where it is written as missing) and PMC, from the record ``call`` writes."""
+        depths = [
+            [allele_depth, marker_depth - allele_depth]
+            for allele_depth, marker_depth in zip(marker["allele_depth"], marker["marker_depth"])
+        ]
+        options = call.CallOptions(settings=settings, vcf_types=(call.VCF_TARGET,))
+        line, _, _ = call.format_record(
+            "M1", 12, "M1", ["G", "C"], depths, None, [marker["ploidy"]] * len(depths), options, two_allele_model=True
+        )
+        fields = line.split("\t")
+        mpp_column = fields[8].split(":").index("MPP")
+        mpp = [None if value == "." else float(value) for value in (cell.split(":")[mpp_column] for cell in fields[9:])]
+        pmc = float(dict(item.split("=") for item in fields[7].split(";") if "=" in item)["PMC"])
+        return mpp, pmc
+
+    def test_mpp_and_pmc_match_updog(self):
+        """MPP is updog's maxpostprob and PMC its prop_mis, where the two models are the same."""
+        fixture = self.fixture
+        fits = [
+            (marker, call.ModelSettings(
+                prior=call.PRIOR_NORM, overdispersion=fixture["overdispersion"], contamination_rate=0.0,
+                tolerance=1e-10, max_iterations=5000,
+            ))
+            for marker in fixture["markers"]
+        ] + [
+            (marker, call.ModelSettings(
+                prior={"norm": call.PRIOR_NORM, "hw": call.PRIOR_HWE}[marker["model"]],
+                overdispersion=fixture["overdispersion"], contamination_rate=0.0, fit_allele_bias=True,
+                tolerance=1e-8, max_iterations=5000,
+            ))
+            for marker in fixture["bias_markers"]
+        ]
+        self.assertEqual(len(fits), 14)
+        for marker, settings in fits:
+            label = f"{marker['name']} {marker.get('model', 'norm')}"
+            mpp, pmc = self.written_mpp_and_pmc(marker, settings)
+            # updog's own two values are tied as its documentation says.
+            self.assertAlmostEqual(
+                marker["proportion_misgenotyped"], 1 - sum(marker["max_posterior"]) / len(mpp), places=12, msg=label
+            )
+            for sample, (value, expected) in enumerate(zip(mpp, marker["max_posterior"])):
+                self.assertAlmostEqual(value, expected, delta=2e-3, msg=f"{label} sample {sample}")
+            self.assertAlmostEqual(pmc, marker["proportion_misgenotyped"], delta=5e-4, msg=label)
+
+    def test_pmc_is_over_the_samples_with_reads_as_updog_gives_for_missing_samples(self):
+        marker = self.fixture["no_read_marker"]
+        settings = call.ModelSettings(
+            prior=call.PRIOR_NORM, overdispersion=self.fixture["overdispersion"], contamination_rate=0.0,
+            tolerance=1e-10, max_iterations=5000,
+        )
+        mpp, pmc = self.written_mpp_and_pmc(marker, settings)
+        without_reads = [sample for sample, depth in enumerate(marker["marker_depth"]) if depth == 0]
+        self.assertEqual(len(without_reads), 8)
+        for sample, (value, expected) in enumerate(zip(mpp, marker["max_posterior"])):
+            if sample in without_reads:
+                self.assertIsNone(value)
+            else:
+                self.assertAlmostEqual(value, expected, delta=2e-3, msg=f"sample {sample}")
+        # updog told that those samples are missing (NA) leaves them out, as call does.
+        self.assertAlmostEqual(pmc, marker["proportion_misgenotyped_given_na"], delta=5e-4)
+        # updog given a depth of 0 keeps them, each at the largest probability of the prior,
+        # which raises its prop_mis.
+        largest_prior = max(marker["prior"])
+        for sample in without_reads:
+            self.assertAlmostEqual(marker["max_posterior"][sample], largest_prior, places=6)
+        samples = len(marker["marker_depth"])
+        with_reads = samples - len(without_reads)
+        self.assertAlmostEqual(
+            marker["proportion_misgenotyped"],
+            (with_reads * marker["proportion_misgenotyped_given_na"] + len(without_reads) * (1 - largest_prior))
+            / samples,
+            places=6,
+        )
+        self.assertGreater(marker["proportion_misgenotyped"], pmc + 0.02)
+
 
 class MarkerTests(unittest.TestCase):
     def test_marker_without_reads_is_not_callable(self):
@@ -1070,7 +1146,7 @@ class TargetVcfTests(CommandTestCase):
         (record,) = records
         self.assertEqual((record["CHROM"], record["POS"], record["REF"], record["ALT"]), ("M1", 12, "G", ["C"]))
         self.assertEqual([sample["GT"] for sample in record["samples"]], ["0/0", "0/1", "1/1"])
-        self.assertEqual(record["FORMAT"], ["GT", "AD", "DP", "XD", "GQ", "DS", "GP", "PL"])
+        self.assertEqual(record["FORMAT"], ["GT", "AD", "DP", "XD", "GQ", "MPP", "DS", "GP", "PL"])
 
     def test_match_rows_count_for_their_allele_and_other_rows_are_excluded(self):
         madc = self.write_madc(
@@ -1116,7 +1192,8 @@ class TargetVcfTests(CommandTestCase):
         # The posterior of a low-depth sample is still reported; only the call is withheld.
         self.assertEqual(len(low_depth["GP"].split(",")), 3)
         self.assertEqual(
-            no_reads, {"GT": "./.", "AD": "0,0", "DP": "0", "XD": "0", "GQ": ".", "DS": ".", "GP": ".", "PL": "."}
+            no_reads,
+            {"GT": "./.", "AD": "0,0", "DP": "0", "XD": "0", "GQ": ".", "MPP": ".", "DS": ".", "GP": ".", "PL": "."},
         )
         self.assertIn("NS=2", record["INFO"])
         self.assertEqual(self.qc["vcfs"]["target"]["genotypes_missing_low_depth"], 1)
@@ -1125,6 +1202,71 @@ class TargetVcfTests(CommandTestCase):
         prefix = self.call_madc(madc, "--min-dp", "0")
         (record,) = self.vcf(prefix, "target")[2]
         self.assertEqual(record["samples"][1]["GT"], "0/1")
+
+    def info_values(self, record):
+        return dict(item.split("=") for item in record["INFO"].split(";") if "=" in item)
+
+    def test_mpp_is_the_largest_genotype_probability_and_pmc_its_mean_shortfall(self):
+        # s2 and s5 lie between two dosages, s3 has too few reads for a call, s4 has none.
+        madc = self.write_madc(
+            [("M1", "Ref", REF_TAG, [30, 17, 4, 0, 10, 0]), ("M1", "Alt", ALT_TAG, [0, 3, 3, 0, 2, 26])],
+            ["s1", "s2", "s3", "s4", "s5", "s6"],
+        )
+        prefix = self.call_madc(madc)
+        header, _, (record,) = self.vcf(prefix, "target")
+        self.assertTrue(any(line.startswith("##FORMAT=<ID=MPP,Number=1,Type=Float") for line in header))
+        self.assertTrue(any(line.startswith("##INFO=<ID=PMC,Number=1,Type=Float") for line in header))
+        with_reads = [sample for sample in record["samples"] if sample["DP"] != "0"]
+        self.assertEqual(len(with_reads), 5)
+        for sample in with_reads:
+            self.assertEqual(sample["MPP"], max(sample["GP"].split(","), key=float))
+        self.assertEqual(record["samples"][3]["MPP"], ".")
+        # A sample whose genotype is withheld keeps its MPP, as it keeps GQ and GP.
+        self.assertEqual(record["samples"][2]["GT"], "./.")
+        self.assertLess(float(record["samples"][2]["MPP"]), 1.0)
+        shortfalls = [1 - float(sample["MPP"]) for sample in with_reads]
+        self.assertGreater(max(shortfalls), 0.02)
+        pmc = self.info_values(record)["PMC"]
+        self.assertAlmostEqual(float(pmc), sum(shortfalls) / len(shortfalls), delta=1e-4)
+        # Plain decimals: BIGr's filterVCF reads the number with the pattern [0-9.]+.
+        self.assertRegex(pmc, r"^[0-9]+(\.[0-9]+)?$")
+
+    def test_pmc_does_not_depend_on_the_genotype_filters(self):
+        madc = self.write_madc(
+            [("M1", "Ref", REF_TAG, [30, 17, 4, 0, 10, 0]), ("M1", "Alt", ALT_TAG, [0, 3, 3, 0, 2, 26])],
+            ["s1", "s2", "s3", "s4", "s5", "s6"],
+        )
+        (strict,) = self.vcf(self.call_madc(madc, "--min-dp", "25", "--min-gq", "40"), "target")[2]
+        (relaxed,) = self.vcf(self.call_madc(madc, "--min-dp", "0", "--min-gq", "0"), "target")[2]
+        self.assertLess(int(self.info_values(strict)["NS"]), int(self.info_values(relaxed)["NS"]))
+        self.assertEqual(self.info_values(strict)["PMC"], self.info_values(relaxed)["PMC"])
+        self.assertEqual(
+            [sample["MPP"] for sample in strict["samples"]], [sample["MPP"] for sample in relaxed["samples"]]
+        )
+
+    def test_gq_is_mpp_on_the_phred_scale(self):
+        posterior = [0.02, 0.9, 0.08]
+        _, quality, values = call._two_allele_genotype([list(reversed(posterior)), posterior], [[0.0] * 3] * 2, 2)
+        self.assertEqual(values[:2], ["10", "0.9"])
+        self.assertEqual(quality, round(-10 * math.log10(1 - 0.9)))
+        # Two dosages tie: no genotype and no GQ, and MPP is still the largest probability.
+        dosages, quality, values = call._two_allele_genotype([[0.2, 0.4, 0.4], [0.4, 0.4, 0.2]], [[0.0] * 3] * 2, 2)
+        self.assertEqual((dosages, quality, values[:2]), (None, None, [".", "0.4"]))
+
+    def test_marker_without_reads_has_no_pmc(self):
+        madc = self.write_madc(
+            [
+                ("M1", "Ref", REF_TAG, [0, 0, 0]), ("M1", "Alt", ALT_TAG, [0, 0, 0]),
+                ("M2", "Ref", REF_TAG, [30, 15, 0]), ("M2", "Alt", ALT_TAG, [0, 16, 28]),
+            ],
+            ["s1", "s2", "s3"],
+        )
+        empty, with_reads = self.vcf(self.call_madc(madc), "target")[2]
+        self.assertNotIn("PMC", self.info_values(empty))
+        self.assertEqual([sample["MPP"] for sample in empty["samples"]], ["."] * 3)
+        self.assertLess(float(self.info_values(with_reads)["PMC"]), 0.01)
+        # A value too small for the four decimals is written as 0, not with an exponent.
+        self.assertEqual(call._decimal(call.proportion_misgenotyped([[2.5e-7, 1 - 2.5e-7, 0.0]])), "0")
 
     def test_low_genotype_quality_is_missing(self):
         # 16 of 20 reads are Ref: between a heterozygote and a Ref homozygote.
@@ -1284,7 +1426,7 @@ class AllVcfTests(CommandTestCase):
         # Reads are grouped by the base at position 20, whatever the row's base at the target.
         self.assertEqual([sample["AD"] for sample in site["samples"]], ["30,0", "12,13", "14,15", "20,0"])
         self.assertEqual([sample["GT"] for sample in site["samples"]], ["0/0", "0/1", "0/1", "0/0"])
-        self.assertEqual(site["FORMAT"], ["GT", "AD", "DP", "XD", "GQ", "DS", "GP", "PL"])
+        self.assertEqual(site["FORMAT"], ["GT", "AD", "DP", "XD", "GQ", "MPP", "DS", "GP", "PL"])
         # The target record is the same line in both files.
         self.assertEqual(self.vcf(prefix, "target")[2], [target])
 
@@ -1295,6 +1437,9 @@ class AllVcfTests(CommandTestCase):
         # Alternate bases are ordered by read count: T has 28 reads, A has 22.
         self.assertEqual((site["REF"], site["ALT"]), ("G", ["T", "A"]))
         self.assertEqual(site["FORMAT"], ["GT", "AD", "DP", "XD", "DS", "MPC"])
+        # MPP and PMC come from a genotype posterior, which a record of three alleles does not have.
+        self.assertNotIn("PMC=", site["INFO"])
+        self.assertIn("PMC=", self.vcf(prefix, "all")[2][0]["INFO"])
         self.assertEqual(site["samples"][3]["AD"], "20,0,22")
         self.assertEqual(site["samples"][3]["GT"], "0/2")
 
@@ -1341,6 +1486,8 @@ class HaplotypeVcfTests(CommandTestCase):
         # A marker where only the Ref tag has reads has no alternate allele.
         self.assertEqual((second["ALT"], [sample["GT"] for sample in second["samples"]]), ([], ["0/0"] * 3))
         self.assertFalse(any("ID=GQ" in line or "ID=GP" in line or "ID=PL" in line for line in header))
+        self.assertFalse(any("ID=MPP" in line or "ID=PMC" in line for line in header))
+        self.assertFalse(any("PMC=" in record["INFO"] for record in records))
 
         with open(str(prefix) + ".haplotypes.alleles.csv", newline="") as handle:
             allele_table = list(csv.DictReader(handle))

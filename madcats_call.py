@@ -39,7 +39,9 @@ updog 2.1.7 (GPL >= 3; https://github.com/dcgerard/updog).  Gerard D, Ferrão
     doi:10.1093/bioinformatics/btz852.
     From it: the allelic bias with its prior and starting values, the form
     of the term for reads that show the wrong allele, the ``norm`` prior with
-    its limits, and the free-weights prior (updog's ``flex``).
+    its limits, the free-weights prior (updog's ``flex``), and the two
+    summaries of the posterior written as MPP and PMC (updog's
+    ``maxpostprob`` and ``prop_mis``; see ``proportion_misgenotyped``).
 
 MADCATS's own, with no published counterpart: the estimate of the
 overdispersion and of one background-read rate for the whole table
@@ -91,11 +93,11 @@ problem per allele:
 The posteriors are *marginal*: one distribution per allele, not a joint
 distribution over whole genotypes.  With exactly two alleles the two
 marginals mirror each other, so the posterior of the alternate allele is the
-full genotype posterior and the record carries GQ, GP and PL.  With more
-alleles the most probable dosages need not add up to the ploidy;
+full genotype posterior and the record carries GQ, MPP, GP, PL and PMC.  With
+more alleles the most probable dosages need not add up to the ploidy;
 ``correct_dosages_to_ploidy`` (polyRAD's method) reconciles them, and the
 record carries MPC, the lowest marginal posterior among the called dosages,
-in place of GQ, GP and PL.
+in place of those fields.
 
 Likelihoods are kept as logarithms and only normalised posteriors are
 exponentiated, so a dosage that the reads make very improbable keeps a
@@ -2372,20 +2374,40 @@ def _two_allele_genotype(
     """Call a sample at a record with a reference and one alternate allele.
 
     Returns the allele dosages (None on a tie), the genotype quality, and the
-    GQ, DS, GP and PL values.  The alternate allele's posterior is the
+    GQ, MPP, DS, GP and PL values.  The alternate allele's posterior is the
     genotype posterior, because the reference dosage is the ploidy minus it.
+    MPP is its largest value (updog's ``maxpostprob``): the probability of the
+    called genotype, which GQ gives on the Phred scale.
     """
     alternate_posterior = posteriors[1]
     alternate_dosage = most_probable_dosage(alternate_posterior)
     quality = None if alternate_dosage is None else genotype_quality(alternate_posterior, alternate_dosage)
     values = [
         "." if quality is None else str(quality),
+        _decimal(max(alternate_posterior)),
         _decimal(posterior_mean_dosage(alternate_posterior), 3),
         ",".join(_decimal(probability) for probability in alternate_posterior),
         ",".join(str(value) for value in phred_scaled_likelihoods(log_likelihoods[1])),
     ]
     dosages = None if alternate_dosage is None else [ploidy - alternate_dosage, alternate_dosage]
     return dosages, quality, values
+
+
+def proportion_misgenotyped(genotype_posteriors: Sequence[Sequence[float]]) -> float:
+    """The share of the samples expected to have a wrong genotype at a record (updog's ``prop_mis``).
+
+    A sample's most probable genotype is wrong with a probability of one
+    minus that genotype's posterior, so the mean of those probabilities over
+    the samples is the expected share of wrong genotypes, as far as the model
+    fits the record.
+
+    updog averages over every sample it was given a depth for, and a sample
+    with a depth of 0 enters at the largest probability of the prior.  The
+    posteriors passed here are those of the samples with reads, which equals
+    updog's value when it is given the other samples as missing.
+    """
+    chance_wrong = [1.0 - max(posterior) for posterior in genotype_posteriors]
+    return sum(chance_wrong) / len(chance_wrong)
 
 
 def _multiallelic_genotype(
@@ -2430,15 +2452,16 @@ def format_record(
     depths: ``[sample][allele]`` read counts, in the order of ``alleles``.
     excluded_depths: reads per sample left out of ``depths`` (written as XD),
         or None for a record that uses every read.
-    two_allele_model: write GQ, GP and PL from the alternate allele's
-        posterior (requires exactly two alleles); otherwise write MPC.
+    two_allele_model: write GQ, MPP, GP, PL and INFO/PMC from the alternate
+        allele's posterior (requires exactly two alleles); otherwise write MPC.
 
     A genotype is written as missing, with its AD and DP kept, when the
     sample has fewer than ``min_depth`` reads, when no single dosage is most
     probable, when its confidence is below the threshold, or when too large a
-    share of its reads was excluded.  Returns the line, the tallies for the
-    QC report, and a ``BiasRow`` when an allelic bias was fitted (None
-    otherwise).
+    share of its reads was excluded.  Those thresholds do not enter PMC,
+    which is taken over every sample with reads.  Returns the line, the
+    tallies for the QC report, and a ``BiasRow`` when an allelic bias was
+    fitted (None otherwise).
     """
     result = call_record(depths, ploidies, options.settings)
     tallies: Counter = Counter(records=1)
@@ -2453,13 +2476,14 @@ def format_record(
 
     # What follows GT, AD, DP and XD in a sample's column, and the confidence a genotype needs.
     if two_allele_model:
-        value_keys = ["GQ", "DS", "GP", "PL"]
+        value_keys = ["GQ", "MPP", "DS", "GP", "PL"]
         confidence_threshold = options.min_genotype_quality
     else:
         value_keys = ["DS", "MPC"]
         confidence_threshold = options.min_marginal_posterior
     sample_columns = []
     samples_called = 0
+    genotype_posteriors = []  # of the samples with reads at a two-allele record, for PMC
     for sample, (sample_depths, ploidy) in enumerate(zip(depths, ploidies)):
         depth = sum(sample_depths)
         excluded = excluded_depths[sample] if excluded_depths is not None else 0
@@ -2472,6 +2496,7 @@ def format_record(
                 dosages, confidence, values = _two_allele_genotype(
                     result.posteriors[sample], result.log_likelihoods[sample], ploidy
                 )
+                genotype_posteriors.append(result.posteriors[sample][1])
             else:
                 dosages, confidence, values = _multiallelic_genotype(result.posteriors[sample], ploidy, tallies)
             if depth < options.min_depth:
@@ -2500,6 +2525,8 @@ def format_record(
     info.append(f"NS={samples_called}")
     if result.has_reads and len(alleles) > 1:
         info.append("AF=" + ",".join(_decimal(frequency) for frequency in result.allele_frequencies[1:]))
+    if genotype_posteriors:
+        info.append("PMC=" + _decimal(proportion_misgenotyped(genotype_posteriors)))
     bias_row = None
     if result.bias_fit is not None:
         # The fitted bias, whether or not the genotypes were called with it.  Written for the
@@ -2836,6 +2863,14 @@ def vcf_header(
     lines += [
         '##INFO=<ID=NS,Number=1,Type=Integer,Description="Samples with a called genotype">',
         '##INFO=<ID=AF,Number=A,Type=Float,Description="Estimated frequency of each alternate allele">',
+    ]
+    if vcf_type != VCF_HAPLOTYPE:
+        lines.append(
+            '##INFO=<ID=PMC,Number=1,Type=Float,Description="Estimated proportion of samples with a wrong genotype: '
+            'one minus the mean of MPP over the samples with reads, whether or not their genotype passed the filters '
+            "(updog's prop_mis; two-allele records)\">"
+        )
+    lines += [
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype; allele copies are unphased">',
         '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Reads of each allele">',
         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Reads used for the call (the sum of AD)">',
@@ -2846,6 +2881,8 @@ def vcf_header(
             'rows that do not show the position elsewhere">',
             '##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Phred-scaled posterior probability that GT is wrong '
             '(two-allele records)">',
+            '##FORMAT=<ID=MPP,Number=1,Type=Float,Description="Posterior probability of the most probable genotype, '
+            "which is GT when a genotype is called (updog's maxpostprob; two-allele records)\">",
         ]
     lines.append(
         '##FORMAT=<ID=DS,Number=A,Type=Float,Description="Posterior mean number of copies of each alternate allele">'

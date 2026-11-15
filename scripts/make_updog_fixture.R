@@ -21,6 +21,13 @@
 #               with the bias estimated and the sequencing error and
 #               overdispersion held fixed, for the norm and the hw (binomial)
 #               genotype distributions.
+#   no_read_marker  one marker in which some samples have no reads, fitted as
+#               the markers above, twice: with those samples given a depth of
+#               0, which updog keeps in the fit with a posterior equal to the
+#               prior, and with them given NA, which updog leaves out.
+# Every fit also records updog's maxpostprob (each sample's largest posterior
+# probability) and prop_mis (one minus the mean of maxpostprob), which
+# madcats_call writes to its VCFs as MPP and PMC.
 # The committed JSON was made with the updog version recorded inside it.
 
 suppressMessages(library(updog))
@@ -77,7 +84,8 @@ markers <- lapply(names(marker_sets), function(name) {
   list(name = name, ploidy = data$ploidy, allele_depth = data$allele_depth, marker_depth = data$marker_depth,
        prior = as.vector(fit$gene_dist), mean = fit$par$mu, standard_deviation = fit$par$sigma,
        genotypes = as.vector(fit$geno),
-       posteriors = lapply(seq_len(nrow(fit$postmat)), function(row) as.vector(fit$postmat[row, ])))
+       posteriors = lapply(seq_len(nrow(fit$postmat)), function(row) as.vector(fit$postmat[row, ])),
+       max_posterior = as.vector(fit$maxpostprob), proportion_misgenotyped = fit$prop_mis)
 })
 
 # Read counts with an allelic bias, as updog defines it: with bias h the expected
@@ -111,9 +119,31 @@ for (name in names(bias_sets)) {
       allele_depth = data$allele_depth, marker_depth = data$marker_depth,
       bias = fit$bias, log_likelihood = fit$llike, prior = as.vector(fit$gene_dist),
       genotypes = as.vector(fit$geno),
-      posteriors = lapply(seq_len(nrow(fit$postmat)), function(row) as.vector(fit$postmat[row, ])))
+      posteriors = lapply(seq_len(nrow(fit$postmat)), function(row) as.vector(fit$postmat[row, ])),
+      max_posterior = as.vector(fit$maxpostprob), proportion_misgenotyped = fit$prop_mis)
   }
 }
+
+# Samples without reads.  This marker is simulated after the others so that their
+# random draws, and with them the values above, stay as they were.
+no_read_data <- simulate(4L, rbinom(100, 4, 0.35))
+samples_without_reads <- c(3, 17, 18, 40, 41, 42, 77, 90)
+no_read_data$allele_depth[samples_without_reads] <- 0L
+no_read_data$marker_depth[samples_without_reads] <- 0L
+fit_fixed_read_model <- function(allele_depth, marker_depth) {
+  flexdog_full(refvec = allele_depth, sizevec = marker_depth, ploidy = no_read_data$ploidy,
+               model = "norm", verbose = FALSE, seq = 0, bias = 1, od = updog_overdispersion,
+               update_bias = FALSE, update_seq = FALSE, update_od = FALSE, itermax = 20000, tol = 1e-13)
+}
+given_depth_0 <- fit_fixed_read_model(no_read_data$allele_depth, no_read_data$marker_depth)
+given_na <- fit_fixed_read_model(replace(no_read_data$allele_depth, samples_without_reads, NA),
+                                 replace(no_read_data$marker_depth, samples_without_reads, NA))
+no_read_marker <- list(
+  ploidy = no_read_data$ploidy, allele_depth = no_read_data$allele_depth, marker_depth = no_read_data$marker_depth,
+  prior = as.vector(given_depth_0$gene_dist), prior_given_na = as.vector(given_na$gene_dist),
+  max_posterior = as.vector(given_depth_0$maxpostprob),
+  proportion_misgenotyped = given_depth_0$prop_mis,
+  proportion_misgenotyped_given_na = given_na$prop_mis)
 
 # Minimal JSON writer, so the script needs no package beyond updog.
 to_json <- function(value) {
@@ -139,7 +169,8 @@ fixture <- list(
   overdispersion = overdispersion,
   prior_fits = prior_fits,
   markers = markers,
-  bias_markers = bias_markers
+  bias_markers = bias_markers,
+  no_read_marker = no_read_marker
 )
 writeLines(to_json(fixture), "tests/fixtures/updog_norm.json")
 cat("Wrote tests/fixtures/updog_norm.json\n")

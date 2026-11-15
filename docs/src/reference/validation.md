@@ -352,7 +352,10 @@ of each table. Negative is too low. `call` is `--prior hwe --allele-bias auto`:
 
 - **Lettuce 3K DArTag** (the panel the filter was built on). The rows kept or dropped agreed with a
   bwa-mem classification for 98.2% of the rows of a MADCATS MADC and 94.9% of a vendor MADC, and
-  among the rows the filter decides, 97.3% and 94.8%.
+  among the rows the filter decides, 97.3% and 94.8%. blastn, on a sample of 18,763 vendor rows,
+  made the same decision for 99.4 to 99.6% of the rows the filter dropped as `paralog` and for 69%
+  of the well-supported rows it kept (89% of their reads). The kept rows it would drop lie far
+  from the reference and hold about 1% of the kept reads.
 - **Delta smelt GT-seq, placement.** The filter placed all 368 markers where their two primers lie
   in the 437 Mb genome, and dropped no row of this paralog-free panel.
 - **Delta smelt GT-seq, planted copies.** With copies of 105 markers' tags added to the genome and

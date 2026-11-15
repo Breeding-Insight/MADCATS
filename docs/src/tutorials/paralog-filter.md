@@ -164,4 +164,7 @@ Labels were checked against an independent bwa-mem classification of the same le
 The drop or keep decision agreed for 98.2% of the rows of the MADCATS MADC and 94.9% of the vendor
 MADC. The vendor MADC's rows are more diverged, and bwa mem finds more distant copies than
 minimap2. Weighted by reads, the filtered vendor MADC agreed with the bwa-based prototype for 99.4%
-of reads.
+of reads. blastn, on a sample of the vendor MADC's rows, agreed with more than 99% of the rows the
+filter dropped as `paralog`. Like bwa mem, it would also drop some rows the filter keeps far from
+the reference, which hold about 1% of the kept reads
+(see [how the filter was checked](../commands/filter-paralogs.md#how-it-was-checked)).

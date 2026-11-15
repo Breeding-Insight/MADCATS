@@ -1630,6 +1630,77 @@ identity columns, and the QC totals do not count them. That is now
 documented and tested. Counting them would add a key to the QC JSON and was
 left for a decision.
 
+What the kept rows of the vendor MADC are. The filter keeps 113,667 of the
+lettuce DArT MADC's 732,534 rows. Read counts in this paragraph and the next
+add 256 to the negative cells.
+
+| Kept rows | Rows | Share of the kept reads |
+|---|---|---|
+| Canonical Ref and Alt, `on_target` | 5,687 | 87.5% |
+| RefMatch, AltMatch and Other, `on_target` | 105,913 | 12.4% |
+| `unmapped`, and 9 canonical rows kept despite their label | 2,067 | 0.1% |
+
+Most of the 105,913 are not haplotypes that recur in the germplasm. In
+89,070 of them (84%) no sample has 5 reads. Another 8,779 reach 5 reads only
+in 25 samples that stand apart from the other 351. The 25 are the samples in
+which the designed alleles hold less than three quarters of the kept reads
+(4 to 71%, against a median of 90% in the others), and the filter drops
+76.1% of their reads at the median, against 57.5%. The sample table names
+them (PI accessions, SAL lines, IVT 280, UC96US23, two other lines and two
+mixes of Salinas DNA with one of them) but not their species. Of the
+remaining rows, 6,367 reach 5 reads in one to four of the 351 samples and
+1,697 in five or more. These 1,697, at 1,037 markers, hold 95% of the reads
+that all 105,913 rows have in the 351 samples, and 1,290 of them are within
+3 differences of the reference at their site. bwa mem keeps 71% of the
+105,913 rows and 92% of their reads.
+
+Lettuce against blastn. blastn 2.17.0 (`-task blastn -word_size 11`, no
+masking, as for alfalfa below) aligned a sample of 18,763 rows of the vendor
+MADC to the v8 genome. Each row got a label from the bit scores by the
+filter's rule, with the marker's site widened by 20 bases as its home. The
+sample holds every kept `on_target` RefMatch, AltMatch and Other row that
+has 5 reads in a sample and reads in 5 samples ("well supported"), and
+random draws of the other rows. The whole table would have taken about 11
+hours on 8 threads. "Same decision" is to keep or to drop, as the default
+does.
+
+| Rows | In the sample | Filter and blastn, same decision | Filter and bwa mem | bwa mem and blastn |
+|---|---|---|---|---|
+| Dropped as `paralog`, well supported | 3,000 of 65,119 | 99.6% | 99.8% | 99.5% |
+| Dropped as `paralog`, others | 2,000 of 528,208 | 99.4% | 99.2% | 99.0% |
+| Dropped as `ambiguous` | 1,500 of 25,540 | 91.5% | 89.3% | 87.2% |
+| Kept as `on_target`, well supported | 8,763 of 8,763 | 68.9% (88.9% of reads) | 80.4% | 85.0% |
+| Kept as `on_target`, others | 3,000 of 97,150 | 50.8% (71.1% of reads) | 71.9% | 75.3% |
+| `unmapped`, which the filter keeps | 500 of 2,056 | 7.2% | 31.2% | 74.4% |
+
+The three agree on what the filter drops. They differ on what it keeps, and
+the difference grows with the row's distance from the reference at its own
+site (the score lost there, 10 for a substitution). Of the well-supported
+kept rows:
+
+| Distance from the site | Rows | Share of their reads | Kept by bwa mem and by blastn | Dropped by both |
+|---|---|---|---|---|
+| 1 to 3 | 3,726 | 76.9% | 97.4% | 0.8% |
+| 4 or 5 | 2,001 | 12.0% | 71.2% | 12.3% |
+| 6 or more | 3,036 | 11.1% | 27.4% | 42.5% |
+
+blastn aligns 86% of the rows 6 or more from the site over the whole tag
+there, at 95% identity or less, so they are diverged sequences and not
+partial reads. The genome-wide search seeds with 21 bases and misses copies
+of such sequences that bwa mem and blastn find, while the realignment at the
+site seeds with 11. Of the 1,697 rows that recur in the 351 samples, both
+aligners keep 1,480 (87%, with 91% of the reads) and both would drop 122
+(7%, with 5%). Rows the filter keeps and bwa mem would drop hold 0.97% of
+all kept reads, well-supported rows that blastn would drop hold 1.26%, and
+well-supported rows that both would drop hold 0.71%. These reads are
+concentrated. Of 2,986 markers, 61 have a tenth or more of their kept reads
+in rows bwa mem would drop, 61 in rows blastn would, 33 in rows both would,
+and 10 have a quarter or more in rows both would. blastn places 90% of the
+sampled `unmapped` rows elsewhere, but all 2,056 of them hold 26,000 reads.
+So both aligners confirm the rows the filter drops, and it keeps about 1% of
+reads that they would not, in rows far from the reference. The two aligners
+share the reference with the filter, and their agreement is still not truth.
+
 Delta smelt GT-seq, placement against the primers. The public smelt data
 (see "Delta smelt GT-seq against alignment-based genotypes" under genotype
 calling) give a second species and platform, and an independent answer for

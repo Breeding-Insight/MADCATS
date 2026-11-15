@@ -254,7 +254,11 @@ It kept 113,667 rows, with 35.7% of the reads. See the
   genome copy on the hits it has. The rows kept or dropped agreed with a bwa-mem classification for
   98.2% of rows of a MADCATS MADC and 94.9% of a vendor MADC, whose rows are more diverged. Those
   figures count the canonical Ref and Alt rows, which the filter always keeps. Among the rows the
-  filter decides, they are 97.3% and 94.8%.
+  filter decides, they are 97.3% and 94.8%. The rows that differ are ones the filter keeps far
+  from the reference. Of the well-supported rows it kept from the vendor MADC, bwa mem and blastn
+  both keep 97% of those within 3 differences of their site and 27% of those 6 or more away, and
+  both would drop 43% of the latter. Kept rows that bwa mem would drop hold 1.0% of the kept
+  reads, and 61 of 2,986 markers have a tenth or more of their kept reads in such rows.
 - The filter aligns only the tag (81 bases by default), not the full read.
 - An allele of the marker that is as near a copy as it is to its own site is `ambiguous`. With
   copies planted one or two bases from the Ref tag, 8 of 349 rows of the markers themselves were
@@ -283,7 +287,18 @@ It kept 113,667 rows, with 35.7% of the reads. See the
 - **Placement.** On the same data the filter placed all 368 markers where their two primers lie in
   the genome, with CloneID positions or without. It left markers given a wrong position unplaced,
   not placed elsewhere.
-- **Against bwa mem.** See the lettuce figures above.
+- **Lettuce, against bwa mem and blastn.** See the figures above for bwa mem. blastn aligned a
+  sample of 18,763 rows of the vendor MADC. It made the filter's decision for 99.4 to 99.6% of
+  the rows dropped as `paralog`, for 91.5% of those dropped as `ambiguous`, and for 69% of the
+  well-supported rows the filter kept (89% of their reads). A well-supported row has 5 reads in a
+  sample and reads in 5 samples. The kept rows blastn would drop lie far from the reference (see
+  [Limitations](#limitations)).
+- **Lettuce, what the kept rows are.** Of the 113,667 rows kept from the vendor MADC, 5,687 are
+  the designed Ref and Alt alleles, with 87.5% of the kept reads. Of the 105,913 other `on_target`
+  rows, 84% never reach 5 reads in a sample, and 8% reach 5 reads only in 25 samples that differ
+  strongly from the other 351. In those 351 samples, 1,697 rows at 1,037 markers recur in five or
+  more samples and hold 95% of these rows' reads. The filter keeps a row when the genome has no
+  equal or better place for it. Whether the row is an allele depends on its read support.
 - **Alfalfa, on its design genome.** The filter ran on two tetraploid F1 families of the alfalfa
   3K panel (7,517 rows of 54-base tags and 8,731 rows of 81-base tags) and the panel's haplotype
   database (23,469 haplotypes), on the genome the panel was designed on, chromosome set 1 of

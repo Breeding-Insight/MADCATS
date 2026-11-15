@@ -185,3 +185,6 @@ docs/book/
 # macOS
 .DS_Store
 examples/madcats-demo/results/
+
+# minimap2 indexes built by filter-paralogs
+*.mmi

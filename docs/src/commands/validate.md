@@ -14,10 +14,11 @@ madcats validate --generated <FILE> --expected <FILE> [--report <FILE>]
 for the same FASTQs. It reports row precision and recall by allele category, classification
 agreement on shared rows, and count agreement across shared row × sample cells.
 
-The reference MADC is used only for this comparison. It has no effect on `generate`.
+The reference MADC serves only this comparison. It has no effect on `generate`.
 
-Either file may carry the vendor's starred preamble rows; the header is located by its `AlleleID`
-cell.
+Either file may carry the vendor's starred preamble rows, because the command finds the header by
+its `AlleleID` cell, which need not be the first (HapApp's fixed-allele-ID output starts with
+`Code_version`).
 
 ## Required Arguments
 
@@ -32,7 +33,7 @@ cell.
 |--------|---------|-------------|
 | `--report <FILE>` | none | Also write the JSON report to this file |
 
-The report is always printed to stdout as JSON.
+The command always prints the report to stdout as JSON.
 
 ## Example
 
@@ -48,8 +49,9 @@ madcats validate \
 | Section | Contents |
 |---------|----------|
 | `sample_overlap` | Samples in each file and in common |
+| `count_overflow` | For each file, the negative count cells, the markers they fall in, and the minimum and maximum count. Negative counts with a maximum of 127 point to signed 8-bit overflow in a vendor file, and the command prints a warning |
 | `allele_rows` | Rows in common, precision, recall, generated-only and expected-only counts, `classification_agreement` on shared rows, category counts, and `by_category` precision/recall |
-| `common_row_count_cells` | Over shared rows × shared samples: exact-match fraction, mean absolute error, Pearson r, and count totals with their ratio |
+| `common_row_count_cells` | Exact-match fraction, mean absolute error, Pearson r, and count totals with their ratio over shared rows × shared samples |
 | `nonzero_union_count_cells` | The same agreement statistics over cells nonzero in either file |
 
 ## Interpreting the Results

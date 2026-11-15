@@ -1,0 +1,176 @@
+#!/usr/bin/env Rscript
+# Writes tests/fixtures/updog_norm.json: reference values from updog that
+# tests/test_call.py compares the normal-shaped prior of madcats_call against.
+#
+# Usage (from the repository root, with updog installed):
+#   Rscript scripts/make_updog_fixture.R
+#
+# The fixture holds two sets of values:
+#   prior_fits  updog's fit of the norm genotype distribution to given dosage
+#               weights (its internal flex_update_pivec), for weights of many
+#               shapes.  madcats_call.fit_normal_prior must find the same
+#               distribution.
+#   markers     complete updog fits (flexdog_full, model = "norm") of simulated
+#               read counts, with updog's allelic bias, sequencing error and
+#               overdispersion held fixed at no bias, no error and the given
+#               overdispersion.  With those fixed, updog's likelihood is the
+#               beta-binomial that madcats_call uses with a contamination rate
+#               of 0, so the posteriors must agree.
+#   bias_markers  complete updog fits (flexdog, from its five starting values
+#               of the bias) of read counts simulated with an allelic bias,
+#               with the bias estimated and the sequencing error and
+#               overdispersion held fixed, for the norm and the hw (binomial)
+#               genotype distributions.
+#   no_read_marker  one marker in which some samples have no reads, fitted as
+#               the markers above, twice: with those samples given a depth of
+#               0, which updog keeps in the fit with a posterior equal to the
+#               prior, and with them given NA, which updog leaves out.
+# Every fit also records updog's maxpostprob (each sample's largest posterior
+# probability) and prop_mis (one minus the mean of maxpostprob), which
+# madcats_call writes to its VCFs as MPP and PMC.
+# The committed JSON was made with the updog version recorded inside it.
+
+suppressMessages(library(updog))
+
+# madcats_call and polyRAD give the overdispersion as the sum of the two
+# beta-binomial shape parameters; updog as rho = 1 / (that sum + 1).
+overdispersion <- 30
+updog_overdispersion <- 1 / (overdispersion + 1)
+
+weight_sets <- list(
+  list(ploidy = 4L, weights = c(10, 40, 30, 15, 5)),            # one peak inside the range
+  list(ploidy = 4L, weights = c(90, 9, 0.9, 0.09, 0.01)),       # rare allele: mean below 0
+  list(ploidy = 4L, weights = c(0.01, 0.5, 3, 30, 66)),         # common allele
+  list(ploidy = 4L, weights = c(50, 0.5, 0.2, 0.5, 50)),        # two peaks: inbred lines
+  list(ploidy = 4L, weights = c(20, 20, 20, 20, 20)),           # flat
+  list(ploidy = 4L, weights = c(0, 1, 98, 1, 0)),               # one F1 class
+  list(ploidy = 4L, weights = c(60, 40, 0.001, 0.001, 0.001)),  # two neighbouring dosages
+  list(ploidy = 2L, weights = c(30, 50, 20)),
+  list(ploidy = 2L, weights = c(49, 2, 49)),
+  list(ploidy = 2L, weights = c(77, 51, 45)),
+  list(ploidy = 6L, weights = c(1, 2, 5, 20, 40, 25, 7)),
+  list(ploidy = 6L, weights = c(61, 13, 7, 21, 8, 0.4, 2.8)),
+  list(ploidy = 3L, weights = c(5, 30, 40, 10)),
+  list(ploidy = 8L, weights = c(2, 9, 20, 30, 22, 11, 4, 1.5, 0.5))
+)
+prior_fits <- lapply(weight_sets, function(set) {
+  fit <- updog:::flex_update_pivec(weight_vec = set$weights, model = "norm",
+                                   control = list(ploidy = set$ploidy, mu = set$ploidy / 2, sigma = 1))
+  list(ploidy = set$ploidy, weights = set$weights, prior = as.vector(fit$pivec),
+       mean = fit$par$mu, standard_deviation = fit$par$sigma)
+})
+
+# Simulated read counts of one allele: genotype classes of three kinds of population.
+set.seed(20240930)
+simulate <- function(ploidy, dosages) {
+  depth <- sample(15:90, length(dosages), replace = TRUE)
+  fraction <- dosages / ploidy
+  shape1 <- pmax(fraction * overdispersion, 1e-9); shape2 <- pmax((1 - fraction) * overdispersion, 1e-9)
+  read_fraction <- ifelse(fraction %in% c(0, 1), fraction, rbeta(length(dosages), shape1, shape2))
+  list(ploidy = ploidy, allele_depth = rbinom(length(dosages), depth, read_fraction), marker_depth = depth)
+}
+marker_sets <- list(
+  random_mating_tetraploid = simulate(4L, rbinom(90, 4, 0.3)),
+  one_family_hexaploid     = simulate(6L, sample(c(2, 3, 4), 80, replace = TRUE, prob = c(0.25, 0.5, 0.25))),
+  inbred_diploid           = simulate(2L, sample(c(0, 2), 70, replace = TRUE, prob = c(0.6, 0.4))),
+  rare_allele_tetraploid   = simulate(4L, rbinom(90, 4, 0.03))
+)
+markers <- lapply(names(marker_sets), function(name) {
+  data <- marker_sets[[name]]
+  fit <- flexdog_full(refvec = data$allele_depth, sizevec = data$marker_depth, ploidy = data$ploidy,
+                      model = "norm", verbose = FALSE, seq = 0, bias = 1, od = updog_overdispersion,
+                      update_bias = FALSE, update_seq = FALSE, update_od = FALSE,
+                      itermax = 20000, tol = 1e-13)
+  list(name = name, ploidy = data$ploidy, allele_depth = data$allele_depth, marker_depth = data$marker_depth,
+       prior = as.vector(fit$gene_dist), mean = fit$par$mu, standard_deviation = fit$par$sigma,
+       genotypes = as.vector(fit$geno),
+       posteriors = lapply(seq_len(nrow(fit$postmat)), function(row) as.vector(fit$postmat[row, ])),
+       max_posterior = as.vector(fit$maxpostprob), proportion_misgenotyped = fit$prop_mis)
+})
+
+# Read counts with an allelic bias, as updog defines it: with bias h the expected
+# read fraction xi of the allele becomes xi / (h * (1 - xi) + xi).
+simulate_biased <- function(ploidy, dosages, bias) {
+  depth <- sample(25:110, length(dosages), replace = TRUE)
+  fraction <- dosages / ploidy
+  fraction <- fraction / (bias * (1 - fraction) + fraction)
+  shape1 <- pmax(fraction * overdispersion, 1e-9); shape2 <- pmax((1 - fraction) * overdispersion, 1e-9)
+  read_fraction <- ifelse(fraction %in% c(0, 1), fraction, rbeta(length(dosages), shape1, shape2))
+  list(ploidy = ploidy, allele_depth = rbinom(length(dosages), depth, read_fraction), marker_depth = depth)
+}
+bias_sets <- list(
+  tetraploid_bias_0.6     = list(data = simulate_biased(4L, rbinom(120, 4, 0.4), 0.6), simulated_bias = 0.6),
+  tetraploid_bias_1.9     = list(data = simulate_biased(4L, rbinom(120, 4, 0.55), 1.9), simulated_bias = 1.9),
+  tetraploid_no_bias      = list(data = simulate_biased(4L, rbinom(120, 4, 0.3), 1), simulated_bias = 1),
+  diploid_bias_0.5        = list(data = simulate_biased(2L, rbinom(100, 2, 0.5), 0.5), simulated_bias = 0.5),
+  hexaploid_family_bias_1.5 = list(
+    data = simulate_biased(6L, sample(c(1, 2, 3), 110, replace = TRUE, prob = c(0.25, 0.5, 0.25)), 1.5),
+    simulated_bias = 1.5)
+)
+bias_markers <- list()
+for (name in names(bias_sets)) {
+  data <- bias_sets[[name]]$data
+  for (model in c("norm", "hw")) {
+    fit <- flexdog(refvec = data$allele_depth, sizevec = data$marker_depth, ploidy = data$ploidy,
+                   model = model, verbose = FALSE, seq = 0, od = updog_overdispersion,
+                   update_seq = FALSE, update_od = FALSE, itermax = 20000, tol = 1e-13)
+    bias_markers[[length(bias_markers) + 1]] <- list(
+      name = name, model = model, ploidy = data$ploidy, simulated_bias = bias_sets[[name]]$simulated_bias,
+      allele_depth = data$allele_depth, marker_depth = data$marker_depth,
+      bias = fit$bias, log_likelihood = fit$llike, prior = as.vector(fit$gene_dist),
+      genotypes = as.vector(fit$geno),
+      posteriors = lapply(seq_len(nrow(fit$postmat)), function(row) as.vector(fit$postmat[row, ])),
+      max_posterior = as.vector(fit$maxpostprob), proportion_misgenotyped = fit$prop_mis)
+  }
+}
+
+# Samples without reads.  This marker is simulated after the others so that their
+# random draws, and with them the values above, stay as they were.
+no_read_data <- simulate(4L, rbinom(100, 4, 0.35))
+samples_without_reads <- c(3, 17, 18, 40, 41, 42, 77, 90)
+no_read_data$allele_depth[samples_without_reads] <- 0L
+no_read_data$marker_depth[samples_without_reads] <- 0L
+fit_fixed_read_model <- function(allele_depth, marker_depth) {
+  flexdog_full(refvec = allele_depth, sizevec = marker_depth, ploidy = no_read_data$ploidy,
+               model = "norm", verbose = FALSE, seq = 0, bias = 1, od = updog_overdispersion,
+               update_bias = FALSE, update_seq = FALSE, update_od = FALSE, itermax = 20000, tol = 1e-13)
+}
+given_depth_0 <- fit_fixed_read_model(no_read_data$allele_depth, no_read_data$marker_depth)
+given_na <- fit_fixed_read_model(replace(no_read_data$allele_depth, samples_without_reads, NA),
+                                 replace(no_read_data$marker_depth, samples_without_reads, NA))
+no_read_marker <- list(
+  ploidy = no_read_data$ploidy, allele_depth = no_read_data$allele_depth, marker_depth = no_read_data$marker_depth,
+  prior = as.vector(given_depth_0$gene_dist), prior_given_na = as.vector(given_na$gene_dist),
+  max_posterior = as.vector(given_depth_0$maxpostprob),
+  proportion_misgenotyped = given_depth_0$prop_mis,
+  proportion_misgenotyped_given_na = given_na$prop_mis)
+
+# Minimal JSON writer, so the script needs no package beyond updog.
+to_json <- function(value) {
+  if (is.list(value)) {
+    if (is.null(names(value))) {
+      return(paste0("[", paste(vapply(value, to_json, ""), collapse = ","), "]"))
+    }
+    fields <- vapply(names(value), function(name) {
+      paste0("\"", name, "\":", to_json(value[[name]]))
+    }, "")
+    return(paste0("{", paste(fields, collapse = ","), "}"))
+  }
+  if (is.character(value)) {
+    text <- paste0("\"", value, "\"")
+  } else {
+    text <- ifelse(is.na(value), "null", sprintf("%.17g", value))
+  }
+  if (length(value) == 1) text else paste0("[", paste(text, collapse = ","), "]")
+}
+
+fixture <- list(
+  updog_version = as.character(packageVersion("updog")),
+  overdispersion = overdispersion,
+  prior_fits = prior_fits,
+  markers = markers,
+  bias_markers = bias_markers,
+  no_read_marker = no_read_marker
+)
+writeLines(to_json(fixture), "tests/fixtures/updog_norm.json")
+cat("Wrote tests/fixtures/updog_norm.json\n")

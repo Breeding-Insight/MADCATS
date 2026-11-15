@@ -10,8 +10,8 @@ before `generate` (see [Choosing a Workflow](workflows.md)), and all of them fin
 
 ## Step 1: Build the Panel
 
-`madcats design` reconstructs each marker's canonical Ref and Alt tags from the design files. No
-reads are involved; the result is a platform-neutral reference-tag CSV you can inspect and reuse.
+`madcats design` reconstructs each marker's canonical Ref and Alt tags from the design files. It
+uses no reads, and the result is a platform-neutral reference-tag CSV you can inspect and reuse.
 
 ```bash
 madcats design \
@@ -38,13 +38,13 @@ madcats generate \
 ```
 
 `generate` can also read the design files directly (`--primers` + `--probe-design` in place of
-`--reference-tags`). The defaults are the recommended configuration; no evidence flags are needed.
+`--reference-tags`). The defaults are the recommended configuration, so you need no evidence flags.
 
 This writes:
 
 | File | Contents |
 |------|----------|
-| `results/project_MADC.csv` | The MADC table: one row per allele, one read-count column per sample |
+| `results/project_MADC.csv` | The MADC table, with one row per allele and one read-count column per sample |
 | `results/project_MADC.csv.qc.json` | Parameters, provenance and per-sample read accounting |
 | `results/project_MADC.csv.variants.csv` | One line per variant event per row |
 
@@ -55,7 +55,7 @@ warm cache in about a minute.
 
 > **Raw DArT deliveries.** Older DArT orders keep an inline barcode and the common sequence
 > `GATGGATCCAGTGC` in front of every amplicon. MADCATS detects this and stops with a message
-> naming the prefix; re-run with `--leading-anchor auto` (or pass the sequence explicitly).
+> naming the prefix. Re-run with `--leading-anchor auto` (or pass the sequence explicitly).
 
 ## Step 3 (Optional): Compare Against a Vendor MADC
 
@@ -70,10 +70,10 @@ madcats validate \
 
 ## Process the Whole Cohort at Once
 
-Run **one** `generate` over every sample whenever novel-allele discovery matters. The
+Run one `generate` over every sample whenever novel-allele discovery matters. The
 reproducibility evidence route counts supporting samples within the run, so splitting a cohort
-into batches weakens discovery in proportion to the split. Expensive upstream stages such as
-`normalize-reads` can be batched freely; feed all of their outputs to a single `generate`.
+into batches weakens discovery in proportion to the split. You can batch expensive upstream stages
+such as `normalize-reads` freely, but feed all of their outputs to a single `generate`.
 
 ## Next: HapApp
 
@@ -89,7 +89,7 @@ See [Output Formats](../reference/output-formats.md) for details.
 
 ## Next Steps
 
-- [Try the Example](example.md): run these steps on a small simulated project and check the output
-- [Choosing a Workflow](workflows.md): routes for other platforms and inputs
-- [madcats generate](../commands/generate.md): every option, grouped by pipeline stage
-- [Evidence Model](../reference/evidence-model.md): when a new sequence is reported as a row
+- [Try the Example](example.md) to run these steps on a small simulated project and check the output
+- [Choosing a Workflow](workflows.md) with routes for other platforms and inputs
+- [madcats generate](../commands/generate.md) for every option, grouped by pipeline stage
+- [Evidence Model](../reference/evidence-model.md) on when MADCATS reports a new sequence as a row

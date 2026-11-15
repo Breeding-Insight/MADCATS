@@ -14,7 +14,12 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          - os: ubuntu-latest
+            python: "3.9"
         include:
+          - os: ubuntu-24.04
+            python: "3.9"
           - os: macos-latest
             python: "3.13"
     runs-on: ${{ matrix.os }}
@@ -24,6 +29,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Install the optional genome aligner (filter-paralogs tests)
+        run: |
+          # mappy has no wheel for this macOS Python, and its source does not compile as the
+          # universal (arm64 + x86_64) binary that setup-python's interpreter asks for.
+          if [ "$RUNNER_OS" = "macOS" ]; then export ARCHFLAGS="-arch $(uname -m)"; fi
+          python -m pip install mappy
 
       - name: Run tests
         run: python -m unittest discover -s tests -v

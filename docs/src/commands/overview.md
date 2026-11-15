@@ -1,7 +1,7 @@
 # Command Overview
 
-MADCATS is a single executable with seven subcommands. Each handles one stage: defining the panel,
-adapting reads, counting, or checking the result.
+MADCATS is a single executable with nine subcommands. Each handles one stage of defining the panel,
+adapting reads, counting, filtering, checking the result, or calling genotypes.
 
 ## Command Structure
 
@@ -37,7 +37,7 @@ Each produces the reference-tag CSV that `generate` consumes.
 | Command | Description | Primary Use |
 |---------|-------------|-------------|
 | [`merge-pairs`](merge-pairs.md) | Merge overlapping paired-end reads | GT-seq PE, rhAmpSeq |
-| [`normalize-reads`](normalize-reads.md) | Orient and window non-primer-started reads; emits a window panel | AgriSeq, capture, merged amplicons |
+| [`normalize-reads`](normalize-reads.md) | Orient and window non-primer-started reads, and emit a window panel | AgriSeq, capture, merged amplicons |
 | [`window-scan`](window-scan.md) | Recommend a window length from the project's reads | Before the first `normalize-reads` of a new panel |
 
 ### Counting and Checking Commands
@@ -47,6 +47,18 @@ Each produces the reference-tag CSV that `generate` consumes.
 | [`generate`](generate.md) | Build the MADC count table | Every workflow ends here |
 | [`validate`](validate.md) | Compare a generated MADC with a reference MADC | Checking against a vendor delivery |
 
+### Cleaning Command (Optional)
+
+| Command | Description | Primary Use |
+|---------|-------------|-------------|
+| [`filter-paralogs`](filter-paralogs.md) | Drop or flag haplotypes a reference genome places at another locus. It needs `pip install 'madcats[genome]'` | Panels whose co-amplified paralogs inflate heterozygosity, in MADCATS, vendor or HapApp fixed-ID MADCs |
+
+### Genotype Calling Command
+
+| Command | Description | Primary Use |
+|---------|-------------|-------------|
+| [`call`](call.md) | Call genotypes from a MADC and write target, all-variant or haplotype VCFs | Diploid and polyploid genotypes without leaving MADCATS, from MADCATS, vendor or HapApp fixed-ID MADCs |
+
 ## Typical Workflows
 
 ### DArTag
@@ -55,6 +67,14 @@ Each produces the reference-tag CSV that `generate` consumes.
 madcats design --primers primers.csv --probe-design probes.txt --output tags.csv
 madcats generate --fastq-dir fastqs/ --reference-tags tags.csv --jobs 8 --output MADC.csv
 madcats validate --generated MADC.csv --expected vendor_MADC.csv --report validation.json
+madcats call --madc MADC.csv --output-prefix genotypes --vcf target haplotype
+```
+
+### Paralog-heavy panel (optional genome filter)
+
+```bash
+madcats generate --fastq-dir fastqs/ --reference-tags tags.csv --min-identity 0.95 --output MADC.csv
+madcats filter-paralogs --madc MADC.csv --genome genome.fa --genome-index genome.sr.mmi --output MADC_filtered.csv
 ```
 
 ### AgriSeq
@@ -81,19 +101,19 @@ These options appear on several commands:
 | `--fastq-glob` | Filename glob within `--fastq-dir` (default `*`) |
 | `--probe-design` | Probe/marker design TSV or CSV with bracketed variants |
 | `--tag-length` | Tag or window length in bases |
-| `--jobs` | Samples processed in parallel (default: up to 4) |
+| `--jobs` | Number of samples to process in parallel, up to 4 by default |
 | `--output` / `--out-dir` | Output file or folder |
 | `--report` / `--qc-output` | QC/provenance JSON path (each command has a default beside its output) |
 
 ## QC and Provenance
 
 Every command that processes reads writes a JSON report recording its parameters, version, inputs
-and read accounting, beside its main output. Keep it with the result, since it records exactly how
-the table was made.
+and read accounting, beside its main output. Keep it with the result, since it records how MADCATS
+made the table.
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `2` | Error: invalid arguments, missing or malformed input, or a design inconsistency (the message names the cause) |
+| `2` | Error from invalid arguments, missing or malformed input, or a design inconsistency (the message names the cause) |

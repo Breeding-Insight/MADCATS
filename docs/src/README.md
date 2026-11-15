@@ -32,29 +32,29 @@ The name also reflects the tool's origins as a FASTQ-to-MADC workflow, where MAD
 
 ## Key Features
 
-- **Open and deterministic**: every threshold is on the command line, and a QC/provenance JSON is
-  written beside every result
-- **Platform-independent**: validated on DArTag, AgriSeq (Ion Torrent), GT-seq, rhAmpSeq and
-  Flex-Seq capture data with the same code
-- **Evidence-based discovery**: a new microhaplotype is reported only when the reads support it
+- **Open and deterministic.** Every threshold is on the command line, and MADCATS writes a
+  QC/provenance JSON beside every result.
+- **Platform-independent.** The same code has been validated on DArTag, AgriSeq (Ion Torrent),
+  GT-seq, rhAmpSeq and Flex-Seq capture data.
+- **Evidence-based discovery.** MADCATS reports a new microhaplotype only when the reads support it
   (see the [evidence model](reference/evidence-model.md)), and denoising never changes a sample's
-  Ref/Alt dosage
-- **Indel-aware**: designed indel markers are fully supported, and undesigned indels are recovered
-  with a gapped alignment that caps the number of substitutions and gaps
-- **No dependencies**: pure Python 3 standard library, with parallel workers and a reusable
-  per-sample cache. The optional genome paralog filter needs `mappy`
-- **Optional paralog filter**: for panels where co-amplified paralogs inflate heterozygosity,
+  Ref/Alt dosage.
+- **Indel-aware.** MADCATS fully supports designed indel markers and recovers undesigned indels
+  with a gapped alignment that caps the number of substitutions and gaps.
+- **No dependencies.** MADCATS uses only the Python 3 standard library, with parallel workers and a
+  reusable per-sample cache. The optional genome paralog filter needs `mappy`.
+- **Optional paralog filter.** For panels where co-amplified paralogs inflate heterozygosity,
   [`filter-paralogs`](commands/filter-paralogs.md) drops or flags haplotypes a reference genome
-  places at another locus
-- **Genotype calling**: [`call`](commands/call.md) estimates diploid and polyploid genotypes from
+  places at another locus.
+- **Genotype calling.** [`call`](commands/call.md) estimates diploid and polyploid genotypes from
   the MADC and writes VCFs of the designed targets, of all tag variants, or of whole
-  microhaplotypes
+  microhaplotypes.
 
 ## A prior MADC is not an input
 
-Generation uses only the FASTQs plus the assay design: the DArTag primer and probe files, the probe
-design alone, or a platform-neutral Ref/Alt tag manifest. A vendor MADC, when you have one, is used
-only *after* generation, as an external check with [`madcats validate`](commands/validate.md).
+Generation uses only the FASTQs plus the assay design, either the DArTag primer and probe files, the
+probe design alone, or a platform-neutral Ref/Alt tag manifest. You use a vendor MADC, when you have
+one, only *after* generation, as an external check with [`madcats validate`](commands/validate.md).
 
 ## Quick Example
 
@@ -75,18 +75,18 @@ madcats generate \
 
 ## Getting Started
 
-New to MADCATS? Start here:
+New to MADCATS? Begin with these pages:
 
-1. [Installation](getting-started/installation.md): install with pip or download a binary
-2. [Quick Start](getting-started/quickstart.md): your first MADC in two commands
-3. [Try the Example](getting-started/example.md): run a small simulated project and check it against the truth
-4. [Choosing a Workflow](getting-started/workflows.md): which commands your platform and inputs need
+1. [Installation](getting-started/installation.md) with pip or a downloaded binary
+2. [Quick Start](getting-started/quickstart.md) for your first MADC in two commands
+3. [Try the Example](getting-started/example.md) to run a small simulated project and check it against the truth
+4. [Choosing a Workflow](getting-started/workflows.md) to find which commands your platform and inputs need
 
 ## Scope
 
 MADCATS is an independent implementation of the MADC format and does not aim to reproduce any
-vendor's table exactly. How closely it agrees, and against which comparators, is recorded in
-[Validation & Accuracy](reference/validation.md).
+vendor's table exactly. [Validation & Accuracy](reference/validation.md) records how closely it
+agrees, and against which comparators.
 
 ## Getting Help
 

@@ -1,8 +1,8 @@
 # Try the Example
 
-MADCATS comes with a small simulated DArTag-style project that runs in seconds. The true
-haplotypes and genotypes behind its reads are included, so you can check every row of the output
-against what was simulated.
+MADCATS comes with a small simulated DArTag-style project that runs in seconds. It includes
+the true haplotypes and genotypes behind its reads, so you can check every row of the output
+against the simulation.
 
 ## Get the Data
 
@@ -24,14 +24,14 @@ The same files are in the repository under `examples/madcats-demo`.
 | `sample_names.csv` | Renames the samples from `S01` to `Line_01`, and so on |
 | `truth_haplotypes.csv` | Every simulated haplotype's 81-bp tag sequence |
 | `truth_genotypes.csv` | Each sample's simulated diploid genotype at each marker |
-| `make_demo_data.py` | The script that made all of the above; rerunning it reproduces the files exactly |
+| `make_demo_data.py` | The script that made all of the above. Rerunning it reproduces the files exactly |
 
 ## What Was Simulated
 
-Twelve diploid samples, eight markers with 81-bp tags, and about 550 reads per sample. Beyond each
-marker's designed Ref and Alt alleles:
+The project has twelve diploid samples, eight markers with 81-bp tags, and about 550 reads per
+sample. Beyond each marker's designed Ref and Alt alleles:
 
-- **Chr02** and **Chr04** carry an extra microhaplotype: a second SNP on the Ref or Alt background.
+- **Chr02** and **Chr04** carry an extra microhaplotype with a second SNP on the Ref or Alt background.
 - **Chr06** carries a haplotype with an undesigned 1-bp insertion.
 - **Chr08** has no Alt allele in any sample.
 - **Chr03** and **Chr07** have their primer on the reverse strand of the probe-design target.
@@ -60,8 +60,8 @@ madcats generate \
 
 ## Check the Results
 
-The table has 19 rows: a Ref and an Alt row for each of the 8 markers, plus the 3 microhaplotypes
-MADCATS discovered. With MADCATS 0.13.0 the discovered rows are:
+The table has 19 rows. There is a Ref and an Alt row for each of the 8 markers, plus the 3
+microhaplotypes MADCATS discovered. With MADCATS 0.13.0 the discovered rows are:
 
 | AlleleID | Variants | MarkerType | Reads (all samples) |
 |----------|----------|------------|--------------------:|
@@ -71,13 +71,13 @@ MADCATS discovered. With MADCATS 0.13.0 the discovered rows are:
 
 Things to look for:
 
-- **Every simulated haplotype is a row, and nothing else is.** Compare the `AlleleSequence` column
-  with `truth_haplotypes.csv`. The sequencing errors were merged back into their true haplotypes by
-  denoising, so none of them became rows.
-- **The insertion was recovered.** Its reads failed the substitution-only identity check and were
-  placed by gapped alignment. `Variants` reports the insertion left-aligned (`29:G>GC`), and
+- **The rows match the simulated haplotypes one to one.** Compare the `AlleleSequence` column
+  with `truth_haplotypes.csv`. Denoising merged the sequencing errors back into their true
+  haplotypes, so none of them became rows.
+- **The insertion was recovered.** Its reads failed the substitution-only identity check, and
+  gapped alignment placed them. `Variants` reports the insertion left-aligned (`29:G>GC`), and
   `clip=1` notes that it pushed the last Ref base out of the 81-bp window.
-- **Chr08 still has an Alt row.** Canonical Ref and Alt rows are always written. Its single read
+- **Chr08 still has an Alt row.** MADCATS always writes canonical Ref and Alt rows. Its single read
   comes from a sequencing error that happened to hit the SNP base.
 - **Counts follow the genotypes.** In each `Line_` column, a heterozygous sample splits its reads
   between two haplotypes and a homozygous sample puts nearly all of them on one. Compare with
@@ -93,8 +93,8 @@ Each of these reruns `generate` with one setting changed:
 
 | Change | What happens |
 |--------|--------------|
-| `--reproducible-min-samples 5 --depth-min-reads 0` | The 3 discovered rows disappear: each extra haplotype is carried by only 4 samples, and the depth route is off |
-| `--gapped-rescue off` | The Chr06 insertion row disappears; its reads are no longer assigned |
+| `--reproducible-min-samples 5 --depth-min-reads 0` | The 3 discovered rows disappear, because only 4 samples carry each extra haplotype and the depth route is off |
+| `--gapped-rescue off` | The Chr06 insertion row disappears, because MADCATS no longer assigns its reads |
 | `--partial-read-mode off` | Same 19 rows, but reads in rows fall from 6,661 to 6,195 |
 
 To compare two runs, use `validate`:
@@ -105,7 +105,7 @@ madcats validate --generated results/other_MADC.csv --expected results/demo_MADC
 
 ## Next Steps
 
-- [Choosing a Workflow](workflows.md): which commands your own data needs
-- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md): genotypes and VCFs from this example's MADC
-- [Evidence Model](../reference/evidence-model.md): how reads are assigned, discovered and denoised
-- [Output Formats](../reference/output-formats.md): every column of the MADC table
+- [Choosing a Workflow](workflows.md) to find which commands your own data needs
+- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md) for genotypes and VCFs from this example's MADC
+- [Evidence Model](../reference/evidence-model.md) on how MADCATS assigns, discovers and denoises reads
+- [Output Formats](../reference/output-formats.md) for every column of the MADC table

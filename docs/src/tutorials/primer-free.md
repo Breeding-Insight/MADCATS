@@ -1,7 +1,7 @@
 # Panels Without a Primer File
 
 Some providers do not share the primer file. The only thing MADCATS needs from it is where each tag
-starts inside the probe-design target, and that can be recovered from the reads.
+starts inside the probe-design target, and MADCATS can recover that from the reads.
 
 ## Option A: Bootstrap From a Delivered MADC
 
@@ -14,8 +14,8 @@ python3 scripts/madc_to_reference_tags.py \
   --output reference_tags.csv
 ```
 
-Markers that cannot become loci are announced with a `WARNING:` and listed with their reason in
-`reference_tags.csv.skipped.tsv`. The most common reason is Ref and Alt rows carrying the same
+The script announces markers that cannot become loci with a `WARNING:` and lists them with their
+reason in `reference_tags.csv.skipped.tsv`. The most common reason is Ref and Alt rows carrying the same
 sequence, which means the variant lies one base past the window or the design is presence/absence.
 
 Prefer this route when a vendor MADC is available. It reproduces the vendor's tags, including
@@ -36,11 +36,11 @@ madcats infer-design \
 ### How it works
 
 The tag must be a tag-length window of the bracket-expanded target that contains the variant. So
-inference only has to choose among a fixed set of candidate windows (about 4x tag length per locus);
-it never assembles new sequences. Because reads are primer-started, exact read prefixes almost
-always point clearly to one window. Ref/Alt identity comes from bracket order.
+inference only has to choose among a fixed set of candidate windows (about 4x tag length per locus)
+and never assembles new sequences. Because reads are primer-started, exact read prefixes almost
+always point to only one window. Ref/Alt identity comes from bracket order.
 
-Votes are counted in two tiers, in order:
+Inference counts votes in two tiers, in order:
 
 1. The exact tier counts reads whose prefix exactly matches a candidate window. When a locus has any
    exact votes, they decide.
@@ -80,19 +80,19 @@ madcats generate \
   --output project_MADC.csv
 ```
 
-Inference is a one-time operation per panel: freeze the CSV and reuse it for every later order.
+Inference is a one-time operation per panel, so freeze the CSV and reuse it for every later order.
 
 ## How Accurate Is Inference?
 
 | Project | Result |
 |---------|--------|
-| Sweetpotato DArTag (blinded) | 3,068/3,120 loci inferred: exact tier 100.0% correct (2,742), fuzzy tier 97.9% (319/326); zero Ref/Alt swaps. `generate` on the inferred panel reproduced 99.1% of rows with 100% classification agreement. |
+| Sweetpotato DArTag (blinded) | 3,068/3,120 loci inferred, with the exact tier 100.0% correct (2,742), the fuzzy tier 97.9% (319/326) and zero Ref/Alt swaps. `generate` on the inferred panel reproduced 99.1% of rows with 100% classification agreement. |
 | Delta smelt GT-seq | 368/368 loci exactly as the physical primers define them |
 | Alfalfa DArTag (raw reads) | 2,999/3,000 loci in the exact tier, all identical to the design tags |
-| Blackberry DArTag | 2,943/3,015 inferred; 18 wrong windows (0.6%), all at read-starved or short-amplicon loci |
+| Blackberry DArTag | 2,943/3,015 inferred, with 18 wrong windows (0.6%), all at read-starved or short-amplicon loci |
 
 ## Raw Deliveries and Tag Length
 
 `infer-design` takes the same `--leading-anchor` option as `generate` for raw DArT deliveries.
 `--tag-length` sets the panel's reported tag length (54, 81, 109, ...). Reads must reach it, and the
-design flanks must contain a full window; both are validated per locus.
+design flanks must contain a full window. MADCATS validates both per locus.

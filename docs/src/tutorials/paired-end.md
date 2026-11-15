@@ -28,16 +28,16 @@ is needed. Disagreeing overlap bases take the higher-quality call.
 | `pool` | Keep both mates as independent reads |
 | `drop` | Discard the pair |
 
-Mates are paired by read ID. Mismatched names or unequal read counts stop the run with an error.
+The merger pairs mates by read ID. Mismatched names or unequal read counts stop the run with an error.
 
 On a synthetic paired-end truth set with modeled adapter read-through, 100% of 513,715 pairs merged
 with 98.6% molecular count recovery.
 
 ## Non-Overlapping Pairs: Pool
 
-Dual-anchored capture designs (Flex-Seq: R1 anchors the left probe, R2 the right) have mates
+Dual-anchored capture designs (in Flex-Seq, R1 anchors the left probe and R2 the right) have mates
 covering opposite halves of a fragment neither read spans. The mates cannot be merged, and pooling
-them cannot count a window twice, because no window is covered by both mates. Concatenate both
+them cannot count a window twice, because the two mates never cover the same window. Concatenate both
 mates into one FASTQ per sample and feed that to `normalize-reads`.
 
 ## Multi-Window Tiling
@@ -52,23 +52,24 @@ amp17_snp2	ACGT...C...ACG[A/G]TACGT...	amp17
 ```
 
 Tiles must share an identical Ref expansion frame (validated at load), reads locate to the group,
-and then they are routed to member windows with `--group-routing`:
+and `--group-routing` then routes them to member windows:
 
 | Mode | Behaviour | Use when |
 |------|-----------|----------|
-| `nearest` (default) | Each read feeds exactly one tile: the fully covered window whose center is nearest the read's center | Reads are short relative to tile spacing |
-| `covered` | The read is excised at every member window it fully covers | Reads span several tiles, e.g. **merged fragments** |
+| `nearest` (default) | Each read feeds only one tile, the fully covered window whose center is nearest the read's center | Reads are short relative to tile spacing |
+| `covered` | MADCATS excises the read at every member window it fully covers | Reads span several tiles, e.g. merged fragments |
 
 Use `covered` with merged full-span fragments. They all share the amplicon's center, so with
-`nearest` one tile gets almost every read: on the GT-seq benchmark one tile took effectively all
-depth at 163 of 164 tiled loci. Each window still sees each fragment at most once in both modes.
+`nearest` one tile gets almost every read. On the GT-seq benchmark, one tile took nearly all depth
+at 163 of 164 tiled loci. Each window still sees each fragment at most once in both modes.
 
 Fresh placement forces tiles to excise distinct sequences, since twin windows would make every
-read an exact tie. Nudged members are listed in the QC as `locus_groups.window_dedup_nudged`.
+read an exact tie. The QC lists nudged members as `locus_groups.window_dedup_nudged`.
 
 ## Putting It Together
 
-The recipe validated on GT-seq: merge, normalize against a frozen panel with tile rows, generate.
+The recipe validated on GT-seq is to merge, normalize against a frozen panel with tile rows, and
+generate.
 
 ```bash
 madcats merge-pairs --fastq-dir raw/ --out-dir merged/ --jobs 8

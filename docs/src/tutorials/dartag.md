@@ -29,8 +29,8 @@ For each marker, `design` locates the left primer in the target sequence (either
 extracts the primer-started tag that carries the bracketed variant, verifies the variant position,
 and builds the Alt tag. If the design files disagree with each other, the run stops with an error.
 
-Open the CSV and check it: one row per marker with `RefSequence` and `AltSequence` of the tag
-length. This file is now the panel. You can hand it to collaborators or use it on later orders
+Open the CSV and check that it has one row per marker, with `RefSequence` and `AltSequence` of
+the tag length. This file is now the panel. You can hand it to collaborators or use it on later orders
 without the vendor files.
 
 ## 2. Generate the MADC
@@ -46,22 +46,23 @@ madcats generate \
 
 What happens, in order:
 
-1. Each read is assigned to a marker by its left-primer prefix (one mismatch allowed by default).
-2. The fixed-length tag is kept and accepted if it is within 80% identity of the marker's Ref or
-   Alt tag. Reads that fail get one more try with a gapped alignment, so undesigned indels are
+1. MADCATS assigns each read to a marker by its left-primer prefix (one mismatch allowed by
+   default).
+2. It keeps the fixed-length tag and accepts it if it is within 80% identity of the marker's Ref
+   or Alt tag. Reads that fail get one more try with a gapped alignment, so undesigned indels are
    still counted.
-3. Reads shorter than the tag are added to the count of a full-length allele whose start they
-   match exactly. They cannot create a new allele.
-4. Canonical Ref and Alt rows are always written. Any other sequence is reported only if it passes
-   one of the [evidence routes](../reference/evidence-model.md).
+3. Reads shorter than the tag add to the count of a full-length allele whose start they match
+   exactly. They cannot create a new allele.
+4. MADCATS always writes the canonical Ref and Alt rows, and reports any other sequence only if it
+   passes one of the [evidence routes](../reference/evidence-model.md).
 5. Rare sequences that differ by one base from a much more common sequence in the same sample are
    treated as sequencing errors and merged into it (abundance-skew denoising).
 
 ## 3. Read the QC
 
-`results/sweetpotato_MADC.csv.qc.json` accounts for every read. Look first at the per-sample totals:
-samples with very few assignable tags (on the sweetpotato project, twelve samples had fewer than
-100,000; the lowest had 23) usually contain mostly short or primer-less reads. Check them for
+`results/sweetpotato_MADC.csv.qc.json` accounts for every read. Look first at the per-sample totals.
+Samples with very few assignable tags (on the sweetpotato project, twelve samples had fewer than
+100,000 and the lowest had 23) usually contain mostly short or primer-less reads. Check them for
 missing data before using them downstream.
 
 ## 4. Optional: Compare with the Vendor MADC
@@ -77,8 +78,8 @@ The report gives row precision and recall by allele category plus cell-level cou
 this project every shared row had identical classification, and shared-cell count correlation was
 0.9997.
 
-Do not expect 100% row recall against a vendor table: 27.3% of the vendor's positive-count rows on
-this project had fewer than 10 reads in fewer than 2 samples of the vendor's *own* counts, below
+Do not expect 100% row recall against a vendor table, because 27.3% of the vendor's positive-count
+rows on this project had fewer than 10 reads in fewer than 2 samples of the vendor's *own* counts, below
 any within-project evidence threshold.
 
 ## Tuning
@@ -106,4 +107,4 @@ madcats generate ... --leading-anchor auto
 madcats generate ... --leading-anchor GATGGATCCAGTGC
 ```
 
-Reads without the anchor are counted as `reads_no_leading_anchor` in the QC.
+The QC counts reads without the anchor as `reads_no_leading_anchor`.

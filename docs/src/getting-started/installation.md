@@ -89,19 +89,19 @@ tar -xzf madcats-macos-x86_64.tar.gz
 ./madcats --help
 ```
 
-> **Note for macOS users**: the binaries are not notarized. If macOS reports that the developer
+> **For macOS users.** The binaries are not notarized. If macOS reports that the developer
 > cannot be verified, remove the quarantine flag:
 >
 > ```bash
 > xattr -d com.apple.quarantine madcats
 > ```
 
-The binary takes a couple of seconds to start (it unpacks its bundled interpreter on each run);
-processing speed is the same as the pip-installed command.
+The binary takes a couple of seconds to start (it unpacks its bundled interpreter on each run),
+but processing speed is the same as the pip-installed command.
 
 ### Windows
 
-No Windows binary is published yet. Install with `pip install madcats` under Python 3.9+.
+There is no Windows binary yet. Install with `pip install madcats` under Python 3.9+.
 
 ## From Source
 
@@ -137,6 +137,6 @@ python3 -m unittest discover -s tests -v
 
 ## Next Steps
 
-- [Quick Start](quickstart.md): generate your first MADC
-- [Try the Example](example.md): run a small simulated project in seconds
-- [Choosing a Workflow](workflows.md): which commands your data needs
+- [Quick Start](quickstart.md) to generate your first MADC
+- [Try the Example](example.md) to run a small simulated project in seconds
+- [Choosing a Workflow](workflows.md) to find which commands your data needs

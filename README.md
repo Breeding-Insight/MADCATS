@@ -16,12 +16,12 @@ The same code handles DArTag, AgriSeq (Ion Torrent), GT-seq, rhAmpSeq and Flex-S
 It needs only the Python 3 standard library. Every analysis threshold is a command-line option, and
 each run writes a JSON file recording its parameters and read counts.
 
-> **A prior MADC is not an input.** Generation uses only the FASTQs plus the assay design: the
+> **A prior MADC is not an input.** Generation uses only the FASTQs plus the assay design, either the
 > DArTag primer/probe files, a probe design alone, or a platform-neutral Ref/Alt tag manifest.
 
 ## Highlights
 
-- Closely matches vendor output: read counts correlate at r = 0.9997 with the vendor MADC on a
+- Closely matches vendor output. Read counts correlate at r = 0.9997 with the vendor MADC on a
   sweetpotato DArTag panel, and dosage calls agree 95–99% across five DArTag panels.
 - Designed to be platform independent, with testing performed on DArTag, GT-Seq, rhAmpSeq, Flex-Seq, and AgriSeq.
 - Builds the panel from vendor design files (`madcats design`), from the probe design and the reads
@@ -39,7 +39,7 @@ each run writes a JSON file recording its parameters and read counts.
   designed targets, of all tag variants, or of whole microhaplotypes.
 - Optional genome-based paralog filter (`madcats filter-paralogs`, needs
   `pip install 'madcats[genome]'`) for panels where co-amplified paralogous copies inflate
-  heterozygosity; works on vendor and HapApp fixed-allele-ID MADCs too.
+  heterozygosity. It works on vendor and HapApp fixed-allele-ID MADCs too.
 - Pure Python with no dependencies for everything else. Runs samples in parallel and caches
   per-sample results, so reruns are fast.
 
@@ -54,16 +54,16 @@ pip install madcats
 madcats --help
 ```
 
-To keep it isolated from other Python packages, use [pipx](https://pipx.pypa.io/):
+To keep it isolated from other Python packages, use [pipx](https://pipx.pypa.io/) and run
 `pipx install madcats`.
 
 ### Pre-built Binaries
 
-Standalone executables that need no Python installation are attached to each
-[release](https://github.com/Breeding-Insight/MADCATS/releases):
-- `madcats-linux-x86_64.tar.gz`: Linux
-- `madcats-macos-x86_64.tar.gz`: macOS (Intel)
-- `madcats-macos-aarch64.tar.gz`: macOS (Apple Silicon)
+Each [release](https://github.com/Breeding-Insight/MADCATS/releases) includes standalone
+executables that need no Python installation:
+- `madcats-linux-x86_64.tar.gz` for Linux
+- `madcats-macos-x86_64.tar.gz` for macOS (Intel)
+- `madcats-macos-aarch64.tar.gz` for macOS (Apple Silicon)
 
 ```bash
 # Download and extract (example: Linux)
@@ -126,7 +126,7 @@ madcats infer-design \
   --output reference_tags.csv
 ```
 
-Reads that are not primer-started (for example AgriSeq on Ion Torrent) are normalized first:
+Normalize reads that are not primer-started (for example AgriSeq on Ion Torrent) first:
 
 ```bash
 madcats normalize-reads --probe-design markers.tsv --fastq-dir raw_fastqs/ --out-dir normalized/ --jobs 8
@@ -139,13 +139,13 @@ madcats generate --fastq-dir normalized/ --fastq-glob "*.fastq" \
 
 Full documentation is available at [madcats.readthedocs.io](https://madcats.readthedocs.io), including:
 
-- [Getting Started](https://madcats.readthedocs.io/en/latest/getting-started/installation.html): installation and first steps
-- [Tutorials](https://madcats.readthedocs.io/en/latest/tutorials/dartag.html): walkthroughs for DArTag, primer-free, AgriSeq and paired-end data, the paralog filter and genotype calling
-- [Command Reference](https://madcats.readthedocs.io/en/latest/commands/overview.html): every subcommand and option
-- [Evidence Model](https://madcats.readthedocs.io/en/latest/reference/evidence-model.html): how alleles are counted, discovered and denoised
+- [Getting Started](https://madcats.readthedocs.io/en/latest/getting-started/installation.html) for installation and first steps
+- [Tutorials](https://madcats.readthedocs.io/en/latest/tutorials/dartag.html) with step-by-step examples for DArTag, primer-free, AgriSeq and paired-end data, the paralog filter and genotype calling
+- [Command Reference](https://madcats.readthedocs.io/en/latest/commands/overview.html) for every subcommand and option
+- [Evidence Model](https://madcats.readthedocs.io/en/latest/reference/evidence-model.html) on how MADCATS counts, discovers and denoises alleles
 
-The design rationale and version-by-version measurements behind every default are recorded in the
-[development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md).
+The [development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md)
+gives the design rationale and version-by-version measurements behind every default.
 
 ## Commands
 
@@ -176,18 +176,18 @@ Chr01_000123,ACGTTGCAGGTCAAGT,ACGTTGCAGGTCAAGTTCA...,ACGTTGCAGGTCAAGTTCG...
 `LocusGroup` are optional.
 
 ### Probe design (TSV/CSV)
-`MarkerName` and `TargetSequence` with one bracketed variant: a SNP such as `[C/T]` or an
+`MarkerName` and `TargetSequence` with one bracketed variant, either a SNP such as `[C/T]` or an
 anchored indel such as `[A/ACTTG]`.
 
 ### FASTQs
-One FASTQ (optionally gzipped) per sample in a folder. Sample columns are named by the FASTQ stem,
-or by a `--sample-lookup` table.
+One FASTQ (optionally gzipped) per sample in a folder. MADCATS names sample columns by the FASTQ
+stem, or by a `--sample-lookup` table.
 
 ## Output
 
 | File | Contents |
 |------|----------|
-| `project_MADC.csv` | MADC table: `AlleleID`, `CloneID`, `AlleleSequence`, summary columns, one read-count column per sample |
+| `project_MADC.csv` | MADC table with `AlleleID`, `CloneID`, `AlleleSequence`, summary columns and one read-count column per sample |
 | `project_MADC.csv.qc.json` | Parameters, provenance, and per-sample read accounting |
 | `project_MADC.csv.variants.csv` | One line per variant event per row (with `--annotations on`, the default) |
 
@@ -199,13 +199,13 @@ compared with the reference genotypes.
 
 | Platform | Accuracy | Validated against |
 |----------|----------|-------------------|
-| DArTag (sweetpotato, red clover, blackberry, alfalfa, pecan) | count r = 0.9997; dosage agreement 95.4–98.8% | vendor MADC, vendor/updog dosage, families, skim-seq VCF |
-| AgriSeq, Ion Torrent (honeybee, oyster) | 94.9% vs Torrent VariantCaller; 98.0% replicate concordance | vendor caller + replicates |
+| DArTag (sweetpotato, red clover, blackberry, alfalfa, pecan) | count r = 0.9997, dosage agreement 95.4–98.8% | vendor MADC, vendor/updog dosage, families, skim-seq VCF |
+| AgriSeq, Ion Torrent (honeybee, oyster) | 94.9% vs Torrent VariantCaller, 98.0% replicate concordance | vendor caller + replicates |
 | GT-seq (delta smelt) | 99.49% | independent BWA/bcftools truth VCF |
 | Flex-Seq capture (cranberry) | 95.13% genotype agreement | published population VCF + 20 trios |
 | rhAmpSeq (8 grape families) | 99.92–99.99% family transmission | Mendelian constraints + same-reads head-to-head |
 
-Details: [Validation & Accuracy](https://madcats.readthedocs.io/en/latest/reference/validation.html).
+See [Validation & Accuracy](https://madcats.readthedocs.io/en/latest/reference/validation.html) for details.
 
 ## Development
 
@@ -223,14 +223,14 @@ If MADCATS is useful in your work, please cite:
 > Sandercock, A.M. (2026). MADCATS: Marker-Anchored Discovery and Counting of Alleles from Targeted
 > Sequencing. GitHub repository: https://github.com/Breeding-Insight/MADCATS
 
-*(A formal article/DOI is planned; this section will be updated when available.)*
+*(A formal article/DOI is planned, and this section will be updated when available.)*
 
 For the MADC format, see Breeding Insight's
 [MADC file format overview](https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/).
 
-**AI assistance:** MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1
+**AI assistance.** MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1
 (Anthropic), which helped write its code and documentation. The authors directed the work, reviewed
-and tested the results, and are ultimately responsible for the application.
+and tested the results, and are responsible for the application.
 
 ## License
 

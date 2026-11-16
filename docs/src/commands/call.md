@@ -51,14 +51,21 @@ Two other priors helped under particular conditions and not otherwise:
 |--------------|----------|-----------------|------------------|
 | Families (F1, half-sibs) | `--prior norm` | In simulated tetraploid F1 families at 20 to 60 reads, over five draws, it gained 1.0 point (0.6 to 1.5), and 2.5 with `--allele-bias auto` on a biased panel. With it, `auto` kept no bias that was not there. In two F1 populations at about 10 reads, the error was 0.186 against 0.200, and 0.385 against 0.409 | In alfalfa and potato families at high read depth, it ranged from 0.8 points below `hwe` to 0.2 above. In one population it was up to 0.7 below |
 | Subpopulations at 60 reads or fewer, on a panel without bias | `--prior structure` | In simulated tetraploids it gained 0.8 to 5.5 points at 8 reads, 0.5 to 2.5 at 25, and 0.6 at 20 to 60. In potato clones of ten families thinned to 10 and 25 reads, it gained 0.9 and 0.7 points | The same potato clones at 300 reads showed no gain. In one F1 family it matched `hwe`. `call` refuses to combine it with a fitted bias or a selfing rate, and on a biased panel `norm` with `auto` was 1.5 points ahead of it |
+| A mix of these, or unknown | `--prior norm`, with `--allele-bias auto` for polyploids | In simulated tetraploids at 60 reads and hexaploids at 100, beside `hwe` with `auto`, it gained 0.9 to 2.7 points in F1 families and 0.7 to 29 in half-inbred samples, where `hwe` with `auto` did worse than `hwe` alone. In two subpopulations of hexaploids it gained 0.8 to 2.0 | In one random-mating population it was 0.04 to 0.19 points behind in tetraploids and 0.17 to 0.43 in hexaploids. On a biased panel at low depth it fell further behind there, by 0.9 points at 25 reads and 1.7 at 10. Diploids, and two subpopulations of tetraploids, stayed within 0.3 points. For inbred lines `--selfing-rate 0.95` was up to 0.5 points ahead of it |
 
-Three things to know before changing them:
+Four things to know before changing them:
 
 - **A bias matters only where there are heterozygotes.** It changes only the read fraction that
   the model expects a heterozygous genotype to show. Diploids, with one heterozygous class, moved
   by −0.1 to +0.6 points with it, and tetraploid potato gained 4 to 5. Inbred lines gain nothing.
   `fit` miscalls a quarter of their genotypes, and `auto` leaves them as without a bias and warns
   (see [Allelic bias](#allelic-bias)).
+- **Read depth changes how much each setting matters.** The prior counts most at low depth, where
+  a sample's reads leave its dosage uncertain. In simulated tetraploid F1 families without bias,
+  `norm` was 2.0 points ahead of `hwe` at 10 reads, 1.1 at 25, 0.5 at 60 and 0.1 at 200. A bias
+  takes depth to find. In one random-mating population on a biased panel, `auto` kept 39% of what
+  `fit` gained at 10 reads, 73% at 25, 96% at 60 and 98% at 200. Without a bias on the panel,
+  `fit` lost 0.9 points at 10 reads and 0.2 at 60, and `auto` lost none.
 - **The other priors and the bias cost time.** `norm` and `structure` take two to five times as
   long as `hwe`, and a fitted bias seven to eight times.
 - **The QC JSON counts the records called with the bias and those at a search limit.**

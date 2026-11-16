@@ -96,6 +96,16 @@ Change this when one of these describes your samples:
 | Families (F1, half-sibs) | Add `--prior norm` | The default prior assumes random mating. It takes two to five times as long |
 | Hexaploids, or fewer than about 50 reads, on a panel known to be biased | `--allele-bias fit` | `auto` keeps a bias only where it gains enough, which takes depth, while `fit` uses every bias |
 | Subpopulations at 25 reads or fewer, on a panel without bias | `--prior structure` | Each sample's prior comes from the samples most like it. You cannot combine it with a bias |
+| A mix of these, or you do not know | Add `--prior norm` | It fits the spread of dosages at each marker and assumes no mating pattern. It gains in families and partly inbred samples, and costs little in one random-mating population |
+
+Read depth changes how much these settings matter:
+
+- **The prior matters most at low depth**, where a sample's reads leave its dosage uncertain. In
+  simulated tetraploid families `--prior norm` gained 2.0 points at 10 reads, 0.5 at 60 and 0.1
+  at 200.
+- **A bias takes depth to find.** In simulated random-mating tetraploids on a biased panel, `auto`
+  kept 39% of what `fit` gained at 10 reads, 73% at 25 and 96% at 60. Where the panel had no
+  bias, `fit` lost 0.9 points at 10 reads and 0.2 at 60.
 
 [Which settings to use](../commands/call.md#which-settings-to-use) has the measurements behind
 each row.

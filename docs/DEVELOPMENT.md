@@ -1479,6 +1479,44 @@ Their target sits at position 110, one base past the
 109-bp window (the vendor's SNP report lists them without a position, and
 the 110th base segregates in the plates whose reads are longer than 109 bp).
 
+## Tiled markers share their reads (`generate --tile-groups`, 0.14.0)
+
+Tiles are markers that read the same tag window. They have a shared or
+nested left primer, and Ref tags that agree except at the markers' variant
+positions. A read that is reference at every one of those positions fits
+each tile equally well, and up to 0.13.0 `generate` dropped it as a tie.
+It now credits such a read to every tile of the amplicon that it fits.
+`--tile-groups auto|declared|off` (default `auto`) links `LocusGroup`
+members and finds undeclared tiles, and the design route also reads
+`LocusGroup` from the probe design. Ties across tile families are still
+dropped. The QC counts the extra credits as `tile_extra_credits_*`, so
+`reads_assigned_full_length` still counts each read once. The tile families
+are part of the per-sample cache key, and panels without tiles keep their
+caches.
+
+On the lettuce 3K DArTag panel (376 samples), 13 markers in 6 amplicons now
+get, in one full-panel run, the same table cells as running each tile in a
+panel of its own. 11 had zero reads before (now 6,562–103,852 each), and one
+pair with identical Ref tags had split its reads 12,299 / 80,306 (now about
+112,400 each). All other markers' rows are unchanged.
+
+Against 0.13.0, and against published genotypes. On 12 of those samples
+0.14.0 with `--tile-groups off` writes the MADC and the variants table of
+0.13.0, byte for byte. With the default only the 13 tiled markers differ,
+and the 8,898 rows of the other 2,987 markers are the same. `call --ploidy
+2` then called both tables, and the calls at the tiled markers were set
+beside the genotypes of the published realignment (96 sample-by-marker
+cells have one):
+
+| Table | Right | Wrong | Not called |
+|---|---|---|---|
+| 0.13.0 | 11 | 0 | 85 |
+| 0.14.0 | 92 | 0 | 4 |
+
+In 0.13.0 a tile kept only the reads that carry its own alternate allele,
+so a sample that is reference at the marker had no reads there and no call.
+The samples are inbred lines, so this did not test a heterozygote.
+
 ## Genome paralog filter (`filter-paralogs`, 0.14.0)
 
 On the public lettuce 3K DArTag data about two thirds of the reads come from
@@ -2050,6 +2088,36 @@ and 6) and stores the values in `tests/fixtures/polyrad_parity.json`:
 | Likelihoods, priors and posteriors from the same starting frequencies | 9 or more decimal places |
 | Allele frequencies and posteriors after `IterateHWE(tol = 1e-10)` | 7 decimal places |
 | Genotypes after the correction to the ploidy | identical (144 sample-by-allele values) |
+
+**Closest settings to each package, end to end.** The table above compares
+single functions on shared inputs. Here each package ran at its defaults on
+whole tables, and `call` ran with the settings nearest to it. updog's
+simulator (`rgeno`, `rflexdog`) drew four tables of 120 markers and 150
+samples in Hardy-Weinberg proportions, with a sequencing error of 0.005 and
+an overdispersion of 0.01. Two have an allelic bias drawn from a log-normal
+with a standard deviation of 0.5. Depth is 30 reads in the diploid, 60 in
+the tetraploids and 100 in the hexaploid. Each cell is the share of the
+table's 18,000 genotypes that `call` and the package gave alike, with
+`--min-dp 0 --min-gq 0`:
+
+| `call` settings, beside | Tetraploid, biased | Tetraploid, unbiased | Hexaploid, biased | Diploid, unbiased |
+|---|---|---|---|---|
+| `--prior hwe --overdispersion 9 --contamination-rate 0.001 --background-rate 0`, beside polyRAD `IterateHWE` | 100% | 100% | 100% | 100% |
+| The defaults, beside polyRAD `IterateHWE` | 87.1% | 87.5% | 81.0% | 97.4% |
+| `--prior norm --allele-bias fit`, beside updog `norm` | 99.0% | 99.4% | 94.8% | 99.99% |
+| `--prior norm --allele-bias auto`, beside updog `norm` | 97.3% | 98.7% | 86.6% | 100% |
+| `--prior hwe --allele-bias fit`, beside updog `hw` | 99.2% | 99.5% | 95.6% | 100% |
+
+With polyRAD's settings `call` gave polyRAD's genotype in all 72,000 cells.
+Its defaults do not, because they estimate the overdispersion and the
+background-read rate where polyRAD takes 9 and a contamination rate. Against
+updog the genotypes are near but not the same. updog estimates a sequencing
+error and an overdispersion at every marker, and `call` one background-read
+rate and one overdispersion for the table. The shares of genotypes equal to
+the simulated ones were alike, 94.0% for `call` with `norm` and `fit` and
+94.2% for updog `norm` in the biased tetraploid, 94.7% and 94.6% in the
+unbiased one, 84.7% and 83.6% in the hexaploid, and 100% in the diploid.
+This is one draw per table, from updog's own simulator.
 
 **Correction to the ploidy.** With more than two alleles the model finds the
 most probable dosage of each allele separately, and the dosages need not add

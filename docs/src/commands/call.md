@@ -73,8 +73,10 @@ The measurements behind this section are in
 ### The genotype model
 
 `call` adapts the model of [polyRAD](https://github.com/lvclark/polyRAD) (Clark, Lipka and Sacks
-2019), with the `norm` prior of [updog](https://github.com/dcgerard/updog) (Gerard and Ferrão
-2020) and a prior for structured populations as options. Within a record the model considers each
+2019), with the allelic bias and the `norm` prior of [updog](https://github.com/dcgerard/updog)
+(Gerard et al. 2018, Gerard and Ferrão 2020) and a prior for structured populations as options.
+[How `call` relates to polyRAD and updog](../tutorials/genotype-calling.md#how-call-relates-to-polyrad-and-updog)
+gives the settings closest to each package. Within a record the model considers each
 allele separately, against all the other alleles together:
 
 1. **Likelihood.** In a sample of ploidy *P* an allele can be present in 0 to *P* copies (its
@@ -113,8 +115,8 @@ homozygous dosages.
 **`norm`** makes no assumption about mating. Its dosage probabilities are proportional to a normal
 density at the dosages 0 to *P*, so it can be narrower than Hardy-Weinberg proportions (one
 family) or wider (subpopulations), and when the dosages have two peaks (inbred lines) it flattens
-out. It is updog's `norm` genotype distribution, fitted the way updog fits it. With the same
-likelihood, `call` and updog reach the same prior and the same genotypes. `call` fits it separately
+out. It is updog's `norm` genotype distribution. With the same likelihood, `call` and updog
+reached the same prior and the same genotypes on stored reference fits. `call` fits it separately
 for each ploidy among the samples, since a shape over the dosages of one ploidy says nothing about
 another. A ploidy with fewer than 10 samples uses Hardy-Weinberg proportions instead, and `call`
 prints a note and lists those ploidies in the QC JSON. In a haplotype record every allele gets its

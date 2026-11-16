@@ -7,10 +7,18 @@
 
 **Marker-Anchored Discovery and Counting of Alleles from Targeted Sequencing.**
 
-`madcats` is a command-line tool that turns targeted-sequencing FASTQs into MADC microhaplotype
-count tables. It counts the alleles a panel was designed for and finds additional ones in the reads.
-The output is a raw MADC table, which goes through HapApp before dosage calling and VCF conversion,
-or straight to `madcats call` for genotypes and VCFs.
+`madcats` is a command-line tool that turns targeted-sequencing FASTQs into
+[MADC](https://softwarehub.breedinginsight.org/learn/what-is-a-madc-file.html) microhaplotype count
+tables. A MADC (Missing Allele Discovery Counts) table records the read count of every
+microhaplotype in every sample. A microhaplotype is the short sequence a marker amplifies, so a
+marker can have more than two alleles, and the variants beside its target SNP are kept. `madcats`
+counts the alleles a panel was designed for and finds additional ones in the reads.
+
+The output is a raw MADC table. It goes through HapApp, which assigns fixed allele IDs for building
+a microhaplotype database and comparing sequencing runs. For existing downstream pipelines, a MADC
+converts to a VCF of SNP genotype calls, with
+[BIGr and updog](https://softwarehub.breedinginsight.org/learn/madc-to-vcf.html) after HapApp or
+with `madcats call` (experimental) straight from the raw table.
 
 The same code handles DArTag, AgriSeq (Ion Torrent), GT-seq, rhAmpSeq and Flex-Seq capture data.
 It needs only the Python 3 standard library. Every analysis threshold is a command-line option, and
@@ -23,7 +31,6 @@ each run writes a JSON file recording its parameters and read counts.
 
 - Closely matches vendor output. Read counts correlate at r = 0.9997 with the vendor MADC on a
   sweetpotato DArTag panel, and dosage calls agree 95–99% across five DArTag panels.
-- Designed to be platform independent, with testing performed on DArTag, GT-Seq, rhAmpSeq, Flex-Seq, and AgriSeq.
 - Builds the panel from vendor design files (`madcats design`), from the probe design and the reads
   when there is no primer file (`madcats infer-design`), or from your own Ref/Alt tag CSV.
 - Reports a new microhaplotype only when several samples carry it, one sample has many reads of it,
@@ -33,19 +40,14 @@ each run writes a JSON file recording its parameters and read counts.
 - Handles indels, including ones the panel was not designed for.
 - Works with AgriSeq-style reads that don't start at a primer (`madcats normalize-reads`) and with
   paired-end reads (`madcats merge-pairs`).
-- Writes raw MADC tables for HapApp, which prepares them for BIGr and other tools. Each row also
-  lists its variants and marker type.
-- Calls diploid and polyploid genotypes from the MADC (`madcats call`) and writes VCFs of the
-  designed targets, of all tag variants, or of whole microhaplotypes.
-- Optional genome-based paralog filter (`madcats filter-paralogs`, needs
+- Calls diploid and polyploid genotypes from the MADC (`madcats call`, experimental) and writes
+  VCFs of the designed targets, of all tag variants, or of whole microhaplotypes.
+- Optional genome-based paralog filter (`madcats filter-paralogs`, experimental, needs
   `pip install 'madcats[genome]'`) for panels where co-amplified paralogous copies inflate
   heterozygosity. It works on vendor and HapApp fixed-allele-ID MADCs too.
-- Pure Python with no dependencies for everything else. Runs samples in parallel and caches
-  per-sample results, so reruns are fast.
+- Runs samples in parallel and caches per-sample results, so reruns are fast.
 
 ## Installation
-
-### From PyPI (Recommended)
 
 Requires Python 3.9 or newer.
 
@@ -54,36 +56,11 @@ pip install madcats
 madcats --help
 ```
 
-To keep it isolated from other Python packages, use [pipx](https://pipx.pypa.io/):
-`pipx install madcats`.
-
-### Pre-built Binaries
-
-Each [release](https://github.com/Breeding-Insight/MADCATS/releases) includes standalone
-executables that need no Python installation:
-- `madcats-linux-x86_64.tar.gz` for Linux
-- `madcats-macos-x86_64.tar.gz` for macOS (Intel)
-- `madcats-macos-aarch64.tar.gz` for macOS (Apple Silicon)
-
-```bash
-# Download and extract (example: Linux)
-curl -LO https://github.com/Breeding-Insight/MADCATS/releases/latest/download/madcats-linux-x86_64.tar.gz
-tar -xzf madcats-linux-x86_64.tar.gz
-./madcats --help
-
-# Optional: install to PATH
-mkdir -p ~/bin && mv madcats ~/bin/
-# Add to PATH if not already (add to ~/.bashrc or ~/.zshrc):
-# export PATH="$HOME/bin:$PATH"
-```
-
-### From Source
-
-```bash
-git clone https://github.com/Breeding-Insight/MADCATS.git
-cd MADCATS
-pip install .            # or: python3 madcats.py --help (no install needed)
-```
+Each [release](https://github.com/Breeding-Insight/MADCATS/releases) also has standalone executables
+for Linux and macOS that need no Python. See
+[Installation](https://madcats.readthedocs.io/en/latest/getting-started/installation.html) for
+those, for `pipx`, for running from a clone, and for the optional aligner that `filter-paralogs`
+needs.
 
 ## Quick Start
 
@@ -117,23 +94,10 @@ madcats call \
   --output-prefix results/project
 ```
 
-No primer file? Infer the panel from the probe design and the reads:
-
-```bash
-madcats infer-design \
-  --probe-design panel_probe-design.txt \
-  --fastq-dir fastqs/ \
-  --output reference_tags.csv
-```
-
-Normalize reads that are not primer-started (for example AgriSeq on Ion Torrent) first:
-
-```bash
-madcats normalize-reads --probe-design markers.tsv --fastq-dir raw_fastqs/ --out-dir normalized/ --jobs 8
-madcats generate --fastq-dir normalized/ --fastq-glob "*.fastq" \
-  --reference-tags normalized/window_reference_tags.csv \
-  --tag-length 41 --min-supporting-freq 0.10 --output project_MADC.csv
-```
+The tutorials cover the other routes, which are panels
+[without a primer file](https://madcats.readthedocs.io/en/latest/tutorials/primer-free.html),
+[AgriSeq and other reads that do not start at a primer](https://madcats.readthedocs.io/en/latest/tutorials/agriseq.html)
+and [paired-end reads](https://madcats.readthedocs.io/en/latest/tutorials/paired-end.html).
 
 ## Documentation
 
@@ -158,38 +122,22 @@ gives the design rationale and version-by-version measurements behind every defa
 | `madcats window-scan` | Sweep candidate tag lengths and recommend one from the project's own reads |
 | `madcats generate` | Generate the MADC count table |
 | `madcats validate` | Compare a generated MADC against a reference MADC |
-| `madcats filter-paralogs` | Drop or flag MADC rows that a reference genome places at another locus (needs `mappy`) |
-| `madcats call` | Call genotypes from a MADC and write target, all-variant or haplotype VCFs |
+| `madcats filter-paralogs` | Drop or flag MADC rows that a reference genome places at another locus (experimental, needs `mappy`) |
+| `madcats call` | Call genotypes from a MADC and write target, all-variant or haplotype VCFs (experimental) |
 
-Run `madcats <command> --help` for full options.
+Run `madcats <command> --help` for full options. `filter-paralogs` and `call` are new in 0.14.0 and
+experimental, so their options, defaults and outputs may change.
 
-## Input Formats
+## Input and Output
 
-### Reference tags (CSV)
-The platform-neutral panel definition that `generate` consumes. Produced by `design`,
-`infer-design` or `normalize-reads`, or curated by hand.
-```
-MarkerName,LeftPrimerSequence,RefSequence,AltSequence
-Chr01_000123,ACGTTGCAGGTCAAGT,ACGTTGCAGGTCAAGTTCA...,ACGTTGCAGGTCAAGTTCG...
-```
-`VariantPositionInTagSequence`, `VariantRef`, `VariantAlt`, `RightPrimerSequence` and
-`LocusGroup` are optional.
-
-### Probe design (TSV/CSV)
-`MarkerName` and `TargetSequence` with one bracketed variant, either a SNP such as `[C/T]` or an
-anchored indel such as `[A/ACTTG]`.
-
-### FASTQs
-One FASTQ (optionally gzipped) per sample in a folder. MADCATS names sample columns by the FASTQ
-stem, or by a `--sample-lookup` table.
-
-## Output
-
-| File | Contents |
-|------|----------|
-| `project_MADC.csv` | MADC table with `AlleleID`, `CloneID`, `AlleleSequence`, summary columns and one read-count column per sample |
-| `project_MADC.csv.qc.json` | Parameters, provenance, and per-sample read accounting |
-| `project_MADC.csv.variants.csv` | One line per variant event per row (with `--annotations on`, the default) |
+`generate` reads one FASTQ per sample (optionally gzipped) and a panel definition, which is a
+reference-tag CSV from `design`, `infer-design` or `normalize-reads`, or one curated by hand. It
+writes the MADC table, a QC JSON with the parameters and per-sample read accounting, and a table
+of each row's variants. See
+[Input Formats](https://madcats.readthedocs.io/en/latest/getting-started/input-formats.html) and
+[Output Formats](https://madcats.readthedocs.io/en/latest/reference/output-formats.html). Breeding
+Insight's [MADC file format overview](https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/)
+describes the table's columns.
 
 ## Validation
 
@@ -224,9 +172,6 @@ If MADCATS is useful in your work, please cite:
 > Sequencing. GitHub repository: https://github.com/Breeding-Insight/MADCATS
 
 *(A formal article/DOI is planned, and this section will be updated when available.)*
-
-For the MADC format, see Breeding Insight's
-[MADC file format overview](https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/).
 
 **AI assistance.** MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1
 (Anthropic), which helped write its code and documentation. The authors directed the work, reviewed

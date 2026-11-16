@@ -5,112 +5,30 @@ Notable changes by version. Measurements behind each change are in the
 
 ## 0.14.0
 
-- New command `call`, in its own module, `madcats_call.py`. It calls genotypes from a MADC (from
-  `generate` or `filter-paralogs`, a vendor MADC, or HapApp's fixed-allele-ID output) and writes
-  one VCF per type. The types are `--vcf target` (the designed variant of each marker, and the
-  default), `all` (targets plus other base substitutions in the tags) and `haplotype` (whole tag
-  sequences as alleles). It sets ploidy per sample (`--ploidy`, `--ploidy-file`). The model,
-  adapted from polyRAD, is a beta-binomial likelihood with a uniform or Hardy-Weinberg prior,
-  iterated per record. Two-allele records carry `GQ`, `GP` and `PL`, and records with more alleles
-  carry `MPC`, the lowest
-  marginal posterior among the called dosages. Coordinates are marker-local. It uses only the
-  standard library. The tests compare its likelihoods, posteriors, converged allele frequencies
-  and genotypes with polyRAD 2.0.1 on stored reference values.
-- `call --prior structure` is a prior for samples from several subpopulations, a cline or families.
-  Each sample gets Hardy-Weinberg proportions at its own allele frequency, taken from the samples
-  most like it across the table's markers. The prior chooses how many of them to use by how well
-  they predict the sample at markers they were not chosen on, and picks 0 (the `hwe` prior) when
-  there is no structure. On thirteen tables (simulated groups, clines and families at 8 to 150
-  reads, and potato DArTag counts thinned to 10 and 25 reads) it called as many genotypes correctly
-  as polyRAD's `IteratePopStruct` or up to 0.7 points more, and gained 0.5 to 5.5 points over `hwe`
-  at 8 to 25 reads. It needs no extra dependency. It cannot yet be combined with
-  `--allele-bias fit` or `--selfing-rate`.
-- `call --allele-bias fit` estimates updog's allelic bias for every record with two alleles and
-  calls with it. With the other settings equal, the fitted bias is within 0.1% of updog 2.1.7's and
-  the genotypes are the same, on stored reference values. On two tetraploid alfalfa populations it
-  raised agreement with published dosages from 90.9% and 90.0% to 92.2% and 91.8% (against 93.0% and
-  92.7% for updog). Against SNP-array genotypes of 85 tetraploid potato clones it raised the share
-  of matching dosages from 92.3% to 96.6% (against 96.7% for updog). The VCF gains `INFO/BIAS`,
-  and `PREFIX.bias.csv` lists each fit.
-- `call --allele-bias auto` fits the bias as `fit` does and calls with it only the records where
-  it raises the log-likelihood of the read counts by 10 or more over no bias, and calls the
-  others without one. Against `fit`, on potato it keeps the gain (96.4% against 96.6% of array
-  dosages matched) and on polyploids pooled from real diploid reads, which have no bias, it
-  removes the loss (77.6% right for hexaploids at 50 reads, as without a bias, against 69.8%).
-  Every two-allele record still carries its fitted bias in `INFO/BIAS`, and one called without it
-  carries the flag `INFO/BIASUNUSED`. The bias table gains `Gain`, `Used` and `Rejected` columns.
-- `call --allele-bias auto` does not use a bias that ends at a limit of the search. Samples with
-  few heterozygotes, such as inbred lines, drive every fit to a limit, where homozygous samples
-  pass for heterozygous ones. On simulated inbred tetraploids 71.7% of dosages were right with
-  such biases used and 97.4% without. `call` warns, marks the records in the bias table and lists
-  them in the QC JSON. `--allele-bias fit` still uses such a bias, and warns when a fifth or more
-  of the fits end at a limit.
-- With `auto`, a record called without its bias gets the same calls as with `--allele-bias off`,
-  under the overdispersion and background rate estimated without a bias. Before, it was called
-  under the read model estimated with every bias fitted, which cost 1.9 points on a simulated
-  hexaploid table where no record kept its bias.
-- The read-model estimate with a bias fitted starts from the estimate made without one. Started
-  from a fixed value, its search could stop early. On that hexaploid table it chose an
-  overdispersion of 10 where 20 is far more probable.
-- `call` writes `MPP` (per sample) and `PMC` (per record) on two-allele records. These are
-  updog's `maxpostprob` and `prop_mis`, under the names BIGr's `updog2vcf` gives them. `MPP` is the
-  posterior probability of the most probable genotype, and `PMC` is one minus its mean over the
-  samples with reads, regardless of the genotype filters. With updog's prior, bias and
-  overdispersion, `MPP` is within 0.001 of updog 2.1.7's value and `PMC` equal to four decimals, on
-  stored reference fits. updog counts a sample given a depth of 0 at the largest probability of the
-  prior, while `call` leaves samples without reads out, as updog does when they are passed as
-  missing.
-- `call` estimates a background-read rate (`--background-rate auto`, the default) together with
-  the overdispersion. This rate is the share of reads that show an allele they did not come from.
-  It replaces
-  polyRAD's contamination rate, which is now 0 unless set, because contamination cannot account for
-  stray reads of an allele no other sample carries. The estimate gives every dosage its own
-  probability at each marker, so it does not depend on `--prior` and also works for inbred and
-  partly inbred samples, and it uses the worker processes.
-- Two-allele records are computed for one allele and mirrored for the other, and terms shared by
-  the samples of a ploidy are computed once. Results are unchanged.
-- `call --prior norm` adds updog's `norm` genotype distribution. It gives dosage probabilities a
-  normal shape, fitted per record and per ploidy, and does not assume random mating. With the same
-  likelihood, its fitted priors and genotypes match updog 2.1.7 on stored reference values. A
-  ploidy with fewer than 10 samples uses Hardy-Weinberg proportions.
-- `call --selfing-rate` adjusts the Hardy-Weinberg prior for self-fertilisation, for inbred lines
-  and partly selfing species. Its priors and iterated results match polyRAD's `selfing.rate`.
-- `call` estimates the beta-binomial overdispersion from the read counts by maximum likelihood
-  (`--overdispersion auto`, the default, or a number to set it). On simulated diploid, tetraploid,
-  hexaploid and mixed-ploidy populations it recovered the simulated value. polyRAD's default of 9
-  left 59% of target genotypes uncalled on two real tetraploid alfalfa populations, against 8–11%
-  with the estimated values.
-- New optional command `filter-paralogs`, in its own module, `madcats_paralogs.py`. It filters a
-  MADC (from `generate`, a vendor DArT MADC with or without its preamble, or HapApp's
-  fixed-allele-ID output) against a reference genome. It places each marker by its Ref tag
-  and labels every haplotype `on_target`, `paralog` or `ambiguous`. Paralog and ambiguous rows
-  are dropped (default) or flagged in a `GenomeLabel` column, while canonical rows are always kept.
-  It writes a labels sidecar, a markers sidecar and a QC JSON. It needs `mappy`
-  (`pip install 'madcats[genome]'`), imported only by this command, so MADCATS still has no
-  required dependencies. On the lettuce 3K DArTag panel the filtered vendor MADC agreed with a
-  bwa-mem-based prototype for 99.4% of reads.
-- `filter-paralogs --clone-positions ignore` keeps CloneID coordinates out of marker placement, for
-  a genome other than the one the CloneIDs refer to.
-- The MADC readers find a header row whose `AlleleID` is not the first cell, as in HapApp's
-  fixed-allele-ID output, which starts with `Code_version`.
-- `validate` and `filter-paralogs` warn when a MADC has negative read counts. Some vendor MADCs
-  store counts in a signed byte, so counts of 128–255 appear as count − 256, and counts of 256 or
-  more wrap silently. Both commands report a negative count with a maximum of exactly 127 as this
-  overflow and record it in their QC reports. Neither command corrects the counts, since the
-  wrapped ones cannot be recovered.
-  The lettuce 3K vendor MADC has 90,913 such cells across 1,108 markers.
-- For tiled markers, `generate` credits a read that fits several tiles of one amplicon to each of
-  them, instead of dropping it as a tie. Tiles are markers that read the same tag window, with a
-  shared or nested left primer and Ref tags that agree except at the markers' variant positions.
-  `--tile-groups auto|declared|off` (default `auto`) links `LocusGroup` members and detects
-  undeclared tiles. The design route now also reads `LocusGroup` from the probe design.
-  Ties across families are still dropped. The QC read accounting counts extra credits as
-  `tile_extra_credits_*`, so `reads_assigned_full_length` still counts each read once. On the
-  Lettuce 3K DArTag panel (376 samples), 13 markers in 6 amplicons now get, in one full-panel
-  run, the same table cells as running each tile in a panel of its own. 11 had zero reads before
-  (now 6,562–103,852 each), and one pair with identical tags had split its reads 12,299 / 80,306
-  (now about 112,400 each). All other markers' rows are unchanged.
-- The tile families are part of the per-sample cache key. Panels without tiles keep their caches.
+- New command [`call`](../commands/call.md) (experimental), in its own module, `madcats_call.py`.
+  It calls genotypes from a MADC and writes one VCF per type chosen with `--vcf`, which is
+  `target` (the default), `all` or `haplotype`. Ploidy can differ between samples. The model is
+  adapted from polyRAD, with the allelic bias and the `norm` prior adapted from updog, and it uses
+  only the standard library.
+- `call` takes its prior from `--prior` (`hwe`, `norm`, `structure` or `uniform`), with
+  `--selfing-rate` for inbred and partly selfing samples and `--allele-bias` (`off`, `fit` or
+  `auto`) for markers that read one allele more readily. It estimates the overdispersion and a
+  background-read rate from the table unless they are given.
+- New optional command [`filter-paralogs`](../commands/filter-paralogs.md) (experimental), in its
+  own module, `madcats_paralogs.py`. It drops or flags the MADC rows that a reference genome
+  places at another locus, and writes a labels table, a markers table and a QC JSON. It needs the
+  `mappy` aligner (`pip install 'madcats[genome]'`), so MADCATS still has no required
+  dependencies. `--clone-positions ignore` is for a genome other than the one the CloneIDs refer
+  to.
+- For tiled markers, which read the same tag window, `generate` credits a read that fits several
+  tiles of one amplicon to each of them. Before, it dropped the read as a tie. `--tile-groups`
+  (`auto`, `declared` or `off`, default `auto`) controls it, and `off` gives the output of 0.13.0.
+  The tile families are part of the per-sample cache key, so panels without tiles keep their
+  caches.
+- The MADC readers accept HapApp's fixed-allele-ID layout, whose header starts with
+  `Code_version`, and pass over a `readCountSum` column.
+- `validate` and `filter-paralogs` warn when a MADC has negative read counts, which some vendor
+  MADCs carry from counts stored in a signed byte, and record it in their QC reports.
 
 ## 0.13.0
 

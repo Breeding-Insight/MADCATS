@@ -1479,6 +1479,44 @@ Their target sits at position 110, one base past the
 109-bp window (the vendor's SNP report lists them without a position, and
 the 110th base segregates in the plates whose reads are longer than 109 bp).
 
+## Tiled markers share their reads (`generate --tile-groups`, 0.14.0)
+
+Tiles are markers that read the same tag window. They have a shared or
+nested left primer, and Ref tags that agree except at the markers' variant
+positions. A read that is reference at every one of those positions fits
+each tile equally well, and up to 0.13.0 `generate` dropped it as a tie.
+It now credits such a read to every tile of the amplicon that it fits.
+`--tile-groups auto|declared|off` (default `auto`) links `LocusGroup`
+members and finds undeclared tiles, and the design route also reads
+`LocusGroup` from the probe design. Ties across tile families are still
+dropped. The QC counts the extra credits as `tile_extra_credits_*`, so
+`reads_assigned_full_length` still counts each read once. The tile families
+are part of the per-sample cache key, and panels without tiles keep their
+caches.
+
+On the lettuce 3K DArTag panel (376 samples), 13 markers in 6 amplicons now
+get, in one full-panel run, the same table cells as running each tile in a
+panel of its own. 11 had zero reads before (now 6,562–103,852 each), and one
+pair with identical Ref tags had split its reads 12,299 / 80,306 (now about
+112,400 each). All other markers' rows are unchanged.
+
+Against 0.13.0, and against published genotypes. On 12 of those samples
+0.14.0 with `--tile-groups off` writes the MADC and the variants table of
+0.13.0, byte for byte. With the default only the 13 tiled markers differ,
+and the 8,898 rows of the other 2,987 markers are the same. `call --ploidy
+2` then called both tables, and the calls at the tiled markers were set
+beside the genotypes of the published realignment (96 sample-by-marker
+cells have one):
+
+| Table | Right | Wrong | Not called |
+|---|---|---|---|
+| 0.13.0 | 11 | 0 | 85 |
+| 0.14.0 | 92 | 0 | 4 |
+
+In 0.13.0 a tile kept only the reads that carry its own alternate allele,
+so a sample that is reference at the marker had no reads there and no call.
+The samples are inbred lines, so this did not test a heterozygote.
+
 ## Genome paralog filter (`filter-paralogs`, 0.14.0)
 
 On the public lettuce 3K DArTag data about two thirds of the reads come from
@@ -2050,6 +2088,36 @@ and 6) and stores the values in `tests/fixtures/polyrad_parity.json`:
 | Likelihoods, priors and posteriors from the same starting frequencies | 9 or more decimal places |
 | Allele frequencies and posteriors after `IterateHWE(tol = 1e-10)` | 7 decimal places |
 | Genotypes after the correction to the ploidy | identical (144 sample-by-allele values) |
+
+**Closest settings to each package, end to end.** The table above compares
+single functions on shared inputs. Here each package ran at its defaults on
+whole tables, and `call` ran with the settings nearest to it. updog's
+simulator (`rgeno`, `rflexdog`) drew four tables of 120 markers and 150
+samples in Hardy-Weinberg proportions, with a sequencing error of 0.005 and
+an overdispersion of 0.01. Two have an allelic bias drawn from a log-normal
+with a standard deviation of 0.5. Depth is 30 reads in the diploid, 60 in
+the tetraploids and 100 in the hexaploid. Each cell is the share of the
+table's 18,000 genotypes that `call` and the package gave alike, with
+`--min-dp 0 --min-gq 0`:
+
+| `call` settings, beside | Tetraploid, biased | Tetraploid, unbiased | Hexaploid, biased | Diploid, unbiased |
+|---|---|---|---|---|
+| `--prior hwe --overdispersion 9 --contamination-rate 0.001 --background-rate 0`, beside polyRAD `IterateHWE` | 100% | 100% | 100% | 100% |
+| The defaults, beside polyRAD `IterateHWE` | 87.1% | 87.5% | 81.0% | 97.4% |
+| `--prior norm --allele-bias fit`, beside updog `norm` | 99.0% | 99.4% | 94.8% | 99.99% |
+| `--prior norm --allele-bias auto`, beside updog `norm` | 97.3% | 98.7% | 86.6% | 100% |
+| `--prior hwe --allele-bias fit`, beside updog `hw` | 99.2% | 99.5% | 95.6% | 100% |
+
+With polyRAD's settings `call` gave polyRAD's genotype in all 72,000 cells.
+Its defaults do not, because they estimate the overdispersion and the
+background-read rate where polyRAD takes 9 and a contamination rate. Against
+updog the genotypes are near but not the same. updog estimates a sequencing
+error and an overdispersion at every marker, and `call` one background-read
+rate and one overdispersion for the table. The shares of genotypes equal to
+the simulated ones were alike, 94.0% for `call` with `norm` and `fit` and
+94.2% for updog `norm` in the biased tetraploid, 94.7% and 94.6% in the
+unbiased one, 84.7% and 83.6% in the hexaploid, and 100% in the diploid.
+This is one draw per table, from updog's own simulator.
 
 **Correction to the ploidy.** With more than two alleles the model finds the
 most probable dosage of each allele separately, and the dosages need not add
@@ -3349,6 +3417,127 @@ The real data sets with the rules as built, `--prior hwe`:
   points.
 - The limit rule under `auto` rejected 4 records on the potato clones, 25
   on the vendor MADC, 10 on smelt and 14 to 23 on the pooled tables.
+
+**`norm` with `auto` for an unknown kind of population, by ploidy and read
+depth.** The tutorial and the command page give `--prior norm`, with
+`--allele-bias auto` for polyploids, as the choice when the samples are a
+mix of kinds or their kind is not known. The measurements behind that row
+used updog's simulator (`rgeno` and `rflexdog`, with a sequencing error of
+0.005 and an overdispersion of 0.01) for five kinds of population:
+
+- one random-mating population,
+- one F1 family, with both parents drawn at the marker's allele frequency
+  and at least one of them heterozygous,
+- two subpopulations of 75 samples each, whose allele frequencies differ
+  as under an Fst of 0.15,
+- half-inbred samples (updog's `bb` genotypes with an overdispersion of
+  0.5),
+- inbred lines, with every sample homozygous.
+
+Each table has 60 markers by 150 samples and each scenario has three
+draws, so a row below is the mean over 27,000 genotypes. Diploids have
+about 30 reads for each sample and marker, tetraploids 60 and hexaploids
+100. A biased panel draws each marker's bias with a standard deviation of
+0.5 on the log scale. Every run estimated its own read model and wrote
+every genotype (`--min-dp 0 --min-gq 0`). Share of dosages right:
+
+| Samples | hwe | hwe, `auto` | norm | norm, `auto` | norm with `auto` less hwe with `auto` (range over the draws) |
+|---|---|---|---|---|---|
+| 4x random mating | 95.0% | 95.0% | 95.0% | 95.0% | -0.04 (-0.08 to +0.01) |
+| 4x F1 family | 95.1% | 94.2% | 95.6% | 95.6% | +1.48 (+0.48 to +2.03) |
+| 4x two subpopulations | 95.8% | 95.8% | 95.8% | 95.8% | -0.05 (-0.07 to -0.04) |
+| 4x half-inbred | 97.0% | 96.6% | 97.3% | 97.3% | +0.74 (+0.51 to +1.20) |
+| 4x inbred lines | 99.6% | 99.6% | 99.8% | 99.8% | +0.19 (+0.18 to +0.21) |
+| 4x random mating, biased | 81.8% | 94.0% | 81.2% | 93.8% | -0.19 (-0.27 to -0.07) |
+| 4x F1 family, biased | 81.3% | 90.8% | 80.6% | 93.4% | +2.68 (+1.37 to +3.77) |
+| 4x two subpopulations, biased | 86.9% | 94.0% | 86.6% | 94.2% | +0.22 (+0.06 to +0.39) |
+| 4x half-inbred, biased | 87.7% | 84.3% | 89.4% | 92.8% | +8.54 (+0.60 to +23.37) |
+| 4x inbred lines, biased | 99.4% | 99.4% | 99.7% | 99.7% | +0.26 (+0.20 to +0.38) |
+| 6x random mating | 87.1% | 87.1% | 86.9% | 86.9% | -0.17 (-0.29 to -0.08) |
+| 6x F1 family | 88.3% | 88.3% | 89.1% | 89.1% | +0.85 (+0.70 to +1.09) |
+| 6x two subpopulations | 89.2% | 88.5% | 89.4% | 89.2% | +0.75 (+0.36 to +1.53) |
+| 6x half-inbred | 71.5% | 57.3% | 87.8% | 86.4% | +29.04 (+28.16 to +30.11) |
+| 6x inbred lines | 98.8% | 98.8% | 99.4% | 99.4% | +0.60 (+0.52 to +0.70) |
+| 6x random mating, biased | 67.3% | 80.8% | 66.7% | 80.4% | -0.43 (-1.10 to +0.09) |
+| 6x F1 family, biased | 64.3% | 72.7% | 63.6% | 74.8% | +2.08 (+1.03 to +2.63) |
+| 6x two subpopulations, biased | 68.4% | 78.8% | 68.7% | 80.7% | +1.96 (+0.20 to +3.60) |
+| 6x half-inbred, biased | 67.7% | 57.1% | 79.3% | 76.2% | +19.10 (+14.70 to +24.69) |
+| 6x inbred lines, biased | 98.5% | 98.5% | 99.2% | 99.2% | +0.73 (+0.62 to +0.87) |
+
+- In diploids `norm` with `auto` was within 0.02 points of `hwe` with
+  `auto` in every scenario, and within 0.03 in every draw.
+- In one random-mating population `norm` with `auto` is 0.04 to 0.19
+  points under `hwe` with `auto` in tetraploids and 0.17 to 0.43 under in
+  hexaploids. Two hexaploid tables of one draw each, in the comparison
+  of `auto` across kinds of population above, had it 1.2 and 1.4 under.
+- In F1 families it is 0.9 to 2.7 points ahead. In two subpopulations it
+  is within 0.3 points in tetraploids and 0.8 to 2.0 ahead in hexaploids.
+- In half-inbred samples `hwe` with `auto` is under `hwe` alone in every
+  row, by 0.4 and 3.4 points in tetraploids and by 14.2 and 10.6 in
+  hexaploids. On the hexaploid panel without bias it used a bias at 45 of
+  60 markers in each draw, where `norm` used 3 to 7. `norm` with `auto`
+  is 0.7 to 29 points ahead of `hwe` with `auto`. In hexaploids `norm`
+  alone is 1.4 and 3.1 points ahead of `norm` with `auto`.
+- For inbred lines `auto` used no bias under either prior. `norm` is 0.2
+  to 0.3 points ahead of `hwe` in tetraploids and 0.6 to 0.7 in
+  hexaploids. `--prior hwe --selfing-rate 0.95` is 0.15 to 0.18 points
+  ahead of `norm` in tetraploids and 0.40 to 0.48 in hexaploids.
+
+Tetraploids at four read depths, from the same simulator and design, with
+`fit` as well. The rows at 60 reads are the tetraploid tables above:
+
+| Tetraploids | Reads | hwe | hwe, `auto` | hwe, `fit` | norm | norm, `auto` | norm, `fit` |
+|---|---|---|---|---|---|---|---|
+| Random mating | 10 | 77.4% | 77.4% | 76.5% | 77.2% | 77.2% | 76.1% |
+| Random mating | 25 | 88.5% | 88.5% | 88.1% | 88.5% | 88.5% | 88.0% |
+| Random mating | 60 | 95.0% | 95.0% | 94.9% | 95.0% | 95.0% | 94.9% |
+| Random mating | 200 | 98.5% | 98.5% | 98.4% | 98.5% | 98.5% | 98.5% |
+| F1 family | 10 | 77.2% | 76.4% | 71.4% | 79.3% | 79.3% | 77.1% |
+| F1 family | 25 | 88.8% | 87.9% | 83.4% | 89.9% | 89.9% | 89.0% |
+| F1 family | 60 | 95.1% | 94.2% | 89.9% | 95.6% | 95.6% | 95.6% |
+| F1 family | 200 | 98.5% | 98.5% | 97.5% | 98.7% | 98.7% | 98.7% |
+| Two subpopulations | 10 | 79.1% | 78.8% | 76.5% | 79.3% | 79.3% | 78.2% |
+| Two subpopulations | 25 | 89.7% | 89.6% | 88.6% | 89.7% | 89.7% | 89.2% |
+| Two subpopulations | 60 | 95.8% | 95.8% | 95.3% | 95.8% | 95.8% | 95.6% |
+| Two subpopulations | 200 | 98.7% | 98.7% | 98.6% | 98.7% | 98.7% | 98.7% |
+| Half-inbred | 10 | 79.1% | 70.2% | 62.6% | 84.0% | 83.9% | 82.1% |
+| Half-inbred | 25 | 85.4% | 84.9% | 86.8% | 90.7% | 90.7% | 91.8% |
+| Half-inbred | 60 | 97.0% | 96.6% | 95.2% | 97.3% | 97.3% | 96.7% |
+| Half-inbred | 200 | 99.0% | 99.0% | 98.9% | 99.1% | 99.1% | 99.1% |
+| Random mating, biased | 10 | 66.7% | 69.1% | 73.0% | 65.7% | 67.5% | 72.1% |
+| Random mating, biased | 25 | 78.3% | 84.6% | 86.9% | 77.6% | 83.7% | 86.9% |
+| Random mating, biased | 60 | 81.8% | 94.0% | 94.5% | 81.2% | 93.8% | 94.4% |
+| Random mating, biased | 200 | 83.6% | 98.0% | 98.2% | 83.0% | 97.9% | 98.2% |
+| F1 family, biased | 10 | 69.3% | 69.9% | 70.1% | 70.0% | 71.7% | 74.4% |
+| F1 family, biased | 25 | 78.1% | 82.1% | 82.8% | 78.2% | 84.8% | 87.8% |
+| F1 family, biased | 60 | 81.3% | 90.8% | 90.4% | 80.6% | 93.4% | 94.4% |
+| F1 family, biased | 200 | 82.6% | 96.0% | 95.5% | 81.6% | 97.7% | 97.9% |
+| Two subpopulations, biased | 10 | 72.4% | 73.7% | 76.1% | 72.6% | 73.5% | 77.2% |
+| Two subpopulations, biased | 25 | 80.8% | 85.7% | 87.5% | 80.8% | 86.0% | 88.2% |
+| Two subpopulations, biased | 60 | 86.9% | 94.0% | 94.9% | 86.6% | 94.2% | 95.3% |
+| Two subpopulations, biased | 200 | 86.0% | 97.9% | 98.3% | 85.7% | 98.0% | 98.3% |
+| Half-inbred, biased | 10 | 73.8% | 64.9% | 61.4% | 81.0% | 81.2% | 81.7% |
+| Half-inbred, biased | 25 | 85.1% | 83.9% | 84.6% | 87.7% | 89.1% | 90.8% |
+| Half-inbred, biased | 60 | 87.7% | 84.3% | 82.8% | 89.4% | 92.8% | 93.5% |
+| Half-inbred, biased | 200 | 91.2% | 97.9% | 98.5% | 91.4% | 98.4% | 98.8% |
+
+- The prior counts most at low depth. Without a bias on the panel or in
+  the run, `norm` is ahead of `hwe` in F1 families by 2.0 points at 10
+  reads, 1.1 at 25, 0.5 at 60 and 0.1 at 200, and in half-inbred samples
+  by 5.0, 5.3, 0.3 and 0.1. In one random-mating population and in two
+  subpopulations the two priors are within 0.2 points at every depth.
+- On a biased panel the cost of `norm` with `auto` in one random-mating
+  population grows as depth falls. It is 0.1 points under `hwe` with
+  `auto` at 200 reads, 0.2 at 60, 0.9 at 25 and 1.7 at 10.
+- A bias takes depth to find. Of what `fit` gained over `off` under `hwe`
+  in one random-mating population, `auto` kept 39% at 10 reads, 73% at
+  25, 96% at 60 and 98% at 200. In two subpopulations it kept 36%, 73%,
+  88% and 96%.
+- With `norm` on a biased panel, `fit` is ahead of `auto` by 0.5 to 4.6
+  points at 10 reads, 1.8 to 3.2 at 25, 0.6 to 1.1 at 60 and 0.2 to 0.4
+  at 200. On a panel without bias `fit` with `norm` loses 1.0 to 2.1
+  points at 10 reads and 0.6 or less at 60, and `auto` with `norm` loses
+  0.1 or less at every depth.
 
 **`MPP` and `PMC`, updog's two summaries of the posterior.** BIGr's
 `updog2vcf` writes updog's `maxpostprob` for each sample as `MPP` and its

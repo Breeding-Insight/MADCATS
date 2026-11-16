@@ -96,20 +96,19 @@ Change this when one of these describes your samples:
 | Families (F1, half-sibs) | Add `--prior norm` | The default prior assumes random mating. It takes two to five times as long |
 | Hexaploids, or fewer than about 50 reads, on a panel known to be biased | `--allele-bias fit` | `auto` keeps a bias only where it gains enough, which takes depth, while `fit` uses every bias |
 | Subpopulations at 25 reads or fewer, on a panel without bias | `--prior structure` | Each sample's prior comes from the samples most like it. You cannot combine it with a bias |
+| A mix of these, or you do not know | Add `--prior norm` | It fits the spread of dosages at each marker and assumes no mating pattern. It gains in families and partly inbred samples, and costs little in one random-mating population |
+
+Read depth changes how much these settings matter:
+
+- **The prior matters most at low depth**, where a sample's reads leave its dosage uncertain. In
+  simulated tetraploid families `--prior norm` gained 2.0 points at 10 reads, 0.5 at 60 and 0.1
+  at 200.
+- **A bias takes depth to find.** In simulated random-mating tetraploids on a biased panel, `auto`
+  kept 39% of what `fit` gained at 10 reads, 73% at 25 and 96% at 60. Where the panel had no
+  bias, `fit` lost 0.9 points at 10 reads and 0.2 at 60.
 
 [Which settings to use](../commands/call.md#which-settings-to-use) has the measurements behind
 each row.
-
-If you come from updog or polyRAD:
-
-| You used | The same model in `call` |
-|----------|--------------------------|
-| updog, `norm` | `--prior norm --allele-bias fit`. updog always fits a bias |
-| polyRAD, `IterateHWE` | The defaults. polyRAD's own settings are `--overdispersion 9 --contamination-rate 0.001 --background-rate 0` |
-| polyRAD, `IteratePopStruct` | `--prior structure`. The method differs, and the purpose is the same |
-
-`MPP` and `PMC` are updog's `maxpostprob` and `prop_mis`, named as BIGr's `updog2vcf` names them,
-and `INFO/BIAS` is updog's bias. BIGr's `filterVCF` filters on all three by these names.
 
 ## 5. Write Other Record Types
 
@@ -163,6 +162,34 @@ with SNP-array genotypes for every marker:
   panel and 121 among 179 on the other.
 
 These figures are from runs with the bias fitted.
+
+## How `call` Relates to polyRAD and updog
+
+`call` adapts its model from two R packages. Most of it follows
+[polyRAD](https://github.com/lvclark/polyRAD) (Clark et al. 2019), which gives it the likelihood
+of the read counts, the Hardy-Weinberg prior with its selfing rate, and the repeated estimate of
+the allele frequencies. Two parts follow [updog](https://github.com/dcgerard/updog) (Gerard et al.
+2018, Gerard and Ferrão 2020). They are the allelic bias (`--allele-bias`) and the `norm` prior
+(`--prior norm`).
+
+`call` is not a port of either package. It estimates one overdispersion and one background-read
+rate for the whole table. polyRAD takes a fixed overdispersion and contamination rate, and updog
+estimates an overdispersion and a sequencing-error rate at every marker. The search for the bias,
+the `auto` rule and the `structure` prior are MADCATS's own.
+
+If you have used one of the packages, these settings come closest to it. The last column is the
+share of genotypes that were the same in four simulated tables (one diploid, two tetraploid and
+one hexaploid, with 18,000 genotypes each), with the package at its defaults:
+
+| Package and model | Closest settings in `call` | Same genotypes |
+|-------------------|----------------------------|----------------|
+| polyRAD, `IterateHWE` | `--prior hwe --overdispersion 9 --contamination-rate 0.001 --background-rate 0` | All of them. These are polyRAD's settings. `call`'s defaults differ, because they estimate the overdispersion and the background-read rate |
+| updog, `norm` | `--prior norm --allele-bias fit` | 99% or more in the diploid and the tetraploids, and 95% in the hexaploid |
+| updog, `hw` | `--prior hwe --allele-bias fit` | 99% or more in the diploid and the tetraploids, and 96% in the hexaploid |
+| polyRAD, `IteratePopStruct` | `--prior structure` | Not compared. The purpose is the same and the method is different |
+
+`MPP` and `PMC` are updog's `maxpostprob` and `prop_mis`, and `INFO/BIAS` is updog's bias. They
+carry the names BIGr's `updog2vcf` gives them, so BIGr's `filterVCF` filters on all three.
 
 ## Limits
 

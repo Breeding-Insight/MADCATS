@@ -19,7 +19,7 @@ and those calls were compared with the reference genotypes.
 | AgriSeq, Ion Torrent (2 honeybee chips; 372-sample oyster) | 88.4% | 94.9% vs Torrent VariantCaller (152,698 cells); honeybee replicate concordance 98.0% | Vendor caller + replicates |
 | GT-seq (96-sample delta smelt) | 84.5% merged | 99.49% R1-only; 98.42% genotype agreement; `infer-design` 368/368 | Independent BWA/bcftools truth VCF |
 | Flex-Seq capture (192-sample cranberry) | 81.9% | 95.13% genotype agreement (295,068 cells); trio incompatibility 3.6% vs 6.2% for the comparison VCF's source | Published population VCF + 20 pedigree trios |
-| rhAmpSeq (608 runs, 8 grape families) | 86.6% | Family transmission 99.92–99.99%; 93.0% exact agreement with the platform's own pipeline on identical reads, with +19% / +79% more callable cells at 10x / 30x | Mendelian constraints + same-reads head-to-head |
+| rhAmpSeq (608 runs, 8 grape families) | 86.6% | Family transmission 99.92–99.99%; 93.0% exact agreement with the platform's pipeline |
 | Synthetic truth suite | — | Dosage 100% on clean, linked, paralog and repeat classes; paired-end merge 100% with 98.6% molecular recovery | Exact simulated truth |
 
 Accuracy depends more on the quality of the comparison data than on the platform. Where the
@@ -98,8 +98,7 @@ the published population VCF was 95.13%. Trio incompatibility was 3.6%, against
 
 Eight biparental families (763 runs) processed against one frozen 2,951-window panel. Across
 ~14,900 locus-family tests, 99.92–99.99% of haplotype calls in every family are alleles of that
-locus's four inferred parental haplotypes. Against the platform's own `analyze_amplicon` pipeline
-on identical reads, MADCATS was the more Mendelian-consistent of the pair (99.947% vs 99.850%).
+locus's four inferred parental haplotypes.
 
 ## Adapters
 

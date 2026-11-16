@@ -7,20 +7,28 @@
 
 **Marker-Anchored Discovery and Counting of Alleles from Targeted Sequencing.**
 
-`madcats` is a command-line tool that turns targeted-sequencing FASTQs into MADC microhaplotype
-count tables. It counts the alleles a panel was designed for and finds additional ones in the reads.
-The output is a raw MADC table, which goes through HapApp before dosage calling and VCF conversion.
+`madcats` is a command-line tool that turns targeted-sequencing FASTQs into
+[MADC](https://softwarehub.breedinginsight.org/learn/what-is-a-madc-file.html) microhaplotype count
+tables. A MADC (Missing Allele Discovery Counts) table records the read count of every
+microhaplotype in every sample. A microhaplotype is the short sequence a marker amplifies, so a
+marker can have more than two alleles, and the variants beside its target SNP are kept. `madcats`
+counts the alleles a panel was designed for and finds additional ones in the reads.
 
-The same code handles DArTag, AgriSeq (Ion Torrent), GT-seq, rhAmpSeq and Flex-Seq capture data.
-It needs only the Python 3 standard library. Every analysis threshold is a command-line option, and
-each run writes a JSON file recording its parameters and read counts.
+The output is a raw MADC table. It goes through HapApp, which assigns fixed allele IDs for building
+a microhaplotype database and comparing sequencing runs. For existing downstream pipelines, a MADC
+converts to a VCF of SNP genotype calls, with
+[BIGr and updog](https://softwarehub.breedinginsight.org/learn/madc-to-vcf.html) after HapApp.
+
+`madcats` handles DArTag, AgriSeq (Ion Torrent), GT-seq, rhAmpSeq and Flex-Seq capture data.
+It needs only the Python 3 standard library. Every analysis threshold can be adjusted via a command-line option, and
+each run writes a JSON file with its parameters and read counts processed during the analysis run.
 
 > **A prior MADC is not an input.** Generation uses only the FASTQs plus the assay design: the
-> DArTag primer/probe files, a probe design alone, or a platform-neutral Ref/Alt tag manifest.
+> DArTag primer/probe files, a probe design alone, or a platform-neutral Ref/Alt tag csv.
 
 ## Highlights
 
-- Closely matches vendor output: read counts correlate at r = 0.9997 with the vendor MADC on a
+- Closely matches vendor output: read counts correlate at r = 0.9997 with the DArT MADC on a
   sweetpotato DArTag panel, and dosage calls agree 95–99% across five DArTag panels.
 - Designed to be platform independent, with testing performed on DArTag, GT-Seq, rhAmpSeq, Flex-Seq, and AgriSeq.
 - Builds the panel from vendor design files (`madcats design`), from the probe design and the reads
@@ -34,8 +42,7 @@ each run writes a JSON file recording its parameters and read counts.
   paired-end reads (`madcats merge-pairs`).
 - Writes raw MADC tables for HapApp, which prepares them for BIGr and other tools. Each row also
   lists its variants and marker type.
-- Pure Python with no dependencies. Runs samples in parallel and caches per-sample results, so
-  reruns are fast.
+- Runs samples in parallel and caches per-sample results, so reruns are fast.
 
 ## Installation
 
@@ -190,7 +197,7 @@ compared with the reference genotypes.
 | GT-seq (delta smelt) | 99.49% | independent BWA/bcftools truth VCF |
 | Flex-Seq capture (cranberry) | 95.13% genotype agreement | published population VCF + 20 trios |
 | rhAmpSeq (8 grape families) | 99.92–99.99% family transmission | Mendelian constraints + same-reads head-to-head |
-
+> Important Note: MADCATS has been tested on several published and unpublished DArTag species panels. For the performance across the other targeted genotyping platforms, additional validation is needed on available data.
 Details: [Validation & Accuracy](https://madcats.readthedocs.io/en/latest/reference/validation.html).
 
 ## Development
@@ -212,7 +219,7 @@ If MADCATS is useful in your work, please cite:
 *(A formal article/DOI is planned; this section will be updated when available.)*
 
 For the MADC format, see Breeding Insight's
-[MADC file format overview](https://breeding-insight.github.io/BIGr_documentation/posts/madc-file-format/).
+[MADC file format overview](https://softwarehub.breedinginsight.org/learn/what-is-a-madc-file.html).
 
 **AI assistance:** MADCATS was developed in collaboration with Claude Opus 5.5 and Fable 5.1
 (Anthropic), which helped write its code and documentation. The authors directed the work, reviewed

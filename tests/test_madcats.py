@@ -1,7 +1,9 @@
 import argparse
+import contextlib
 import csv
 import dataclasses
 import gzip
+import io
 import json
 import random
 import tempfile
@@ -1859,6 +1861,132 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual([seq for seq, _ in records], ["ACGTACGT", "TTTT"])
         self.assertTrue(all(len(seq) == len(qual) for seq, qual in records))
 
+    def test_locate_leading_anchor_with_one_substitution(self):
+        anchor = "GATGGATCCAGTGC"
+        tail = "ACGTTGCAAGCTTGACCGATAGGCTTACGG"
+        barcode = "TTCATAAGTTGC"
+        cut = len(barcode) + len(anchor)
+        # exact anchor: same cut either way, no mismatch spent
+        self.assertEqual(mp.locate_leading_anchor(barcode + anchor + tail, anchor, 1), (cut, 0))
+        self.assertEqual(mp.locate_leading_anchor(barcode + anchor + tail, anchor, 0), (cut, 0))
+        # one substitution, at either end or inside, and an N: recovered only with mismatches allowed
+        for position in (0, 6, len(anchor) - 1):
+            for base in ("A", "N"):
+                if anchor[position] == base:
+                    continue
+                read = barcode + anchor[:position] + base + anchor[position + 1:] + tail
+                self.assertEqual(mp.locate_leading_anchor(read, anchor, 0), (-1, 0))
+                self.assertEqual(mp.locate_leading_anchor(read, anchor, 1), (cut, 1))
+        # two substitutions: no anchor
+        two = barcode + "C" + anchor[1:6] + "A" + anchor[7:] + tail
+        self.assertEqual(mp.locate_leading_anchor(two, anchor, 1), (-1, 0))
+        # an exact copy wins over an earlier one-substitution placement
+        damaged = anchor[:3] + "C" + anchor[4:]
+        read = "AA" + damaged + "TTTT" + anchor + tail
+        self.assertEqual(mp.locate_leading_anchor(read, anchor, 1), (2 + len(anchor) + 4 + len(anchor), 0))
+        # two one-substitution placements are ambiguous: no guessed cut
+        other = anchor[:9] + "T" + anchor[10:]
+        self.assertEqual(mp.locate_leading_anchor("AA" + damaged + "TT" + other + tail, anchor, 1), (-1, 0))
+        # the placement must end inside the search window, as an exact anchor must
+        late = "C" * (mp.LEADING_ANCHOR_SEARCH + 1) + damaged + tail
+        self.assertEqual(mp.locate_leading_anchor(late, anchor, 1), (-1, 0))
+        self.assertEqual(mp.locate_leading_anchor("C" * mp.LEADING_ANCHOR_SEARCH + damaged + tail, anchor, 1),
+                         (mp.LEADING_ANCHOR_SEARCH + len(anchor), 1))
+        # a read shorter than the anchor
+        self.assertEqual(mp.locate_leading_anchor(damaged[:-2], anchor, 1), (-1, 0))
+        # an anchor shorter than the minimum is matched exactly, whatever is allowed
+        short = anchor[:9]
+        self.assertLess(len(short), mp.LEADING_ANCHOR_MISMATCH_MIN_LENGTH)
+        self.assertEqual(mp.locate_leading_anchor(barcode + short + tail, short, 1), (len(barcode) + len(short), 0))
+        self.assertEqual(mp.locate_leading_anchor(barcode + "T" + short[1:] + tail, short, 1), (-1, 0))
+
+    def test_locate_leading_anchor_matches_a_full_scan(self):
+        # The pigeonhole search must find exactly the placements a scan of
+        # every window position finds.
+        anchor = "GATGGATCCAGTGC"
+        width = len(anchor)
+
+        def scan(read):
+            end = min(width + mp.LEADING_ANCHOR_SEARCH, len(read))
+            exact = read.find(anchor, 0, width + mp.LEADING_ANCHOR_SEARCH)
+            if exact >= 0:
+                return exact + width, 0
+            hits = [start for start in range(0, end - width + 1)
+                    if sum(a != b for a, b in zip(read[start:start + width], anchor)) <= 1]
+            return (hits[0] + width, 1) if len(hits) == 1 else (-1, 0)
+
+        rng = random.Random(11)
+        for _ in range(3000):
+            prefix = "".join(rng.choice("ACGT") for _ in range(rng.randint(0, 45)))
+            body = list(anchor)
+            for _ in range(rng.choice([0, 1, 1, 2])):
+                body[rng.randrange(width)] = rng.choice("ACGTN")
+            read = prefix + "".join(body) + "".join(rng.choice("ACGT") for _ in range(rng.randint(0, 30)))
+            self.assertEqual(mp.locate_leading_anchor(read, anchor, 1), scan(read), read)
+
+    def test_leading_anchor_mismatch_recovers_reads_and_is_keyed_only_when_used(self):
+        ref = "ACGTACGTACGTACGTACGT"
+        alt = ref[:6] + "T" + ref[7:]
+        locus = mp.Locus(0, "m1", ref[:6], "", "G", "T", 6, ref, alt)
+        anchor = "GATGGATCCAGTGC"
+        one = anchor[:-1] + "A"              # the anchor's last base misread
+        two = "C" + anchor[1:-1] + "A"       # two substitutions
+        with tempfile.TemporaryDirectory() as tmp:
+            fastq = Path(tmp) / "s1.fastq"
+            records = (["TTCATAAGTTGC" + anchor + ref + "CCGATC"] * 20
+                       + ["TTCATAAGTTGC" + one + ref + "CCGATC"] * 7
+                       + ["TTCATAAGTTGC" + two + ref + "CCGATC"] * 3
+                       + [ref + "CCGATCTGGG"] * 5)
+            with fastq.open("w") as handle:
+                for number, sequence in enumerate(records):
+                    handle.write(f"@r{number}\n{sequence}\n+\n{'I' * len(sequence)}\n")
+            sample = mp.Sample("s1", "s1", str(fastq), {})
+            base = dict(tag_length=20, max_offtarget_mismatches=4, primer_mismatches=1,
+                        partial_min_length=30, gap_band=10, leading_anchor=anchor)
+            exact = mp.AssignmentSettings(**base, leading_anchor_mismatches=0)
+            tolerant = mp.AssignmentSettings(**base, leading_anchor_mismatches=1)
+            strict = mp.process_sample(sample, [locus], mp.PrimerIndex([locus]), exact)
+            loose = mp.process_sample(sample, [locus], mp.PrimerIndex([locus]), tolerant)
+        self.assertEqual(strict.counts[(0, ref)], 20)
+        self.assertEqual(strict.qc["reads_no_leading_anchor"], 15)
+        self.assertEqual(strict.qc.get("reads_leading_anchor_mismatch", 0), 0)
+        self.assertEqual(loose.counts[(0, ref)], 27)
+        self.assertEqual(loose.qc["reads_no_leading_anchor"], 8)
+        self.assertEqual(loose.qc["reads_leading_anchor_mismatch"], 7)
+        # The cache key changes only when the substitution can change the read
+        # pass, so exact-anchor and anchor-free caches stay valid.
+        self.assertNotIn("leading_anchor_mismatches", exact.cache_arguments())
+        self.assertEqual(tolerant.cache_arguments()["leading_anchor_mismatches"], 1)
+        no_anchor = mp.AssignmentSettings(**{**base, "leading_anchor": ""}, leading_anchor_mismatches=1)
+        self.assertNotIn("leading_anchor_mismatches", no_anchor.cache_arguments())
+        self.assertEqual(exact.cache_arguments(), mp.AssignmentSettings(**base).cache_arguments())
+        # An anchor too short for a substitution is matched exactly, so 1 keeps the key 0 gives.
+        short = {**base, "leading_anchor": anchor[:mp.LEADING_ANCHOR_MISMATCH_MIN_LENGTH - 1]}
+        self.assertEqual(mp.AssignmentSettings(**short, leading_anchor_mismatches=1).cache_arguments(),
+                         mp.AssignmentSettings(**short, leading_anchor_mismatches=0).cache_arguments())
+
+    def test_infer_fuzzy_pass_cuts_raw_reads_at_the_anchor(self):
+        # The fuzzy pass once cleared the anchor it had just stored and voted
+        # with uncut raw reads; it must cut them as the exact pass does.
+        rng = random.Random(5)
+        flank = lambda n: "".join(rng.choice("ACGT") for _ in range(n))
+        target = flank(40) + "[A/G]" + flank(40)
+        anchor = "GATGGATCCAGTGC"
+        with tempfile.TemporaryDirectory() as tmp:
+            design = Path(tmp) / "design.tsv"
+            design.write_text("MarkerName\tTargetSequence\n" + f"m1\t{target}\n")
+            windows = mp.enumerate_variant_windows(target, 30)
+            ref_window = sorted(windows.values())[0][0]
+            read_tag = ref_window[:25] + ("A" if ref_window[25] != "A" else "C") + ref_window[26:]  # one error: fuzzy tier
+            fastq = Path(tmp) / "raw.fastq"
+            sequence = "TTCATAAGTTGC" + anchor + read_tag + "CCGATC"
+            fastq.write_text("".join(f"@r{n}\n{sequence}\n+\n{'I' * len(sequence)}\n" for n in range(5)))
+            mp._infer_fuzzy_init(str(design), 30, 3, ["m1"], (), anchor)
+            self.assertEqual(mp._INFER_STATE["leading_anchor"], anchor)
+            _, votes = mp._infer_fuzzy_scan(str(fastq))
+        self.assertEqual(sum(votes.values()), 5)
+        self.assertTrue(all(marker == "m1" for marker, _key in votes))
+
     def test_raw_delivery_is_detected_and_named(self):
         anchor = "GATGGATCCAGTGC"
         tag = "ACGTACGTACGTACGTACGT"
@@ -1897,6 +2025,125 @@ class ReviewFixTests(unittest.TestCase):
             self.assertTrue(args.leading_anchor_detected)
             # an explicit value is used as given, without reading the FASTQ
             self.assertEqual(mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="acgt"), raw, prefixes, "generate"), "ACGT")
+
+    @staticmethod
+    def _write_raw_reads(path, reads):
+        with Path(path).open("w") as handle:
+            for number, sequence in enumerate(reads):
+                handle.write(f"@r{number}\n{sequence}\n+\n{'I' * len(sequence)}\n")
+        return Path(path)
+
+    def test_leading_anchor_detection_with_barcodes_of_several_lengths(self):
+        # DArT inline barcodes have 10 to 14 bases, so the tag starts at five
+        # offsets and only a few files share the commonest one.  Here the three
+        # files with 12-base barcodes all end in GT: read at the commonest
+        # offset alone, the anchor grows by those two bases and every sample
+        # whose barcode ends otherwise loses its reads.  Each file gives its
+        # own prefix instead, and the anchor is what all eight share.
+        anchor = "CGATGGATCCAGTGC"
+        tag, other = "ACGTACGTACGTACGTACGT", "TTGCAAGCTTGACCGATAGG"
+        barcodes = ("TTCATAAGCAGT", "GGTAAGCATTGT", "ACCTGAGTACGT", "CAGGTCATGA",
+                    "TGACCAGTTAG", "GATTACAGGCATA", "CCATAGGATTGACT", "AGTTCCGGAG")
+        # A candidate window that begins one base early (the last anchor base,
+        # then the tag) is found first in a quarter of the reads; the file's
+        # commonest prefix is still the whole one.
+        prefixes = {tag[:mp.LEADING_ANCHOR_PREFIX], other[:mp.LEADING_ANCHOR_PREFIX], anchor[-1] + other[:mp.LEADING_ANCHOR_PREFIX - 1]}
+        with tempfile.TemporaryDirectory() as tmp:
+            raws = [
+                self._write_raw_reads(
+                    Path(tmp) / f"raw_{number}.fastq",
+                    [barcode + anchor + tag + "CCGATC"] * 150 + [barcode + anchor + other + "CCGATC"] * 50,
+                )
+                for number, barcode in enumerate(barcodes)
+            ]
+            report = mp.detect_leading_anchor(raws, prefixes)
+            self.assertEqual(report["anchor"], anchor)
+            self.assertEqual(report["anchor_files"], len(barcodes))
+            self.assertEqual(report["offsets"], (10 + len(anchor), 14 + len(anchor)))
+            self.assertEqual(report["shifted_rate"], 1.0)
+            with self.assertRaises(mp.MadcError) as context:
+                mp.resolve_leading_anchor(argparse.Namespace(leading_anchor=None), raws, prefixes, "generate")
+            message = str(context.exception)
+            self.assertIn(f"--leading-anchor {anchor} (or", message)
+            self.assertIn("tag start at offset 25 to 29", message)
+            self.assertNotIn("these files only", message)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="auto"), raws, prefixes, "generate"), anchor)
+            self.assertNotIn("warning", stderr.getvalue())
+
+    def test_leading_anchor_from_one_or_two_files_is_used_and_flagged(self):
+        # One file cannot separate its barcode from the common sequence, and
+        # two may share barcode bases.  The anchor still cuts those files where
+        # the amplicon starts, so it is used, with a warning not to reuse it.
+        anchor = "CGATGGATCCAGTGC"
+        tag = "ACGTACGTACGTACGTACGT"
+        prefixes = {tag[:mp.LEADING_ANCHOR_PREFIX]}
+        barcodes = ("TTCATAAGTTGA", "GGTAAGCATGCA", "ACCTGAGTACGT")   # the first two end in the same base
+        with tempfile.TemporaryDirectory() as tmp:
+            raws = [
+                self._write_raw_reads(Path(tmp) / f"raw_{number}.fastq", [barcode + anchor + tag + "CCGATC"] * 200)
+                for number, barcode in enumerate(barcodes)
+            ]
+            for files, expected, count in ((raws[:1], barcodes[0] + anchor, "1 FASTQ,"), (raws[:2], "A" + anchor, "2 FASTQs,")):
+                report = mp.detect_leading_anchor(files, prefixes)
+                self.assertEqual(report["anchor"], expected)
+                self.assertEqual(report["anchor_files"], len(files))
+                stderr = io.StringIO()
+                args = argparse.Namespace(leading_anchor="auto")
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(mp.resolve_leading_anchor(args, files, prefixes, "generate"), expected)
+                self.assertIn(f"warning: the leading anchor was detected from {count}", stderr.getvalue())
+                # the anchor keeps every read of the files it came from
+                for fastq in files:
+                    self.assertEqual(len(list(mp.fastq_records(fastq, expected))), 200)
+                with self.assertRaises(mp.MadcError) as context:
+                    mp.resolve_leading_anchor(argparse.Namespace(leading_anchor=None), files, prefixes, "generate")
+                self.assertIn(f"--leading-anchor {expected} (or", str(context.exception))
+                self.assertIn("these files only", str(context.exception))
+            # three files are enough: no warning
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="auto"), raws, prefixes, "generate"), anchor)
+            self.assertNotIn("warning", stderr.getvalue())
+
+    def test_leading_anchor_detection_with_mixed_and_failed_files(self):
+        anchor = "CGATGGATCCAGTGC"
+        tag = "ACGTACGTACGTACGTACGT"
+        prefixes = {tag[:mp.LEADING_ANCHOR_PREFIX]}
+        barcodes = ("TTCATAAGTTGC", "GGTAAGCATGCA", "ACCTGAGTACGT", "CAGGTCATGATG", "TGACCAGTTAG")
+        with tempfile.TemporaryDirectory() as tmp:
+            # A file that mixes barcodes: its commonest prefix covers 40% of
+            # the reads, and an anchor that kept that barcode would drop the
+            # rest.  The file gives what its barcodes share.
+            mixed = self._write_raw_reads(
+                Path(tmp) / "mixed.fastq",
+                [barcode + anchor + tag + "CCGATC" for barcode, copies in zip(barcodes, (80, 30, 30, 30, 30)) for _ in range(copies)],
+            )
+            report = mp.detect_leading_anchor([mixed], prefixes)
+            self.assertEqual(report["anchor"], anchor)
+            self.assertEqual(len(list(mp.fastq_records(mixed, report["anchor"]))), 200)
+            # A failed sample, with a handful of reads that carry a tag after
+            # something else, does not hide the anchor of the others.
+            raws = [
+                self._write_raw_reads(Path(tmp) / f"raw_{number}.fastq", [barcode + anchor + tag + "CCGATC"] * 200)
+                for number, barcode in enumerate(barcodes)
+            ]
+            failed = self._write_raw_reads(
+                Path(tmp) / "failed.fastq", ["TTTTTTTTTTTTTTTTTTTTTT" + tag + "CCGATC"] * 6 + ["GGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"] * 194,
+            )
+            report = mp.detect_leading_anchor(raws + [failed], prefixes)
+            self.assertEqual(report["anchor"], anchor)
+            self.assertEqual(report["anchor_files"], len(raws))
+            # Files that end in two different sequences share no anchor, and auto says so.
+            others = [
+                self._write_raw_reads(Path(tmp) / f"other_{number}.fastq", [barcode + "TTAGGCATCAAGCTA" + tag + "CCGATC"] * 200)
+                for number, barcode in enumerate(barcodes[:3])
+            ]
+            self.assertEqual(mp.detect_leading_anchor(raws[:3] + others, prefixes)["anchor"], "")
+            with self.assertRaises(mp.MadcError) as context:
+                mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="auto"), raws[:3] + others, prefixes, "generate")
+            self.assertIn("found no constant prefix", str(context.exception))
 
     def test_denoise_neighbour_lookup_matches_the_scan(self):
         # The distance-1 path enumerates neighbours instead of scanning

@@ -99,6 +99,15 @@ Notable changes by version. Measurements behind each change are in the
   overflow and record it in their QC reports. Neither command corrects the counts, since the
   wrapped ones cannot be recovered.
   The lettuce 3K vendor MADC has 90,913 such cells across 1,108 markers.
+- `--leading-anchor auto`, and the raw-delivery check that names the anchor, find the common
+  sequence when inline barcodes differ in length. Each sampled FASTQ gives its own prefix, and the
+  anchor is the suffix that all of them share. 24 files are sampled instead of 8. Before, the
+  anchor came only from reads at the most common tag offset. DArT barcodes have 10 to 14 bases, so
+  few files share that offset, and the anchor could keep one or two barcode bases and drop every
+  read of the samples whose barcode ended otherwise. On a salmon DArTag plate (1,101 samples),
+  detection from 8 random files returned the exact common sequence in 133 of 150 draws before and
+  in 150 of 150 now. With one or two FASTQs the anchor may still include barcode bases. It cuts
+  those files correctly, and `auto` warns not to reuse it for other samples.
 - For tiled markers, `generate` credits a read that fits several tiles of one amplicon to each of
   them, instead of dropping it as a tie. Tiles are markers that read the same tag window, with a
   shared or nested left primer and Ref tags that agree except at the markers' variant positions.
@@ -111,6 +120,16 @@ Notable changes by version. Measurements behind each change are in the
   (now 6,562–103,852 each), and one pair with identical tags had split its reads 12,299 / 80,306
   (now about 112,400 each). All other markers' rows are unchanged.
 - The tile families are part of the per-sample cache key. Panels without tiles keep their caches.
+- `infer-design --leading-anchor`: the fuzzy pass cuts raw reads at the anchor, as the exact pass
+  does. It had dropped the anchor before scanning, so on a raw delivery its reads did not vote.
+- `generate --leading-anchor-mismatches {0,1}` (default 1). A read with no exact copy of the
+  leading anchor is cut after the one placement within a single substitution, and the QC counts it
+  as `reads_leading_anchor_mismatch`. Anchors shorter than 12 bases are always matched exactly,
+  and `0` matches every anchor exactly, as 0.13.0 did. On the salmon 3K DArTag plate (1,104 raw
+  FASTQs), `0` reproduces the 0.13.0 table byte for byte. With `1`, reads without an anchor fall
+  from 13.5 million to 2.0 million, 1.06% more reads are assigned, and no row changes category.
+  The setting is part of the cache key only when an anchor is matched with a substitution, so
+  other caches stay valid. `infer-design` still matches the anchor exactly.
 
 ## 0.13.0
 

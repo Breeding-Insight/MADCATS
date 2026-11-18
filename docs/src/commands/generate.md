@@ -61,7 +61,8 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--min-identity <FLOAT>` | 0.80 | Minimum substitution-only identity to a Ref or Alt tag. A gapped alignment uses the same edit limit |
-| `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). Each read is cut where the anchor ends (it must end within 40 bases beyond its own length). `auto` detects it from the first FASTQ |
+| `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). MADCATS cuts each read where the anchor ends, and the anchor must end within 40 bases beyond its own length. `auto` detects it from a sample of up to 24 FASTQs. With one or two FASTQs the detected anchor may include the sample barcode, and the run warns about it |
+| `--leading-anchor-mismatches {0,1}` | 1 | Substitutions allowed in the leading anchor. With `1`, MADCATS cuts a read that has no exact copy after its only one-substitution match, and counts it as `reads_leading_anchor_mismatch`. A read with no such match, or more than one, counts as `reads_no_leading_anchor`. Anchors under 12 bases must match exactly. `0` requires an exact match for every anchor, as in 0.13.0 |
 | `--primer-mismatches {0,1}` | 1 | Mismatches allowed while assigning a primer/anchor. With `0`, reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost |
 | `--gapped-rescue {on,off}` | `on` | Give reads that fail substitution-only identity one gapped alignment, so the counts include undesigned indels |
 | `--max-indel-length <INT>` | 10 | Widest gap (alignment band) a gapped alignment may use |

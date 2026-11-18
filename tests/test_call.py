@@ -1463,6 +1463,185 @@ class AllVcfTests(CommandTestCase):
         self.assertEqual(records[0]["samples"][3]["XD"], "9")
 
 
+class TablesWithoutPrimersTests(CommandTestCase):
+    """A MADC from ``generate --remove-primers on``: shorter rows, of different lengths."""
+
+    LEFT, END = 8, 26   # the Ref row is REF_TAG[8:26]: no left primer, no right-primer bases
+
+    def trimmed(self, rows):
+        return [(marker, category, sequence[self.LEFT : self.END], counts) for marker, category, sequence, counts in rows]
+
+    def rows(self):
+        return [
+            ("M1", "Ref", REF_TAG, [30, 12, 0, 20]),
+            ("M1", "Alt", ALT_TAG, [0, 0, 14, 0]),
+            ("M1", "RefMatch", REF_TAG_SITE_20, [0, 13, 0, 0]),
+            ("M1", "AltMatch", ALT_TAG_SITE_20, [0, 0, 15, 0]),
+        ]
+
+    def records(self, rows, *options):
+        prefix = self.call_madc(self.write_madc(rows, ["s1", "s2", "s3", "s4"]), "--vcf", "all", *options)
+        header, _, records = self.vcf(prefix, "all")
+        return header, [
+            (record["POS"], record["REF"], record["ALT"], [(sample["GT"], sample["AD"]) for sample in record["samples"]])
+            for record in records
+        ]
+
+    def test_positions_count_from_the_first_base_after_the_left_primer(self):
+        _, full = self.records(self.rows())
+        header, trimmed = self.records(self.trimmed(self.rows()))
+        self.assertEqual([record[0] for record in full], [12, 20])
+        self.assertEqual(trimmed, [(position - self.LEFT, *rest) for position, *rest in full])
+        self.assertIn("##contig=<ID=M1,length=18>", header)
+
+    def test_reference_tags_are_read_in_the_frame_of_the_rows(self):
+        two_differences = with_base(ALT_TAG, 25, "G")
+        rows = [("M1", "Ref", REF_TAG, [30, 15, 0, 9]), ("M1", "Alt", two_differences, [0, 16, 22, 0])]
+        tags = self.dir / "tags.csv"
+        with open(tags, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["MarkerName", "LeftPrimerSequence", "RefSequence", "AltSequence", "VariantPositionInTagSequence"]
+            )
+            writer.writerow(["M1", REF_TAG[: self.LEFT], REF_TAG, two_differences, 25])
+        _, full = self.records(rows, "--reference-tags", tags)
+        _, trimmed = self.records(self.trimmed(rows), "--reference-tags", tags)
+        self.assertEqual([record[:3] for record in full], [(12, "G", ["C"]), (25, "C", ["G"])])
+        self.assertEqual(trimmed, [(position - self.LEFT, *rest) for position, *rest in full])
+        # Without the reference tags the two differences leave the target unknown, trimmed or not.
+        self.call_madc(self.write_madc(self.trimmed(rows), ["s1", "s2", "s3", "s4"]))
+        self.assertEqual(self.qc["vcfs"]["target"]["targets_skipped_ambiguous_design"], 1)
+
+    def test_design_is_used_as_it_is_for_a_table_with_primers(self):
+        design = madcats.Locus(0, "M1", REF_TAG[:8], "", "G", "C", 11, REF_TAG, ALT_TAG)
+        row = lambda category, sequence: call.MadcRow(f"M1|{category}", category, sequence, (1,))
+        full = [row("Ref", REF_TAG), row("Alt", ALT_TAG)]
+        self.assertEqual(call.design_as_written(design, full), (REF_TAG, ALT_TAG, 12))
+        trimmed = [row("Ref", REF_TAG[8:26]), row("Alt", ALT_TAG[8:26])]
+        self.assertEqual(call.design_as_written(design, trimmed), (REF_TAG[8:26], ALT_TAG[8:26], 4))
+        # A Ref row that is not the tag without its left primer is no trimmed table.
+        other = [row("Ref", REF_TAG[9:26]), row("Alt", ALT_TAG[9:26])]
+        self.assertEqual(call.design_as_written(design, other), (REF_TAG, ALT_TAG, 12))
+
+    def annotated(self, rows, variants):
+        """Write the rows in generate's full layout, with a Variants column."""
+        header = [madcats.ANNOTATION_COLUMNS.get(column, column) for column in madcats.MADC_METADATA_COLUMNS]
+        path = self.dir / "annotated.csv"
+        with open(path, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(header + ["s1", "s2", "s3", "s4"])
+            for marker, category, sequence, counts in rows:
+                cells = dict.fromkeys(header, ".")
+                cells.update(AlleleID=f"{marker}|{category}", CloneID=marker, AlleleSequence=sequence,
+                             Variants=variants.get(sequence, "."))
+                writer.writerow([cells[column] for column in header] + counts)
+        return path
+
+    def indel_rows(self):
+        """Trimmed position 12 is the off-target site (G>T).  One row deletes trimmed bases 6-7, before
+        the site; the other inserts two bases after it."""
+        with_site = REF_TAG_SITE_20[self.LEFT : self.END]
+        deletion = with_site[:5] + with_site[7:]
+        insertion = with_site[:14] + "AA" + with_site[14:]
+        rows = self.trimmed(self.rows()) + [
+            ("M1", "RefMatch", deletion, [0, 0, 0, 18]),
+            ("M1", "RefMatch", insertion, [7, 0, 0, 0]),
+        ]
+        variants = {with_site: "12:G>T", ALT_TAG_SITE_20[self.LEFT : self.END]: "4:G>C;12:G>T",
+                    ALT_TAG[self.LEFT : self.END]: "4:G>C", deletion: "5:ATC>A;12:G>T", insertion: "12:G>T;14:A>AAA"}
+        return rows, variants
+
+    def test_row_of_another_length_is_read_through_the_indel_its_variants_state(self):
+        rows, variants = self.indel_rows()
+        prefix = self.call_madc(self.annotated(rows, variants), "--vcf", "all")
+        records = self.vcf(prefix, "all")[2]
+        self.assertEqual([record["POS"] for record in records], [4, 12])
+        site = records[1]
+        self.assertEqual([sample["AD"] for sample in site["samples"]], ["30,7", "12,13", "14,15", "20,18"])
+        self.assertEqual([sample["XD"] for sample in site["samples"]], ["0", "0", "0", "0"])
+        self.assertEqual(self.qc["markers"]["rows_with_reads_not_read_for_their_length"], 0)
+        self.assertNotIn("were not read", self.stderr)
+
+    def test_without_a_variants_column_a_row_of_another_length_is_read_only_if_its_end_does_not_matter(self):
+        # An indel well inside the row reads the same whether or not the row ends at its primer, so
+        # it is read as with the column.
+        rows, _ = self.indel_rows()
+        prefix = self.call_madc(self.write_madc(rows, ["s1", "s2", "s3", "s4"]), "--vcf", "all")
+        site = self.vcf(prefix, "all")[2][1]
+        self.assertEqual([sample["AD"] for sample in site["samples"]], ["30,7", "12,13", "14,15", "20,18"])
+        self.assertEqual(self.qc["markers"]["rows_with_reads_not_read_for_their_length"], 0)
+        # Two bases deleted with two bases after them: a deletion if the row ends at its primer, two
+        # substitutions and two unseen bases if it does not.  The sequences cannot say, so the row is
+        # not read, its reads go to XD, and call says so.
+        with_site = REF_TAG_SITE_20[self.LEFT : self.END]
+        at_the_end = with_site[:14] + with_site[16:]
+        rows = self.trimmed(self.rows()) + [("M1", "RefMatch", at_the_end, [0, 0, 0, 18])]
+        prefix = self.call_madc(self.write_madc(rows, ["s1", "s2", "s3", "s4"]), "--vcf", "all")
+        records = self.vcf(prefix, "all")[2]
+        self.assertEqual([record["POS"] for record in records], [4, 12])
+        self.assertEqual((records[1]["samples"][3]["AD"], records[1]["samples"][3]["XD"]), ("20,0", "18"))
+        self.assertEqual(self.qc["markers"]["rows_with_reads_not_read_for_their_length"], 1)
+        self.assertIn("1 rows with reads differ in length", self.stderr)
+        self.assertIn("no Variants column", self.stderr)
+
+    def test_events_are_taken_from_the_variants_column(self):
+        # A row that deletes trimmed bases 15-16, with two bases after them: without the primer
+        # that followed, the sequences alone read as well as two substitutions.  generate knew, and
+        # wrote the deletion in the row's Variants.
+        with_site = REF_TAG_SITE_20[self.LEFT : self.END]
+        deletion = with_site[:14] + with_site[16:]
+        variants = {with_site: "12:G>T", ALT_TAG_SITE_20[self.LEFT : self.END]: "4:G>C;12:G>T",
+                    ALT_TAG[self.LEFT : self.END]: "4:G>C", deletion: "12:G>T;14:ATG>A"}
+        rows = self.trimmed(self.rows()) + [("M1", "RefMatch", deletion, [0, 0, 0, 18])]
+        prefix = self.call_madc(self.annotated(rows, variants), "--vcf", "all")
+        records = self.vcf(prefix, "all")[2]
+        self.assertEqual([record["POS"] for record in records], [4, 12])
+        self.assertEqual((records[1]["samples"][3]["AD"], records[1]["samples"][3]["XD"]), ("20,18", "0"))
+        # The same reading, derived or taken from the cell, for a row of the Ref length.
+        locus = madcats.Locus(0, "M1", "", "", "G", "C", 3, REF_TAG[self.LEFT : self.END], ALT_TAG[self.LEFT : self.END])
+        row = call.MadcRow("M1|RefMatch", "RefMatch", with_site, (1,), "12:G>T")
+        for use_variants in (True, False):
+            reading = call.read_row(locus, row, 10, use_variants)
+            self.assertEqual((reading.comparable, reading.substitutions, reading.positions_not_shown), (True, {12: "T"}, set()))
+
+    def test_designed_indel_whose_tags_differ_in_length_needs_its_stated_events(self):
+        ref_tag = REF_TAG[self.LEFT : self.END]
+        alt_tag = ref_tag[:15] + ref_tag[17:]            # two bases deleted, one base before the end
+        self.assertEqual(call.resolve_target(ref_tag, alt_tag, None, 10), (None, "tags_differ_in_length"))
+        stated = madcats.parse_variants("15:TGC>T", ref_tag, alt_tag)
+        self.assertEqual(call.resolve_target(ref_tag, alt_tag, None, 10, stated), (call.TargetVariant(15, "TGC", "T"), None))
+        # A deletion well inside the tags is the same wherever they end, and needs no stated events.
+        inside = ref_tag[:6] + ref_tag[8:]
+        self.assertEqual(call.resolve_target(ref_tag, inside, None, 10), (call.TargetVariant(6, "TCC", "T"), None))
+        # Tags of one length are read from their sequences, as always.
+        self.assertEqual(call.resolve_target(ref_tag, ALT_TAG[self.LEFT : self.END], None, 10)[0], call.TargetVariant(4, "G", "C"))
+
+    def test_row_too_different_in_length_shows_no_position(self):
+        # Five bases shorter than the Ref row with a gap limit of four: no reading through an indel
+        # exists, so the row's reads are left out of the record, as for any such row before.
+        short = REF_TAG_SITE_20[self.LEFT : self.END][:13]
+        rows = self.trimmed(self.rows()) + [("M1", "RefMatch", short, [0, 0, 0, 18])]
+        prefix = self.call_madc(self.write_madc(rows, ["s1", "s2", "s3", "s4"]), "--vcf", "all", "--max-indel-length", "4")
+        site = self.vcf(prefix, "all")[2][1]
+        self.assertEqual((site["POS"], site["samples"][3]["AD"], site["samples"][3]["XD"]), (12, "20,0", "18"))
+
+    def test_trimmed_marker_without_an_alt_row_stays_in_the_frame_of_its_rows(self):
+        design = madcats.Locus(0, "M1", REF_TAG[:8], "", "G", "C", 11, REF_TAG, ALT_TAG)
+        ref_only = [call.MadcRow("M1|Ref", "Ref", REF_TAG[8:26], (1,))]
+        self.assertEqual(call.design_as_written(design, ref_only), (REF_TAG[8:26], "", 4))
+
+    def test_variants_cell_that_generate_did_not_write_is_not_used(self):
+        locus = madcats.Locus(0, "M1", "", "", "G", "C", 3, REF_TAG[8:26], ALT_TAG[8:26])
+        with_site = REF_TAG_SITE_20[8:26]
+        for cell in ("NA", "0.25", "12:G", "x:G>T"):
+            row = call.MadcRow("M1|RefMatch", "RefMatch", with_site, (1,), cell)
+            self.assertIsNone(call.table_events(row, locus.ref_tag), cell)
+            self.assertEqual(call.read_row(locus, row, 10).substitutions, {12: "T"}, cell)
+            # ... and a row of another length with such a cell is not read at all.
+            shorter = call.MadcRow("M1|RefMatch", "RefMatch", with_site[:-2], (1,), cell)
+            self.assertFalse(call.read_row(locus, shorter, 10).comparable, cell)
+
+
 class HaplotypeVcfTests(CommandTestCase):
     def test_alleles_are_whole_tags_and_identical_rows_are_added_together(self):
         rows = [

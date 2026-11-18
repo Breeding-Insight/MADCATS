@@ -107,4 +107,7 @@ madcats generate ... --leading-anchor auto
 madcats generate ... --leading-anchor GATGGATCCAGTGC
 ```
 
-The QC counts reads without the anchor as `reads_no_leading_anchor`.
+A read whose anchor carries one sequencing error is still cut where the anchor ends, as long as
+there is only one such placement (`--leading-anchor-mismatches 1`, the default). The QC counts
+those reads as `reads_leading_anchor_mismatch`, and reads without the anchor as
+`reads_no_leading_anchor`.

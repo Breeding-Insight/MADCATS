@@ -62,6 +62,7 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 |--------|---------|-------------|
 | `--min-identity <FLOAT>` | 0.80 | Minimum substitution-only identity to a Ref or Alt tag. A gapped alignment uses the same edit limit |
 | `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). Each read is cut where the anchor ends (it must end within 40 bases beyond its own length). `auto` detects it from the first FASTQ |
+| `--leading-anchor-mismatches {0,1}` | 1 | Substitutions allowed in the leading anchor when a read has no exact copy of it. With `1`, the read is cut after the one placement within a single substitution. Reads with no such placement, or more than one, count as `reads_no_leading_anchor`, and the reads it recovers count as `reads_leading_anchor_mismatch`. An anchor shorter than 12 bases is always matched exactly. `0` matches every anchor exactly, as in 0.13.0 |
 | `--primer-mismatches {0,1}` | 1 | Mismatches allowed while assigning a primer/anchor. With `0`, reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost |
 | `--gapped-rescue {on,off}` | `on` | Give reads that fail substitution-only identity one gapped alignment, so the counts include undesigned indels |
 | `--max-indel-length <INT>` | 10 | Widest gap (alignment band) a gapped alignment may use |

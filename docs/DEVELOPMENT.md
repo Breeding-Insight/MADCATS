@@ -41,7 +41,10 @@ which inputs they require:
    library's common sequence `GATGGATCCAGTGC` in front of every amplicon.
    `--leading-anchor GATGGATCCAGTGC` cuts each read where that sequence
    ends (it must end within 40 bases beyond its own length) and counts
-   reads without it as `reads_no_leading_anchor`. Preprocessed deliveries
+   reads without it as `reads_no_leading_anchor`. With no exact copy, the
+   one placement within a single substitution is used instead
+   (`--leading-anchor-mismatches 1`, the default since 0.14.0; counted as
+   `reads_leading_anchor_mismatch`). Preprocessed deliveries
    are primer-started and need no anchor. The anchor is part of the cache
    key and the provenance line. `infer-design` takes the same option, so
    the primer-free route reads raw deliveries too. Both commands check the
@@ -1292,6 +1295,33 @@ assigns 5–6% more reads per sample than the vendor counted, as the other
 DArTag panels do. The primer-free route on the raw alfalfa reads, with
 no primer file, resolves 2,999 of 3,000 loci in the exact tier, all
 identical to the design tags.
+
+**One substitution in the leading anchor (0.14.0).** A read whose common
+sequence carries a sequencing error has no exact anchor, and 0.13.0
+counted it as `reads_no_leading_anchor`. With
+`generate --leading-anchor-mismatches 1` (the default), such a read is cut
+after the one placement within a single substitution in the search window
+and counted as `reads_leading_anchor_mismatch`. An exact copy is tried
+first, so a read that has one is cut as before. A read with no such
+placement, or more than one, still counts as having no anchor. Indels are
+not matched, because they would move the cut. An anchor shorter than 12
+bases is always matched exactly. The setting joins the cache key only when
+an anchor is matched with a substitution, so other caches stay valid.
+`infer-design` still matches the anchor exactly, since its reads only vote.
+Measured on the salmon 3K DArTag plate (DSalm21-6350, 1,104 raw FASTQs,
+54-bp tags, `--gapped-rescue off`): with `0`, the table is byte for byte
+the 0.13.0 table after the provenance cell. With `1`, reads without an
+anchor fall from 13,505,332 to 2,048,910 (2.4% to 0.4% of reads),
+2,789,193 more reads are assigned (+1.06%) and 2,304,149 more reach emitted
+rows (+0.90%, and 0.65% to 3.20% per sample). 16 new rows pass the evidence
+rules, none is lost and no row changes category. The Alt fraction per
+marker and sample (depth of 20 or more) changes by 0.0000 at the median and
+0.0185 at the 99th percentile, and 379 of 2,501,106 cells move by more than
+0.05. Against the vendor MADC, recall is unchanged (99.50%), precision goes
+from 77.40% to 77.27% (the 16 rows), and the share of cells with exactly
+the vendor's count rises from 64.65% to 66.95%. In one sample, 2,441 of
+5,468 recovered on-target reads had the substitution at the anchor's last
+base (C read as T in 2,223), spread over 1,106 markers.
 
 **In the design route, a tag carries its variant.** Tag reconstruction from the
 primer table and probe design now keeps only the primer-started windows
@@ -4191,8 +4221,8 @@ By default sample columns use the unique FASTQ filename stem.
 python3 -m unittest discover -s tests -v
 ```
 
-The suite contains 258 unit/end-to-end tests in six files.
-`test_madcats.py` (87) covers `generate` and the commands around it,
+The suite contains 261 unit/end-to-end tests in six files.
+`test_madcats.py` (90) covers `generate` and the commands around it,
 `test_call.py` (112) the genotype caller, `test_filter_paralogs.py` (49) the
 paralog filter, `test_tiled_markers.py` (5) tiled markers through all three,
 `test_example.py` (4) the bundled example and `test_docs.py` (1) the match

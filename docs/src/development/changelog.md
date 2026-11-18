@@ -113,6 +113,14 @@ Notable changes by version. Measurements behind each change are in the
 - The tile families are part of the per-sample cache key. Panels without tiles keep their caches.
 - `infer-design --leading-anchor`: the fuzzy pass cuts raw reads at the anchor, as the exact pass
   does. It had dropped the anchor before scanning, so on a raw delivery its reads did not vote.
+- `generate --leading-anchor-mismatches {0,1}` (default 1). A read with no exact copy of the
+  leading anchor is cut after the one placement within a single substitution, and the QC counts it
+  as `reads_leading_anchor_mismatch`. Anchors shorter than 12 bases are always matched exactly,
+  and `0` matches every anchor exactly, as 0.13.0 did. On the salmon 3K DArTag plate (1,104 raw
+  FASTQs), `0` reproduces the 0.13.0 table byte for byte. With `1`, reads without an anchor fall
+  from 13.5 million to 2.0 million, 1.06% more reads are assigned, and no row changes category.
+  The setting is part of the cache key only when an anchor is matched with a substitution, so
+  other caches stay valid. `infer-design` still matches the anchor exactly.
 
 ## 0.13.0
 

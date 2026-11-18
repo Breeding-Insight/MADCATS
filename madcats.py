@@ -235,6 +235,8 @@ GAP_MAX_EVENTS = 6           # ... in few separate gap events; a co-amplified pa
 GAP_VERIFIED_SUFFIX = 12     # bases that must follow the last gap before a gapped reading may re-read the target
 PARTIAL_TAIL_DEFAULT = 9     # --min-partial-length defaults to --tag-length minus this: at most 9 unobserved tail bases
 LEADING_ANCHOR_SEARCH = 40   # --leading-anchor: the anchor must end within this many bases beyond its own length
+LEADING_ANCHOR_MISMATCHES_DEFAULT = 1  # --leading-anchor-mismatches: substitutions tolerated in the anchor
+LEADING_ANCHOR_MISMATCH_MIN_LENGTH = 12  # shortest anchor that may be matched with a substitution (fewer bases match junk by chance)
 DENOISE_LOOKUP_THRESHOLD = 2 # denoiser: look up single-substitution neighbours once centroids exceed this many per tag base
 GAP_OPEN_SCALE = 1 << 10     # annotation alignments weigh one edit this much more than one gap opening
 
@@ -331,6 +333,7 @@ class AssignmentSettings:
     gap_band: int                   # --max-indel-length, or 0 with --gapped-rescue off
     leading_anchor: str = ""        # --leading-anchor: constant sequence preceding the amplicon in raw deliveries
     tile_families: Tuple[Tuple[int, ...], ...] = ()  # --tile-groups: marker indices credited together (tile_families)
+    leading_anchor_mismatches: int = 0  # --leading-anchor-mismatches: substitutions tolerated when no exact anchor is found
 
     def cache_arguments(self) -> Dict[str, object]:
         arguments: Dict[str, object] = {
@@ -347,6 +350,10 @@ class AssignmentSettings:
         # tile family (and any change to the families) gives a new fingerprint.
         if self.tile_families:
             arguments["tile_families"] = [list(family) for family in self.tile_families]
+        # Likewise keyed only when it changes the read pass: exact-anchor and
+        # anchor-free runs keep the fingerprints (and caches) they had before.
+        if self.leading_anchor and self.leading_anchor_mismatches:
+            arguments["leading_anchor_mismatches"] = self.leading_anchor_mismatches
         return arguments
 
 
@@ -1966,12 +1973,53 @@ class PrimerIndex:
         return sorted(candidates)
 
 
+def locate_leading_anchor(sequence: str, anchor: str, max_mismatches: int = 0) -> Tuple[int, int]:
+    """Where the amplicon starts in a raw read: ``(cut, mismatches)``, or ``(-1, 0)``.
+
+    The anchor must end within LEADING_ANCHOR_SEARCH bases beyond its own
+    length.  Its first exact occurrence wins.  Only when there is none, and
+    ``max_mismatches`` is 1, may one placement within a single substitution
+    stand in — and only when it is the one such placement in the window, so a
+    read never gets a guessed cut.  Substitutions only: an indel would move
+    the cut, and the primer match that follows needs the exact frame.  A
+    sequencing error in the anchor is upstream of the amplicon, so the reads
+    this recovers carry no allele bias.  An anchor shorter than
+    LEADING_ANCHOR_MISMATCH_MIN_LENGTH is always matched exactly, because
+    fewer bases match unrelated sequence by chance.  Candidates come from
+    the pigeonhole principle (with one substitution, one half of the anchor
+    still matches exactly), so the search stays in ``str.find``.
+    """
+    width = len(anchor)
+    search_end = width + LEADING_ANCHOR_SEARCH
+    start = sequence.find(anchor, 0, search_end)
+    if start >= 0:
+        return start + width, 0
+    if max_mismatches <= 0 or width < LEADING_ANCHOR_MISMATCH_MIN_LENGTH:
+        return -1, 0
+    last_start = min(search_end, len(sequence)) - width
+    if last_start < 0:
+        return -1, 0
+    half = width // 2
+    placements = set()
+    for offset, piece in ((0, anchor[:half]), (half, anchor[half:])):
+        end = last_start + offset + len(piece)
+        position = sequence.find(piece, offset, end)
+        while position >= 0:
+            candidate = position - offset
+            if candidate not in placements and tag_mismatches(sequence[candidate:candidate + width], anchor, stop_after=1) <= 1:
+                placements.add(candidate)
+            position = sequence.find(piece, position + 1, end)
+    if len(placements) != 1:
+        return -1, 0
+    return placements.pop() + width, 1
+
+
 def fastq_records(path: Path, leading_anchor: str = "") -> Iterator[Tuple[str, str]]:
     """``(sequence, quality)`` records.  With ``leading_anchor`` (raw deliveries
     that keep the library's common sequence in front of the amplicon) each
-    read starts where the anchor ends, and reads without it are skipped;
-    callers that must count those reads cut for themselves (``process_sample``)."""
-    search_end = len(leading_anchor) + LEADING_ANCHOR_SEARCH
+    read starts where an exact copy of the anchor ends, and reads without one
+    are skipped.  ``process_sample`` cuts for itself: it counts the reads it
+    skips and may match the anchor with a substitution."""
     with open_text(path, "rt") as handle:
         record_number = 0
         while True:
@@ -1991,10 +2039,9 @@ def fastq_records(path: Path, leading_anchor: str = "") -> Iterator[Tuple[str, s
             if len(sequence) != len(quality):
                 raise MadcError(f"Sequence/quality length mismatch at FASTQ record {record_number} in {path}")
             if leading_anchor:
-                cut = sequence.find(leading_anchor, 0, search_end)
+                cut, _ = locate_leading_anchor(sequence, leading_anchor)
                 if cut < 0:
                     continue
-                cut += len(leading_anchor)
                 sequence, quality = sequence[cut:], quality[cut:]
             yield sequence, quality
 
@@ -2485,11 +2532,14 @@ def process_sample(
         if settings.leading_anchor:
             # Raw deliveries that keep the library's common sequence in front
             # of the amplicon: the read starts where that anchor ends.
-            cut = sequence.find(settings.leading_anchor, 0, len(settings.leading_anchor) + LEADING_ANCHOR_SEARCH)
+            cut, anchor_mismatches = locate_leading_anchor(
+                sequence, settings.leading_anchor, settings.leading_anchor_mismatches
+            )
             if cut < 0:
                 qc["reads_no_leading_anchor"] += 1
                 continue
-            cut += len(settings.leading_anchor)
+            if anchor_mismatches:
+                qc["reads_leading_anchor_mismatch"] += 1
             sequence, quality = sequence[cut:], quality[cut:]
         if len(sequence) < settings.tag_length:
             if settings.partial_min_length <= 0 or len(sequence) < settings.partial_min_length:
@@ -4629,6 +4679,7 @@ def _assignment_settings(args: argparse.Namespace, families: Tuple[Tuple[int, ..
         gap_band=args.max_indel_length if args.gapped_rescue == "on" else 0,
         leading_anchor=(getattr(args, "leading_anchor", None) or "").upper(),
         tile_families=families,
+        leading_anchor_mismatches=args.leading_anchor_mismatches,
     )
 
 
@@ -4759,7 +4810,10 @@ def _generate_provenance(args: argparse.Namespace) -> str:
             f"annotations={args.annotations}",
             f"partial_read_mode={args.partial_read_mode}",
             f"min_partial_length={args.min_partial_length}",
-            *([f"leading_anchor={args.leading_anchor.upper()}"] if getattr(args, "leading_anchor", None) else []),
+            *(
+                [f"leading_anchor={args.leading_anchor.upper()}", f"leading_anchor_mismatches={args.leading_anchor_mismatches}"]
+                if getattr(args, "leading_anchor", None) else []
+            ),
             f"denoise_distance={args.denoise_distance}",
             f"global_denoise_distance={args.global_denoise_distance}",
             f"denoise_alpha={args.denoise_alpha}",
@@ -4796,6 +4850,9 @@ def _read_accounting(
     return {
         "reads_total": total("reads_total"),
         "reads_no_leading_anchor": total("reads_no_leading_anchor"),
+        # Of the reads that went on past the anchor, those cut at a placement
+        # one substitution away (--leading-anchor-mismatches 1).
+        "reads_leading_anchor_mismatch": total("reads_leading_anchor_mismatch"),
         "reads_assigned_full_length": total("reads_assigned"),
         "reads_assigned_gapped": total("reads_assigned_gapped"),
         # A read credited to several tiles of one family counts once above;
@@ -4829,6 +4886,7 @@ def _generate_parameters(args: argparse.Namespace, settings: AssignmentSettings,
         "minimum_partial_length": args.min_partial_length,
         "leading_anchor": (getattr(args, "leading_anchor", None) or "").upper() or None,
         "leading_anchor_detected": bool(getattr(args, "leading_anchor_detected", False)),
+        "leading_anchor_mismatches": args.leading_anchor_mismatches if getattr(args, "leading_anchor", None) else None,
         "sample_denoise_distance": args.denoise_distance,
         "global_denoise_distance": args.global_denoise_distance,
         "denoise_alpha": args.denoise_alpha,
@@ -5695,6 +5753,19 @@ def _add_generate_command(subparsers) -> None:
         ),
     )
     assignment.add_argument(
+        "--leading-anchor-mismatches",
+        type=int,
+        choices=(0, 1),
+        default=LEADING_ANCHOR_MISMATCHES_DEFAULT,
+        help=(
+            "substitutions allowed in the leading anchor when a read has no exact copy of it: with 1, a "
+            "read is cut after the one placement within a single substitution (none, or more than one, "
+            "counts as reads_no_leading_anchor), and such reads are counted as "
+            f"reads_leading_anchor_mismatch; an anchor shorter than {LEADING_ANCHOR_MISMATCH_MIN_LENGTH} bases "
+            f"is always matched exactly (default: {LEADING_ANCHOR_MISMATCHES_DEFAULT})"
+        ),
+    )
+    assignment.add_argument(
         "--primer-mismatches",
         type=int,
         choices=(0, 1),
@@ -5756,7 +5827,7 @@ def _add_generate_command(subparsers) -> None:
         "--cache-dir",
         help=(
             "folder for a reusable per-sample cache, so re-runs skip the read pass. The cache is rebuilt "
-            "when the panel or --tag-length, --min-identity, --leading-anchor, --primer-mismatches, "
+            "when the panel or --tag-length, --min-identity, --leading-anchor (or its mismatches), --primer-mismatches, "
             "--gapped-rescue, --max-indel-length, --min-partial-length or the tile families "
             "(--tile-groups) change"
         ),

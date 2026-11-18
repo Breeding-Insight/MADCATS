@@ -97,15 +97,18 @@ The defaults are the recommendation for diploid and polyploid DArTag projects al
 ## Raw DArT Deliveries
 
 Older DArT orders deliver reads with an inline barcode and the library's common sequence
-`GATGGATCCAGTGC` in front of the amplicon, so nothing is primer-started. MADCATS checks the first
-FASTQ before any read pass. When almost no read starts with a panel tag but most carry one after a
-constant prefix, the run stops and names that prefix. Re-run with:
+`GATGGATCCAGTGC` in front of the amplicon, so nothing is primer-started. MADCATS checks a sample
+of the FASTQs (up to 24) before any read pass. When almost no read starts with a panel tag but most
+carry one after a constant prefix, the run stops and names that prefix. Re-run with:
 
 ```bash
 madcats generate ... --leading-anchor auto
 # or explicitly
 madcats generate ... --leading-anchor GATGGATCCAGTGC
 ```
+
+With one or two FASTQs, the anchor that `auto` finds may include the sample barcode. It fits those
+files, and the run warns not to reuse it for other samples.
 
 A read whose anchor carries one sequencing error is still cut where the anchor ends, as long as
 there is only one such placement (`--leading-anchor-mismatches 1`, the default). The QC counts

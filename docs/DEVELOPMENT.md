@@ -46,11 +46,12 @@ which inputs they require:
    (`--leading-anchor-mismatches 1`, the default since 0.14.0; counted as
    `reads_leading_anchor_mismatch`). Preprocessed deliveries
    are primer-started and need no anchor. The anchor is part of the cache
-   key and the provenance line. `infer-design` takes the same option, so
-   the primer-free route reads raw deliveries too. Both commands check the
-   first FASTQ before any read pass. When almost no read starts with a
-   panel tag but most carry one after a constant prefix, the run stops and
-   names that prefix (the suffix shared by the bases in front of the tag),
+   key and the provenance line. `infer-design` takes `--leading-anchor`
+   as well, so the primer-free route reads raw deliveries too. Both commands
+   check a sample of the FASTQs (up to 24, spread across the run) before
+   any read pass. When almost no read starts with a panel tag but most
+   carry one after a constant prefix, the run stops and names that prefix
+   (the suffix that the sampled files' prefixes share),
    and `--leading-anchor auto` applies the detected sequence instead,
    recording it in the QC as detected.
 2. **Vendor-MADC bootstrap** (`scripts/madc_to_reference_tags.py`). It
@@ -4267,8 +4268,8 @@ By default sample columns use the unique FASTQ filename stem.
 python3 -m unittest discover -s tests -v
 ```
 
-The suite contains 261 unit/end-to-end tests in six files.
-`test_madcats.py` (90) covers `generate` and the commands around it,
+The suite contains 264 unit/end-to-end tests in six files.
+`test_madcats.py` (93) covers `generate` and the commands around it,
 `test_call.py` (112) the genotype caller, `test_filter_paralogs.py` (49) the
 paralog filter, `test_tiled_markers.py` (5) tiled markers through all three,
 `test_example.py` (4) the bundled example and `test_docs.py` (1) the match

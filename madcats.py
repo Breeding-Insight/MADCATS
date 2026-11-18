@@ -2185,8 +2185,8 @@ def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag
             if few else ""
         )
         raise MadcError(
-            f"{command}: {where} looks like a raw delivery: {report['shifted_rate']:.0%} of the first "
-            f"{report['reads_sampled']} reads carry a panel tag after a constant prefix ending in {report['anchor']} "
+            f"{command}: {where} looks like a raw delivery: {report['shifted_rate']:.0%} of "
+            f"{report['reads_sampled']} sampled reads carry a panel tag after a constant prefix ending in {report['anchor']} "
             f"({tag_start}), and {report['anchored_rate']:.0%} start with one; rerun with "
             f"--leading-anchor {report['anchor']} (or --leading-anchor auto){caution}"
         )
@@ -5784,12 +5784,10 @@ def _add_generate_command(subparsers) -> None:
         "--leading-anchor",
         default=None,
         help=(
-            "constant sequence that precedes the amplicon in every read of a raw delivery (DArT raw "
-            "FASTQs carry an inline barcode and the common sequence GATGGATCCAGTGC); each read is cut "
-            f"to start right after its first occurrence within the first {LEADING_ANCHOR_SEARCH} bases "
-            "beyond the anchor's length, and reads without it are counted as reads_no_leading_anchor; "
-            "'auto' detects the anchor from the first FASTQ (default: none; preprocessed deliveries are "
-            "primer-started, and a run whose reads carry an undeclared constant prefix stops and names it)"
+            "constant sequence before the amplicon in raw deliveries (DArT: GATGGATCCAGTGC): cut each "
+            "read where it ends, and count reads without it as reads_no_leading_anchor; 'auto' detects it "
+            f"from up to {LEADING_ANCHOR_FILES} FASTQs (default: none; on a raw delivery, the run stops "
+            "and names the anchor)"
         ),
     )
     assignment.add_argument(
@@ -5798,11 +5796,10 @@ def _add_generate_command(subparsers) -> None:
         choices=(0, 1),
         default=LEADING_ANCHOR_MISMATCHES_DEFAULT,
         help=(
-            "substitutions allowed in the leading anchor when a read has no exact copy of it: with 1, a "
-            "read is cut after the one placement within a single substitution (none, or more than one, "
-            "counts as reads_no_leading_anchor), and such reads are counted as "
-            f"reads_leading_anchor_mismatch; an anchor shorter than {LEADING_ANCHOR_MISMATCH_MIN_LENGTH} bases "
-            f"is always matched exactly (default: {LEADING_ANCHOR_MISMATCHES_DEFAULT})"
+            "substitutions allowed in the leading anchor: with 1, cut a read that has no exact copy after "
+            "its only one-substitution match, and count it as reads_leading_anchor_mismatch; anchors under "
+            f"{LEADING_ANCHOR_MISMATCH_MIN_LENGTH} bases must match exactly "
+            f"(default: {LEADING_ANCHOR_MISMATCHES_DEFAULT})"
         ),
     )
     assignment.add_argument(

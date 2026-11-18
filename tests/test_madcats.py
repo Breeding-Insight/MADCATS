@@ -1,7 +1,9 @@
 import argparse
+import contextlib
 import csv
 import dataclasses
 import gzip
+import io
 import json
 import random
 import tempfile
@@ -1897,6 +1899,125 @@ class ReviewFixTests(unittest.TestCase):
             self.assertTrue(args.leading_anchor_detected)
             # an explicit value is used as given, without reading the FASTQ
             self.assertEqual(mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="acgt"), raw, prefixes, "generate"), "ACGT")
+
+    @staticmethod
+    def _write_raw_reads(path, reads):
+        with Path(path).open("w") as handle:
+            for number, sequence in enumerate(reads):
+                handle.write(f"@r{number}\n{sequence}\n+\n{'I' * len(sequence)}\n")
+        return Path(path)
+
+    def test_leading_anchor_detection_with_barcodes_of_several_lengths(self):
+        # DArT inline barcodes have 10 to 14 bases, so the tag starts at five
+        # offsets and only a few files share the commonest one.  Here the three
+        # files with 12-base barcodes all end in GT: read at the commonest
+        # offset alone, the anchor grows by those two bases and every sample
+        # whose barcode ends otherwise loses its reads.  Each file gives its
+        # own prefix instead, and the anchor is what all eight share.
+        anchor = "CGATGGATCCAGTGC"
+        tag, other = "ACGTACGTACGTACGTACGT", "TTGCAAGCTTGACCGATAGG"
+        barcodes = ("TTCATAAGCAGT", "GGTAAGCATTGT", "ACCTGAGTACGT", "CAGGTCATGA",
+                    "TGACCAGTTAG", "GATTACAGGCATA", "CCATAGGATTGACT", "AGTTCCGGAG")
+        # A candidate window that begins one base early (the last anchor base,
+        # then the tag) is found first in a quarter of the reads; the file's
+        # commonest prefix is still the whole one.
+        prefixes = {tag[:mp.LEADING_ANCHOR_PREFIX], other[:mp.LEADING_ANCHOR_PREFIX], anchor[-1] + other[:mp.LEADING_ANCHOR_PREFIX - 1]}
+        with tempfile.TemporaryDirectory() as tmp:
+            raws = [
+                self._write_raw_reads(
+                    Path(tmp) / f"raw_{number}.fastq",
+                    [barcode + anchor + tag + "CCGATC"] * 150 + [barcode + anchor + other + "CCGATC"] * 50,
+                )
+                for number, barcode in enumerate(barcodes)
+            ]
+            report = mp.detect_leading_anchor(raws, prefixes)
+            self.assertEqual(report["anchor"], anchor)
+            self.assertEqual(report["anchor_files"], len(barcodes))
+            self.assertEqual(report["offsets"], (10 + len(anchor), 14 + len(anchor)))
+            self.assertEqual(report["shifted_rate"], 1.0)
+            with self.assertRaises(mp.MadcError) as context:
+                mp.resolve_leading_anchor(argparse.Namespace(leading_anchor=None), raws, prefixes, "generate")
+            message = str(context.exception)
+            self.assertIn(f"--leading-anchor {anchor} (or", message)
+            self.assertIn("tag start at offset 25 to 29", message)
+            self.assertNotIn("these files only", message)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="auto"), raws, prefixes, "generate"), anchor)
+            self.assertNotIn("warning", stderr.getvalue())
+
+    def test_leading_anchor_from_one_or_two_files_is_used_and_flagged(self):
+        # One file cannot separate its barcode from the common sequence, and
+        # two may share barcode bases.  The anchor still cuts those files where
+        # the amplicon starts, so it is used, with a warning not to reuse it.
+        anchor = "CGATGGATCCAGTGC"
+        tag = "ACGTACGTACGTACGTACGT"
+        prefixes = {tag[:mp.LEADING_ANCHOR_PREFIX]}
+        barcodes = ("TTCATAAGTTGA", "GGTAAGCATGCA", "ACCTGAGTACGT")   # the first two end in the same base
+        with tempfile.TemporaryDirectory() as tmp:
+            raws = [
+                self._write_raw_reads(Path(tmp) / f"raw_{number}.fastq", [barcode + anchor + tag + "CCGATC"] * 200)
+                for number, barcode in enumerate(barcodes)
+            ]
+            for files, expected, count in ((raws[:1], barcodes[0] + anchor, "1 FASTQ,"), (raws[:2], "A" + anchor, "2 FASTQs,")):
+                report = mp.detect_leading_anchor(files, prefixes)
+                self.assertEqual(report["anchor"], expected)
+                self.assertEqual(report["anchor_files"], len(files))
+                stderr = io.StringIO()
+                args = argparse.Namespace(leading_anchor="auto")
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(mp.resolve_leading_anchor(args, files, prefixes, "generate"), expected)
+                self.assertIn(f"warning: the leading anchor was detected from {count}", stderr.getvalue())
+                # the anchor keeps every read of the files it came from
+                for fastq in files:
+                    self.assertEqual(len(list(mp.fastq_records(fastq, expected))), 200)
+                with self.assertRaises(mp.MadcError) as context:
+                    mp.resolve_leading_anchor(argparse.Namespace(leading_anchor=None), files, prefixes, "generate")
+                self.assertIn(f"--leading-anchor {expected} (or", str(context.exception))
+                self.assertIn("these files only", str(context.exception))
+            # three files are enough: no warning
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="auto"), raws, prefixes, "generate"), anchor)
+            self.assertNotIn("warning", stderr.getvalue())
+
+    def test_leading_anchor_detection_with_mixed_and_failed_files(self):
+        anchor = "CGATGGATCCAGTGC"
+        tag = "ACGTACGTACGTACGTACGT"
+        prefixes = {tag[:mp.LEADING_ANCHOR_PREFIX]}
+        barcodes = ("TTCATAAGTTGC", "GGTAAGCATGCA", "ACCTGAGTACGT", "CAGGTCATGATG", "TGACCAGTTAG")
+        with tempfile.TemporaryDirectory() as tmp:
+            # A file that mixes barcodes: its commonest prefix covers 40% of
+            # the reads, and an anchor that kept that barcode would drop the
+            # rest.  The file gives what its barcodes share.
+            mixed = self._write_raw_reads(
+                Path(tmp) / "mixed.fastq",
+                [barcode + anchor + tag + "CCGATC" for barcode, copies in zip(barcodes, (80, 30, 30, 30, 30)) for _ in range(copies)],
+            )
+            report = mp.detect_leading_anchor([mixed], prefixes)
+            self.assertEqual(report["anchor"], anchor)
+            self.assertEqual(len(list(mp.fastq_records(mixed, report["anchor"]))), 200)
+            # A failed sample, with a handful of reads that carry a tag after
+            # something else, does not hide the anchor of the others.
+            raws = [
+                self._write_raw_reads(Path(tmp) / f"raw_{number}.fastq", [barcode + anchor + tag + "CCGATC"] * 200)
+                for number, barcode in enumerate(barcodes)
+            ]
+            failed = self._write_raw_reads(
+                Path(tmp) / "failed.fastq", ["TTTTTTTTTTTTTTTTTTTTTT" + tag + "CCGATC"] * 6 + ["GGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"] * 194,
+            )
+            report = mp.detect_leading_anchor(raws + [failed], prefixes)
+            self.assertEqual(report["anchor"], anchor)
+            self.assertEqual(report["anchor_files"], len(raws))
+            # Files that end in two different sequences share no anchor, and auto says so.
+            others = [
+                self._write_raw_reads(Path(tmp) / f"other_{number}.fastq", [barcode + "TTAGGCATCAAGCTA" + tag + "CCGATC"] * 200)
+                for number, barcode in enumerate(barcodes[:3])
+            ]
+            self.assertEqual(mp.detect_leading_anchor(raws[:3] + others, prefixes)["anchor"], "")
+            with self.assertRaises(mp.MadcError) as context:
+                mp.resolve_leading_anchor(argparse.Namespace(leading_anchor="auto"), raws[:3] + others, prefixes, "generate")
+            self.assertIn("found no constant prefix", str(context.exception))
 
     def test_denoise_neighbour_lookup_matches_the_scan(self):
         # The distance-1 path enumerates neighbours instead of scanning

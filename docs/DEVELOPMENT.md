@@ -1343,6 +1343,52 @@ byte-identically from cache). Protection, the final bookkeeping and the
 table write stay in the main process. The table is unchanged with
 `--jobs 1`.
 
+**Raw deliveries with barcodes of several lengths (0.14.0).** The 0.12.0
+detection of the leading anchor pooled the
+sampled reads and built the anchor from the prefixes at the modal tag
+offset. DArT inline barcodes have 10 to 14 bases, about a fifth of the
+samples each, so of 8 sampled files only two or three sit at the modal
+offset, and the anchor grew into the barcode bases those few shared. On
+the salmon validation plate (DSalm21-6350: 1,104 FASTQs, 2,979 loci,
+common sequence `CGATGGATCCAGTGC` in the delivery's targets file; three
+truncated files left out of the draws), detection from random subsets of
+1, 2, 3 and 4 files (60 draws each) and of 8 files (150 draws) returned
+the exact 15 bases in 0, 9, 19, 39 and 133 draws. Of the 17 misses with 8
+files, 13 were one base too long and 4 two. A barcode on this plate ends
+in A, G or T, 30–36% each, so an anchor one base too long fits about a
+third of the samples and the others lose every read.
+
+Detection now works per file. A barcode is constant within a file, so
+each file gives one prefix, the most common among its shifted reads
+(seen at least twice). That also absorbs a tag found a base early, which
+the modal offset used to. The anchor is the longest suffix that every
+file's prefix shares, and the check samples 24 files instead of 8. On the
+same draws the exact sequence came back in 0, 39, 57, 58 and 150, and in
+150 of 150 draws of 16 and of 24 files. In 3,000 further draws of 8 files
+two anchors were one base too long, about what the barcode endings
+predict (the chance that 8 barcodes end alike is 1 in 1,900). In 1,000
+further draws of 24 files none was. Sampling 24 files of the plate takes
+about 0.02 s.
+
+Two rules cover files that are not one clean sample. A file that mixes
+barcodes has its prefix shortened until 90% of its shifted reads would be
+cut by it. The plate's three truncated files are such files (variants of
+one barcode, the commonest in 18–27% of the shifted reads), and alone each gives
+the common sequence plus the 2 or 3 bases its variants share, which cuts
+95–96% of its tag-carrying reads. Files holding 90% of the shifted reads
+must end in the same 8 bases, and the rest are set aside, so a failed
+sample does not hide the anchor.
+
+With up to 24 files the sample is the whole run, and the anchor is in
+every file's prefix by construction. It then cuts every file where the
+amplicon starts, even when it is longer than the common sequence: from
+one file it is the whole prefix, barcode included, and from two files it
+kept one to five barcode bases in 21 of 60 draws. In 40 draws each of 1, 2
+and 3 files, the detected anchor was found in at least 97% of the
+tag-carrying reads of every file in the run. So `auto` uses an anchor from
+fewer than three files and warns not to reuse it for other samples, and
+the stop message for an undeclared prefix says the same.
+
 ## Truncated reads: partial-read salvage with a locus guard (0.11.0)
 
 A DArTag order whose delivered files were trimmed to 109–113 bp per file,

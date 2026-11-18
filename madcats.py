@@ -1999,22 +1999,26 @@ def fastq_records(path: Path, leading_anchor: str = "") -> Iterator[Tuple[str, s
 
 
 LEADING_ANCHOR_PREFIX = 15          # bases of a panel tag that identify where the amplicon starts in a read
-LEADING_ANCHOR_SAMPLE = 2000        # reads of the first FASTQ inspected by the raw-delivery check
+LEADING_ANCHOR_SAMPLE = 2000        # reads inspected by the raw-delivery check, split evenly over the sampled FASTQs
 LEADING_ANCHOR_MIN_LENGTH = 8       # a detected anchor must be at least this long
-LEADING_ANCHOR_FILES = 8            # FASTQs the check samples, so per-sample barcodes vary and only the shared part survives
+LEADING_ANCHOR_FILES = 24           # FASTQs the check samples: each has its own barcode, and the anchor is what they all share
+LEADING_ANCHOR_MIN_FILES = 3        # with fewer, barcode bases the files happen to share cannot be told from the anchor
 
 
 def detect_leading_anchor(fastqs: Sequence[Path], tag_prefixes: Set[str], sample_reads: int = LEADING_ANCHOR_SAMPLE) -> Dict[str, object]:
     """Do these FASTQs look like a raw delivery, with a constant sequence in
     front of every amplicon?  A read is *anchored* when a panel tag begins at
     its first base and *shifted* when a panel tag begins further in; the
-    bases before a shifted tag are barcode plus common sequence, and the
-    anchor is the suffix that at least 90% of those prefixes share.  Reads
-    are sampled from several files because an inline barcode is constant
-    within a sample and must not be mistaken for the common sequence."""
+    bases before a shifted tag are an inline barcode plus the common
+    sequence.  The barcode is constant within a file and differs between
+    files, in length too, so each file gives one prefix, the most common
+    among its shifted reads, and the anchor is the longest suffix those
+    prefixes share.  With a single file that is the whole prefix, barcode
+    included (``anchor_files`` says how many files defined the anchor)."""
     anchored = shifted = sampled = 0
-    prefixes: List[str] = []
     offsets: Counter = Counter()
+    file_prefixes: List[Tuple[str, int]] = []   # per file: its prefix, and the shifted reads behind it
+    file_offsets: List[int] = []
     search = LEADING_ANCHOR_PREFIX + LEADING_ANCHOR_SEARCH + 20
     # Spread the sample across the run: neighbouring files often share a
     # plate and part of their barcode, which must not be read as anchor.
@@ -2025,6 +2029,8 @@ def detect_leading_anchor(fastqs: Sequence[Path], tag_prefixes: Set[str], sample
     per_file = max(1, sample_reads // max(1, len(files)))
     for fastq in files:
         taken = 0
+        prefixes: Counter = Counter()
+        reads: List[str] = []
         for sequence, _quality in fastq_records(Path(fastq)):
             sampled += 1
             taken += 1
@@ -2034,42 +2040,59 @@ def detect_leading_anchor(fastqs: Sequence[Path], tag_prefixes: Set[str], sample
                 for offset in range(1, min(len(sequence) - LEADING_ANCHOR_PREFIX, search)):
                     if sequence[offset:offset + LEADING_ANCHOR_PREFIX] in tag_prefixes:
                         shifted += 1
-                        prefixes.append(sequence[:offset])
+                        prefixes[sequence[:offset]] += 1
+                        reads.append(sequence)
                         offsets[offset] += 1
                         break
             if taken >= per_file:
                 break
+        # The file's prefix is its most common one, seen at least twice.
+        # That sets aside sequencing errors, and a tag found a base or two
+        # early: a candidate window that happens to begin with the last
+        # bases of the anchor (chance 1 in 4 per base).
+        prefix, count = prefixes.most_common(1)[0] if prefixes else ("", 0)
+        if count < 2:
+            continue
+        file_offsets.append(len(prefix))
+        # A file that mixes barcodes has no prefix of its own: shorten the
+        # most common one until 90% of its shifted reads would be cut by it,
+        # which leaves what those barcodes share.
+        while prefix and sum(read.find(prefix, 0, len(prefix) + LEADING_ANCHOR_SEARCH) >= 0 for read in reads) < 0.9 * len(reads):
+            prefix = prefix[1:]
+        if len(prefix) >= LEADING_ANCHOR_MIN_LENGTH:
+            file_prefixes.append((prefix, len(reads)))
     anchor = ""
+    agreeing: List[str] = []
+    if file_prefixes:
+        # Files holding 90% of the shifted reads must end in the same bases,
+        # so one failed sample does not hide the anchor.  Among the files that
+        # do, every one must agree on each further base: a base that even one
+        # of them lacks is barcode, and an anchor that kept it would lose
+        # every read of the samples without it.
+        endings: Counter = Counter()
+        for prefix, reads_behind in file_prefixes:
+            endings[prefix[-LEADING_ANCHOR_MIN_LENGTH:]] += reads_behind
+        ending, support = endings.most_common(1)[0]
+        if support >= 0.9 * sum(endings.values()):
+            agreeing = [prefix for prefix, _reads_behind in file_prefixes if prefix.endswith(ending)]
+            anchor = os.path.commonprefix([prefix[::-1] for prefix in agreeing])[::-1]
     modal_offset = offsets.most_common(1)[0][0] if offsets else None
-    if prefixes:
-        # The amplicon starts at the modal offset; a tag found a base or two
-        # earlier is a candidate window that happens to begin with the same
-        # base as the prefix (chance 1 in 4 per base), so only prefixes of
-        # the modal length define the anchor.
-        modal_prefixes = [prefix for prefix in prefixes if len(prefix) == modal_offset]
-        length = 1
-        while modal_prefixes and length <= modal_offset:
-            suffix, count = Counter(prefix[-length:] for prefix in modal_prefixes).most_common(1)[0]
-            if count < 0.9 * len(modal_prefixes):
-                break
-            anchor = suffix
-            length += 1
-    if len(anchor) < LEADING_ANCHOR_MIN_LENGTH:
-        anchor = ""
     return {
         "fastqs": [str(fastq) for fastq in files],
         "reads_sampled": sampled,
         "anchored_rate": anchored / max(1, sampled),
         "shifted_rate": shifted / max(1, sampled),
         "offset": modal_offset,
+        "offsets": (min(file_offsets), max(file_offsets)) if file_offsets else None,
         "anchor": anchor,
+        "anchor_files": len(agreeing),
     }
 
 
 def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag_prefixes: Set[str], command: str) -> str:
     """Settle ``--leading-anchor`` before any read pass: an explicit sequence
-    is used as given; ``auto`` detects it from the first FASTQ; with no
-    option the first FASTQ is still checked, and a run that would assign
+    is used as given; ``auto`` detects it from a sample of the FASTQs; with
+    no option the same sample is still checked, and a run that would assign
     almost nothing because the reads carry a constant prefix stops and names
     the anchor to use, rather than producing an empty table."""
     value = getattr(args, "leading_anchor", None)
@@ -2080,6 +2103,13 @@ def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag
     report = detect_leading_anchor([Path(fastq) for fastq in fastqs], tag_prefixes)
     where = Path(fastqs[0]).name + (f" and {len(report['fastqs']) - 1} more" if len(report["fastqs"]) > 1 else "")
     looks_raw = report["shifted_rate"] >= 0.5 and report["anchored_rate"] < 0.05 and report["anchor"]
+    # Barcodes differ in length, so the tag starts at a range of offsets.
+    low, high = report["offsets"] or (report["offset"], report["offset"])
+    tag_start = f"tag start at offset {low}" + (f" to {high}" if high != low else "")
+    # From one or two files the anchor may keep barcode bases they share.
+    # It still cuts these files correctly, so it is used, and flagged.
+    few = report["anchor"] and report["anchor_files"] < LEADING_ANCHOR_MIN_FILES
+    files_behind = f"{report['anchor_files']} FASTQ{'s' if report['anchor_files'] != 1 else ''}"
     if value and value.lower() == "auto":
         if not report["anchor"] or report["shifted_rate"] < 0.5:
             raise MadcError(
@@ -2091,16 +2121,26 @@ def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag
         args.leading_anchor_detected = True
         print(
             f"{command}: leading anchor {report['anchor']} detected in {where} "
-            f"(tag start at offset {report['offset']} in {report['shifted_rate']:.0%} of {report['reads_sampled']} reads)",
+            f"({tag_start}, in {report['shifted_rate']:.0%} of {report['reads_sampled']} reads)",
             file=sys.stderr,
         )
+        if few:
+            print(
+                f"warning: the leading anchor was detected from {files_behind}, too few to tell the common sequence "
+                "from the sample barcode in front of it; it fits these reads, but do not reuse it for other samples",
+                file=sys.stderr,
+            )
         return report["anchor"]
     if looks_raw:
+        caution = (
+            f"; with {files_behind} that prefix may include the sample barcode, so it fits these files only"
+            if few else ""
+        )
         raise MadcError(
             f"{command}: {where} looks like a raw delivery: {report['shifted_rate']:.0%} of the first "
             f"{report['reads_sampled']} reads carry a panel tag after a constant prefix ending in {report['anchor']} "
-            f"(tag start at offset {report['offset']}), and {report['anchored_rate']:.0%} start with one; rerun with "
-            f"--leading-anchor {report['anchor']} (or --leading-anchor auto)"
+            f"({tag_start}), and {report['anchored_rate']:.0%} start with one; rerun with "
+            f"--leading-anchor {report['anchor']} (or --leading-anchor auto){caution}"
         )
     return ""
 

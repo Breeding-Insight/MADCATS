@@ -99,6 +99,15 @@ Notable changes by version. Measurements behind each change are in the
   overflow and record it in their QC reports. Neither command corrects the counts, since the
   wrapped ones cannot be recovered.
   The lettuce 3K vendor MADC has 90,913 such cells across 1,108 markers.
+- `--leading-anchor auto`, and the raw-delivery check that names the anchor, find the common
+  sequence when inline barcodes differ in length. Each sampled FASTQ gives its own prefix, and the
+  anchor is the suffix that all of them share. 24 files are sampled instead of 8. Before, the
+  anchor came only from reads at the most common tag offset. DArT barcodes have 10 to 14 bases, so
+  few files share that offset, and the anchor could keep one or two barcode bases and drop every
+  read of the samples whose barcode ended otherwise. On a salmon DArTag plate (1,101 samples),
+  detection from 8 random files returned the exact common sequence in 133 of 150 draws before and
+  in 150 of 150 now. With one or two FASTQs the anchor may still include barcode bases. It cuts
+  those files correctly, and `auto` warns not to reuse it for other samples.
 - For tiled markers, `generate` credits a read that fits several tiles of one amplicon to each of
   them, instead of dropping it as a tie. Tiles are markers that read the same tag window, with a
   shared or nested left primer and Ref tags that agree except at the markers' variant positions.

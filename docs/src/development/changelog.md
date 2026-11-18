@@ -80,6 +80,21 @@ Notable changes by version. Measurements behind each change are in the
   hexaploid and mixed-ploidy populations it recovered the simulated value. polyRAD's default of 9
   left 59% of target genotypes uncalled on two real tetraploid alfalfa populations, against 8–11%
   with the estimated values.
+- The estimate of the overdispersion and the background-read rate no longer depends on the order
+  of the table, on one marker more or less, or on where its search starts. Before, it took its
+  markers at even spacing through those with reads, so one marker fewer moved the spacing onto
+  other markers: on a hexaploid sweetpotato table that changed the estimate from 40 to 30 and
+  left 13% fewer target genotypes called. It now takes the markers that come first by a hash of
+  their IDs, and the QC JSON lists them (`overdispersion.markers`). The search also judged every
+  value with the allele frequencies and dosage weights fitted at one value, which made that value
+  look best, and it stopped after four rounds whether or not it had settled. It now judges each
+  value with its own fit and moves to a neighbouring value while one is more probable; the QC
+  JSON gives its path as `overdispersion.values_visited` (before, `values_by_round`). And it
+  now uses at least 250 markers. Before, a table of more than 80 samples was estimated from
+  fewer, down to 53 for 376 samples, and from so few the value depended on which markers they
+  were: on a tetraploid alfalfa table 38% of random draws of 56 markers gave the value that all
+  3,000 markers give. Such tables now take longer to estimate (26 s against 8 s for that one).
+  Estimates can differ from those of earlier runs.
 - New optional command `filter-paralogs`, in its own module, `madcats_paralogs.py`. It filters a
   MADC (from `generate`, a vendor DArT MADC with or without its preamble, or HapApp's
   fixed-allele-ID output) against a reference genome. It places each marker by its Ref tag

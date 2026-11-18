@@ -351,8 +351,13 @@ class AssignmentSettings:
         if self.tile_families:
             arguments["tile_families"] = [list(family) for family in self.tile_families]
         # Likewise keyed only when it changes the read pass: exact-anchor and
-        # anchor-free runs keep the fingerprints (and caches) they had before.
-        if self.leading_anchor and self.leading_anchor_mismatches:
+        # anchor-free runs keep the fingerprints (and caches) they had before,
+        # and so do anchors too short to be matched with a substitution.
+        if (
+            self.leading_anchor
+            and self.leading_anchor_mismatches
+            and len(self.leading_anchor) >= LEADING_ANCHOR_MISMATCH_MIN_LENGTH
+        ):
             arguments["leading_anchor_mismatches"] = self.leading_anchor_mismatches
         return arguments
 

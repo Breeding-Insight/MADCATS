@@ -1960,6 +1960,10 @@ class ReviewFixTests(unittest.TestCase):
         no_anchor = mp.AssignmentSettings(**{**base, "leading_anchor": ""}, leading_anchor_mismatches=1)
         self.assertNotIn("leading_anchor_mismatches", no_anchor.cache_arguments())
         self.assertEqual(exact.cache_arguments(), mp.AssignmentSettings(**base).cache_arguments())
+        # An anchor too short for a substitution is matched exactly, so 1 keeps the key 0 gives.
+        short = {**base, "leading_anchor": anchor[:mp.LEADING_ANCHOR_MISMATCH_MIN_LENGTH - 1]}
+        self.assertEqual(mp.AssignmentSettings(**short, leading_anchor_mismatches=1).cache_arguments(),
+                         mp.AssignmentSettings(**short, leading_anchor_mismatches=0).cache_arguments())
 
     def test_infer_fuzzy_pass_cuts_raw_reads_at_the_anchor(self):
         # The fuzzy pass once cleared the anchor it had just stored and voted

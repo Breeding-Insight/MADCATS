@@ -111,6 +111,8 @@ Notable changes by version. Measurements behind each change are in the
   (now 6,562–103,852 each), and one pair with identical tags had split its reads 12,299 / 80,306
   (now about 112,400 each). All other markers' rows are unchanged.
 - The tile families are part of the per-sample cache key. Panels without tiles keep their caches.
+- `infer-design --leading-anchor`: the fuzzy pass cuts raw reads at the anchor, as the exact pass
+  does. It had dropped the anchor before scanning, so on a raw delivery its reads did not vote.
 
 ## 0.13.0
 

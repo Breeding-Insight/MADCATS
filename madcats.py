@@ -1345,7 +1345,6 @@ def _infer_fuzzy_init(
         marker: enumerate_variant_windows(targets[marker], tag_length)
         for marker in unresolved
     }
-    _INFER_STATE["leading_anchor"] = leading_anchor
     seed_length = max(12, min(18, tag_length // 3))
     offsets = sorted({*range(0, tag_length - seed_length + 1, seed_length), tag_length - seed_length})
     seeds: Dict[str, set] = {}
@@ -1370,6 +1369,8 @@ def _infer_fuzzy_init(
             "offsets": offsets,
             "seed_length": seed_length,
             "sinks": tuple(sink_tags),
+            # Stored with the rest, after the clear, so the fuzzy pass cuts raw reads as the exact pass does.
+            "leading_anchor": leading_anchor,
         }
     )
 

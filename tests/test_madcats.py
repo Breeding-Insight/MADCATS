@@ -1859,6 +1859,28 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual([seq for seq, _ in records], ["ACGTACGT", "TTTT"])
         self.assertTrue(all(len(seq) == len(qual) for seq, qual in records))
 
+    def test_infer_fuzzy_pass_cuts_raw_reads_at_the_anchor(self):
+        # The fuzzy pass once cleared the anchor it had just stored and voted
+        # with uncut raw reads; it must cut them as the exact pass does.
+        rng = random.Random(5)
+        flank = lambda n: "".join(rng.choice("ACGT") for _ in range(n))
+        target = flank(40) + "[A/G]" + flank(40)
+        anchor = "GATGGATCCAGTGC"
+        with tempfile.TemporaryDirectory() as tmp:
+            design = Path(tmp) / "design.tsv"
+            design.write_text("MarkerName\tTargetSequence\n" + f"m1\t{target}\n")
+            windows = mp.enumerate_variant_windows(target, 30)
+            ref_window = sorted(windows.values())[0][0]
+            read_tag = ref_window[:25] + ("A" if ref_window[25] != "A" else "C") + ref_window[26:]  # one error: fuzzy tier
+            fastq = Path(tmp) / "raw.fastq"
+            sequence = "TTCATAAGTTGC" + anchor + read_tag + "CCGATC"
+            fastq.write_text("".join(f"@r{n}\n{sequence}\n+\n{'I' * len(sequence)}\n" for n in range(5)))
+            mp._infer_fuzzy_init(str(design), 30, 3, ["m1"], (), anchor)
+            self.assertEqual(mp._INFER_STATE["leading_anchor"], anchor)
+            _, votes = mp._infer_fuzzy_scan(str(fastq))
+        self.assertEqual(sum(votes.values()), 5)
+        self.assertTrue(all(marker == "m1" for marker, _key in votes))
+
     def test_raw_delivery_is_detected_and_named(self):
         anchor = "GATGGATCCAGTGC"
         tag = "ACGTACGTACGTACGTACGT"

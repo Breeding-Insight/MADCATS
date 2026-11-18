@@ -4191,8 +4191,8 @@ By default sample columns use the unique FASTQ filename stem.
 python3 -m unittest discover -s tests -v
 ```
 
-The suite contains 257 unit/end-to-end tests in six files.
-`test_madcats.py` (86) covers `generate` and the commands around it,
+The suite contains 258 unit/end-to-end tests in six files.
+`test_madcats.py` (87) covers `generate` and the commands around it,
 `test_call.py` (112) the genotype caller, `test_filter_paralogs.py` (49) the
 paralog filter, `test_tiled_markers.py` (5) tiled markers through all three,
 `test_example.py` (4) the bundled example and `test_docs.py` (1) the match

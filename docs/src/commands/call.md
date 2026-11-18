@@ -195,6 +195,40 @@ marker's Ref and Alt tags (the Ref and Alt rows of the MADC, or `--reference-tag
 `call` never guesses the target. The QC JSON counts skipped markers by reason, and they still get
 haplotype records and off-target records.
 
+### Tables without primers
+
+`call` reads a MADC written with `generate --remove-primers on` as it is. `POS` then counts from
+the first base after the left primer, and the contig length is the length of the trimmed Ref row.
+With `--reference-tags`, `call` recognises that the Ref row is the reference tag without its
+primers. It then takes the marker's tags from the Ref and Alt rows and moves the declared target
+position by the length of the left primer.
+
+Rows of such a table differ in length, and only `generate` knows which rows end at their right
+primer and which it read through an insertion or deletion. That is written in the `Variants`
+column, so `call` takes each row's differences from the Ref row, and the designed variant, from
+that column whenever the table has it.
+
+`generate` therefore refuses `--remove-primers on` together with `--annotations off`. A table
+without primers can still lose the column later, in HapApp's fixed-allele-ID output or by hand.
+`call` then does not guess where a row ends:
+
+| What | With `Variants` | Without `Variants` |
+|------|-----------------|--------------------|
+| Target record of a designed substitution | Counted from the row categories | The same record and the same read counts |
+| Target record of a designed indel whose Ref and Alt rows differ in length | Written | Written only if the indel reads the same whether or not the two rows end at their primer. Otherwise not written, and counted as `targets_skipped_tags_differ_in_length` |
+| Row of another length than the Ref row | Read through its indel | Read only if its differences are the same either way, which holds for an indel well inside the row. Otherwise not read: its reads are left out of every off-target record and counted in `XD` |
+| Row of the Ref row's length | Read as `generate` read its full tag | Read from the two sequences, which can differ where a primer verified an indel |
+
+`call` reports how many rows with reads it did not read
+(`rows_with_reads_not_read_for_their_length` in the QC JSON, and a line on the terminal). A row
+that differs from the Ref row by more than `--max-indel-length` is not read in either case.
+
+The last line of the table is a real limit. Nothing in a table without a `Variants` column says
+that its primers were removed, so `call` cannot tell such a row from any other. If the row has an
+insertion and a deletion of the same length near its right end, `call` can read it as a run of
+substitutions and write an off-target record for each. Call a table without primers with its
+`Variants` column.
+
 ## Required Arguments
 
 | Argument | Description |
@@ -216,7 +250,7 @@ haplotype records and off-target records.
 | `--ploidy <INT>` | 2 | Ploidy of every sample not listed in `--ploidy-file` |
 | `--ploidy-file <FILE>` | none | Two columns, sample name and ploidy, separated by a tab or a comma, with or without a header line. Names are the MADC's sample column names |
 | `--reference-tags <CSV>` | none | The panel's reference-tag CSV (from `design` or `infer-design`). Its tags and `VariantPositionInTagSequence` identify each marker's target |
-| `--max-indel-length <INT>` | 10 | Widest insertion or deletion that `call` considers when it compares a row with the Ref tag. Use the value given to `generate` |
+| `--max-indel-length <INT>` | 10 | Widest insertion or deletion that `call` considers when it compares a row with the Ref tag. Use the value given to `generate`. For a MADC with a `Variants` column it only sets how far a row's length may differ from the Ref tag's, since the row's differences come from that column |
 
 ## Model
 

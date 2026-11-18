@@ -3,6 +3,34 @@
 Notable changes by version. Measurements behind each change are in the
 [development record](https://github.com/Breeding-Insight/MADCATS/blob/main/docs/DEVELOPMENT.md) on GitHub.
 
+## Unreleased
+
+- `generate --remove-primers on` writes every row without its primers. The left primer is cut at
+  its length. The right primer is cut where it begins in each row, found from the panel's own
+  amplicon length and the row's alignment to the Ref tag, with no extra input. Rows that become
+  identical are added together. `ClusterConsensusSequence`, `Variants`, `MarkerType` and the
+  variants sidecar describe the trimmed rows, with positions counted from the first base after
+  the left primer. Reads are still assigned, counted, denoised and classified on the full tags,
+  so a row keeps its category. The QC JSON gains `primer_removal`. The default is `off`, and the
+  table written with `off` is unchanged.
+- `call` reads such a table. With `--reference-tags` it recognises the trimmed Ref row and moves
+  the declared target position. It takes each row's differences from the Ref row from the MADC's
+  `Variants` column when the table has one, and derives them as before when it has none. The
+  records it writes from a table of full tags are unchanged when `--max-indel-length` is the
+  value `generate` used. With another value, the table's own `Variants` now decide how a row is
+  read. In a table without a `Variants` column, a row of another length than the Ref tag was left
+  out of every off-target record. It is now read when its differences are the same whether or not
+  it ends at its right primer (an indel well inside the row), and left out otherwise. `call`
+  counts the rows it leaves out (`rows_with_reads_not_read_for_their_length`) and says so. A
+  designed indel whose Ref and Alt rows differ in length is treated the same way
+  (`targets_skipped_tags_differ_in_length`). `generate` refuses `--remove-primers on` together
+  with `--annotations off`, because a table without primers and without `Variants` cannot be told
+  from one with primers.
+- `Variants` writes an insertion or deletion on the very first base of a tag without an anchor
+  base (`1:.>GG`, `1:TT>.`). Before, it borrowed the base after it, which another event could use
+  as well, and the row then could not be rebuilt from its `Variants`. A tag that starts with a
+  primer never has such an event, so tables written without `--remove-primers on` are unchanged.
+
 ## 0.14.0
 
 - New command `call`, in its own module, `madcats_call.py`. It calls genotypes from a MADC (from

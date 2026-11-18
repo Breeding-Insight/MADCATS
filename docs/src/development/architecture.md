@@ -39,7 +39,7 @@ The module follows the order a read travels. Each section opens with a banner co
 | 4. Platform intake | Pair merging, window location and freezing, tiling and routing, window-scan |
 | 5. Per-sample read assignment | `PrimerIndex`, `select_marker`, `process_sample` and its cache |
 | 6. Evidence, denoising and partial-read salvage | `EvidenceRule`, `collect_evidence`, `finalize_counts`, `apply_partial_reads` |
-| 7. Classification and annotation | `classify_sequence`, `variant_events`, `marker_type_label` |
+| 7. Classification and annotation, then primer removal | `classify_sequence`, `variant_events`, `marker_type_label`; `amplicon_geometry`, `right_primer_cut`, `trim_locus_rows` |
 | 8. MADC input/output and QC | `read_madc`, `write_madc`, `validate_madc` |
 | 9. Commands and command line | One `run_*` per subcommand, `build_parser`, `main` |
 
@@ -54,7 +54,8 @@ The parser imports `madcats_call.py` the same way. The module opens with the gen
 per-allele posteriors to one genotype (`correct_dosages_to_ploidy`), input (`read_count_table`,
 `read_ploidy_table`), what each VCF type counts (`resolve_target`, `RowReading`, `process_marker`),
 VCF text (`format_record`, `vcf_header`) and its command line. It reads rows against the Ref tag
-with `variant_events`, the same reading that fills the MADC's `Variants` column.
+from the MADC's `Variants` column (`read_row`), and derives the same reading with
+`variant_events` when the table has no such column.
 
 ## The `generate` Pipeline
 

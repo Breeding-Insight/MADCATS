@@ -18,8 +18,8 @@ Chr01_000123|RefMatch,Chr01_000123,ACGT...,ACGT...,0,...,.,57,0,...
 |--------|----------|
 | `AlleleID` | Marker name and category joined by a pipe, e.g. `Chr01_000123\|AltMatch`. With `--number-match-ids`, Match/Other rows get a stable serial, such as `Chr01_000123\|RefMatch_0001` |
 | `CloneID` | Marker name |
-| `AlleleSequence` | The row's tag sequence |
-| `ClusterConsensusSequence` | Canonical rows carry their own sequence. Match/Other rows carry the Ref tag, following vendor convention |
+| `AlleleSequence` | The row's tag sequence. With `--remove-primers on`, the tag without its primers |
+| `ClusterConsensusSequence` | Canonical rows carry their own sequence. Match/Other rows carry the Ref tag (the Ref row's sequence), following vendor convention |
 | `CallRate` | For canonical rows, the fraction of samples with canonical Ref or Alt reads at the locus. For other rows, `0` |
 | `OneRatioRef` … `PICRef` | Vendor downstream statistics, not FASTQ evidence, so emitted as `.` |
 | `PICSnp` → `Variants` | With `--annotations on` (default), the row's events against the Ref tag. Otherwise `.` |
@@ -58,9 +58,24 @@ the tag as printed:
 | `70:TAG>T` | Deletion |
 | `clip=4` | An insertion pushed the last 4 Ref bases out of the window |
 | `overhang=3` | A deletion pulled 3 downstream bases into the window |
+| `1:.>GG`, `1:TT>.` | An insertion before the very first base, or a deletion that starts on it. No base precedes it, so it is written without an anchor base, and `.` stands for no bases. Here `GG` is inserted before base 1, and bases 1 and 2 are deleted |
 
 An example value is `55:C>CAAAA;91:A>T;clip=4`. The Ref row is `.`, and the Alt row of a designed SNP
 is exactly the design (e.g. `46:C>G`).
+
+Each `position:REF>ALT` token reads "replace these Ref bases, starting at this position, by these
+bases". `clip=k` drops the last `k` Ref bases, and `overhang=k` appends the row's own last `k`
+bases. No two tokens of a row use the same Ref base, so applying them in order rebuilds the row
+from the Ref row.
+
+With `--remove-primers on` the frame is the Ref row as printed, so position 1 is the first base
+after the left primer. Whether a row is read through an insertion or deletion is decided on its
+full tag, as without the option, and a row whose length differs from the Ref row's is always read
+through one. A row cut at its right primer, on a marker whose Ref row also ends at its primer, is
+compared with the Ref row end to end. A difference at its end is then an insertion or a deletion.
+Every other row is a fixed-length window and keeps `clip` and `overhang`. A row that differs from
+the Ref row in length by more than `--max-indel-length` is compared base by base from its start,
+and the rest is `clip` or `overhang`.
 
 ## Variants Sidecar
 
@@ -85,6 +100,9 @@ is exactly the design (e.g. `46:C>G`).
   described in [Read Accounting](evidence-model.md#read-accounting))
 - row counts by category, by evidence route, and by `marker_types`
 - the variants sidecar path
+- with `--remove-primers on`, `primer_removal`: the panel's amplicon length, the markers by whether
+  their right primer was located (and if not, why), the rows that were merged, the rows that lost
+  right-primer bases, and the rows that kept their right primer
 
 `normalize-reads`, `infer-design`, `window-scan` and `filter-paralogs` write their own QC JSONs. See
 each command's page.

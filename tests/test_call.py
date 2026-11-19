@@ -1699,6 +1699,24 @@ class TablesWithoutPrimersTests(CommandTestCase):
         self.assertEqual(self.qc["markers"]["rows_with_reads_not_read_for_their_length"], 0)
         self.assertNotIn("were not read", self.stderr)
 
+    def test_designed_indel_on_the_first_base_is_a_target_record(self):
+        # Without the left primer no base precedes an insertion or deletion on the first base, and
+        # Variants writes it without one (1:.>GG, 1:AC>.).  VCF then takes the base after it.
+        ref = REF_TAG[self.LEFT : self.END]
+        for alt, variants, record in (
+            ("GG" + ref, "1:.>GG", (1, ref[0], ["GG" + ref[0]])),
+            (ref[2:], f"1:{ref[:2]}>.", (1, ref[:3], [ref[2]])),
+        ):
+            rows = [("M1", "Ref", ref, [30, 12, 0, 20]), ("M1", "Alt", alt, [0, 11, 14, 0])]
+            self.assertEqual(madcats.format_variants(madcats._describe(ref, alt, 10, True, whole=True)), variants)
+            # The design is read from the Alt row's Variants, or from the two rows where the table has none.
+            for madc in (self.annotated(rows, {alt: variants}), self.write_madc(rows, ["s1", "s2", "s3", "s4"])):
+                prefix = self.call_madc(madc, "--vcf", "target")
+                records = self.vcf(prefix, "target")[2]
+                self.assertEqual([(found["POS"], found["REF"], found["ALT"]) for found in records], [record])
+                self.assertEqual([sample["AD"] for sample in records[0]["samples"]], ["30,0", "12,11", "0,14", "20,0"])
+                self.assertNotIn("targets_skipped_ambiguous_design", self.qc["vcfs"]["target"])
+
     def test_without_a_variants_column_a_row_of_another_length_is_read_only_if_its_end_does_not_matter(self):
         # An indel well inside the row reads the same whether or not the row ends at its primer, so
         # it is read as with the column.

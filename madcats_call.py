@@ -2246,7 +2246,9 @@ class TargetVariant(NamedTuple):
     """The designed variant of a marker: 1-based position on the Ref tag and its two alleles.
 
     A substitution has single-base alleles.  An insertion or deletion is
-    written the VCF way, starting at the base before it (``C`` > ``CAAAA``).
+    written the VCF way, starting at the base before it (``C`` > ``CAAAA``),
+    or ending at the base after it when it is on the first base of the tag
+    (position 1, ``A`` > ``GGA``).
     """
 
     position: int
@@ -2290,6 +2292,12 @@ def resolve_target(
     if len(differences) != 1:
         return None, "ambiguous_design"
     _, position, ref_allele, alt_allele = differences[0]
+    if position == 1 and "." in (ref_allele, alt_allele):
+        # No base precedes an insertion or deletion on the first base, and Variants writes it
+        # without one (1:.>GG, 1:AC>.).  VCF then takes the base after it into both alleles.
+        removed, added = ref_allele.strip("."), alt_allele.strip(".")
+        after = ref_tag[len(removed) : len(removed) + 1]
+        ref_allele, alt_allele = removed + after, added + after
     if not _is_concrete(ref_allele) or not _is_concrete(alt_allele):
         return None, "ambiguous_design"
     return TargetVariant(position, ref_allele, alt_allele), None

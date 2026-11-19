@@ -164,6 +164,12 @@ What to know before using it:
   error if both are given. A step that drops the column later, such as HapApp's fixed-allele-ID
   output, leaves `call` with less to go on. See
   [Tables without primers](call.md#tables-without-primers).
+- **Not every downstream tool takes rows of different lengths.** `madcats call` does, and so do
+  `BIGr::madc2vcf_targets` and `BIGr::madc2vcf_all` on a pecan table in the fixed-allele-ID
+  layout. `BIGr::madc2vcf_multi` does not: polyRAD, which it runs, cuts every row of a marker to
+  the length of the marker's shortest row, and it did not write a VCF from that table.
+  `filter-paralogs` has not been run on a table without primers. Its rows are shorter, about 25
+  bases on a 54-base alfalfa tag, and short rows are harder to place on a genome.
 
 ## Examples
 

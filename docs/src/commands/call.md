@@ -247,11 +247,21 @@ both from the table unless you set them.
 
 `call` chooses the pair that makes the read counts most probable. It tries background rates from
 0.0002 to 0.02 and overdispersions from 2 to 500, on each marker's reference and alternate read
-counts with the genotypes summed out, using up to 20,000 sample-by-marker cells from markers at
-even spacing through the table. `call` can tell the two apart because they show in different
-samples. Stray reads show in samples that do not carry an allele, and scatter in samples that
-carry both. The values used, and the log-likelihood of every value tried, are in the QC JSON, and
-the VCF header states them.
+counts with the genotypes summed out, on 20,000 sample-by-marker cells or on 250 markers, whichever
+is more. `call` can tell the two apart because they show in different samples. Stray reads show in samples that do not
+carry an allele, and scatter in samples that carry both. The values used, the log-likelihood of
+every value tried, and the markers the estimate was made on are in the QC JSON, and the VCF header
+states the values.
+
+- Which markers the estimate uses depends only on their IDs. The same markers give the same
+  estimate in whatever order the table lists them, and a marker added to the table or removed
+  from it changes at most one of the markers used.
+- At least 250 markers are used when the table has them, because markers differ in how much their
+  reads scatter and an estimate from a few dozen depends on which ones they are. With more than
+  80 samples the estimate therefore takes longer the more samples there are.
+- Each overdispersion is judged with the markers called at that value, and the search moves to a
+  neighbouring value for as long as one is more probable. It ends at the same value wherever it
+  starts.
 
 - The estimate does not use `--prior`. It gives every dosage its own free probability at each
   marker, because the estimate is only as good as the genotype proportions it assumes.

@@ -127,6 +127,7 @@ import csv
 import dataclasses
 import datetime as dt
 import functools
+import hashlib
 import heapq
 import math
 import operator
@@ -1575,15 +1576,22 @@ def best_dosages_summing_to_ploidy(posteriors: Sequence[Sequence[float]], ploidy
 # Values tried by ``estimate_overdispersion``.  Steps widen as the values grow, because
 # the beta-binomial changes less and less as it approaches the binomial.
 OVERDISPERSION_GRID = (2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500)
-# The estimate uses at most this many sample-by-marker cells, from markers taken at even
-# spacing through the table, so that it stays quick and the same table always gives the
-# same value.
+# The estimate uses this many sample-by-marker cells, so that it stays quick, unless that is
+# fewer markers than ``OVERDISPERSION_MIN_MARKERS``.  Which markers it takes depends on their
+# IDs alone (``_marker_priority``), so the same markers give the same value in whatever order
+# the table lists them, and a marker added to the table or taken out of it changes at most
+# one of them.
 OVERDISPERSION_MAX_CELLS = 20000
-# However many samples there are, at least this many markers are used when the table has them.
-OVERDISPERSION_MIN_MARKERS = 20
+# However many samples there are, at least this many markers are used when the table has
+# them.  Markers differ in how much their reads scatter, so the estimate depends on which
+# markers it is made on until there are enough of them: of 1,000 random draws of 56 markers
+# from a tetraploid table of 356 samples, 38% gave the value all 3,000 markers give and 78%
+# came within one step of the grid; of draws of 224 markers, 60% and 96%
+# (docs/DEVELOPMENT.md).  Beyond 80 samples the estimate therefore takes longer the more
+# samples there are.
+OVERDISPERSION_MIN_MARKERS = 250
 # With fewer sample-by-marker cells that have reads, the estimate would be mostly noise.
 OVERDISPERSION_MIN_CELLS = 100
-OVERDISPERSION_MAX_ROUNDS = 4
 # Background-read rates tried by ``estimate_read_model``.
 BACKGROUND_RATE_GRID = (0.0002, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.01, 0.02)
 
@@ -1596,18 +1604,21 @@ class OverdispersionEstimate:
     ``OVERDISPERSION_MIN_CELLS`` sample-by-marker cells had reads
     (``cells_with_reads``), which is too little to estimate from.
     ``log_likelihood_by_value`` maps every value tried to the log-likelihood
-    of the read counts under it, in the last round.  ``at_limit`` is ``"lowest"`` or
-    ``"highest"`` when the chosen value is an end of the grid, so the best
-    value may lie beyond it.  ``values_by_round`` is the value chosen in each
-    round, and ``markers_used`` the number of markers the estimate is based on.
+    of the read counts under it, with the markers called at that value.
+    ``at_limit`` is ``"lowest"`` or ``"highest"`` when the chosen value is an
+    end of the grid, so the best value may lie beyond it.  ``values_visited``
+    is the path of the search, from the value it started at to the chosen
+    one, ``markers_used`` the number of markers the estimate is based on and
+    ``marker_ids`` which they are.
     """
 
     value: Optional[float]
     log_likelihood_by_value: Dict[float, float]
     markers_used: int
-    values_by_round: List[float]
+    values_visited: List[float]
     at_limit: Optional[str] = None
     cells_with_reads: int = 0
+    marker_ids: List[str] = dataclasses.field(default_factory=list)
 
 
 def marker_overdispersion_log_likelihoods(
@@ -1661,22 +1672,51 @@ def _evenly_spaced(items: Sequence, limit: int) -> List:
     return [items[index * len(items) // limit] for index in range(limit)]
 
 
-def _markers_for_estimate(
-    depths_by_marker: Sequence[Sequence[Sequence[int]]], sample_count: int
-) -> Tuple[List[Sequence[Sequence[int]]], int]:
-    """The markers the read-model estimate works on, and how many of their sample cells have reads.
+def _marker_priority(marker_id: str) -> bytes:
+    """Where a marker stands in the order markers are taken for an estimate: a hash of its ID.
 
-    Markers without reads are left out, and at most enough markers to make up
-    ``OVERDISPERSION_MAX_CELLS`` cells are kept, at even spacing.  Selecting
-    from an earlier selection returns it unchanged.
+    The order is as good as random with respect to the genome and the read
+    counts, and a marker has the same place in every table, whatever other
+    markers the table holds and in whatever order.
     """
-    samples_with_reads = [
-        sum(1 for sample_depths in depths if sum(sample_depths) > 0) for depths in depths_by_marker
-    ]
-    usable = [(depths, count) for depths, count in zip(depths_by_marker, samples_with_reads) if count > 0]
+    return hashlib.blake2b(marker_id.encode("utf-8"), digest_size=8).digest()
+
+
+def _markers_for_estimate(
+    depths_by_marker: Sequence[Sequence[Sequence[int]]],
+    sample_count: int,
+    marker_ids: Optional[Sequence[str]] = None,
+) -> Tuple[List[Sequence[Sequence[int]]], int, List[str]]:
+    """The markers the read-model estimate works on, how many of their sample cells have reads, and their IDs.
+
+    Markers without reads are left out, and enough markers to make up
+    ``OVERDISPERSION_MAX_CELLS`` cells are kept, or
+    ``OVERDISPERSION_MIN_MARKERS`` when that is more: those that come first
+    by ``_marker_priority``, in that order.  So the selection does not depend
+    on the order of the table, and adding a marker to the table or taking
+    one out of it replaces at most one of the markers selected.  Selecting
+    from an earlier selection returns it unchanged.
+
+    Without ``marker_ids`` a marker's position in ``depths_by_marker`` stands
+    for its ID; the selection then follows the order of the table.
+    """
+    if marker_ids is None:
+        marker_ids = [str(position) for position in range(len(depths_by_marker))]
+    elif len(marker_ids) != len(depths_by_marker):
+        raise ValueError("marker_ids and depths_by_marker must have the same length")
+    usable = []
+    for marker_id, depths in zip(marker_ids, depths_by_marker):
+        samples_with_reads = sum(1 for sample_depths in depths if sum(sample_depths) > 0)
+        if samples_with_reads > 0:
+            usable.append((_marker_priority(marker_id), marker_id, depths, samples_with_reads))
+    usable.sort(key=lambda marker: marker[:2])
     marker_limit = max(OVERDISPERSION_MIN_MARKERS, OVERDISPERSION_MAX_CELLS // max(1, sample_count))
-    chosen_markers = _evenly_spaced(usable, marker_limit)
-    return [depths for depths, _ in chosen_markers], sum(count for _, count in chosen_markers)
+    chosen_markers = usable[:marker_limit]
+    return (
+        [depths for _, _, depths, _ in chosen_markers],
+        sum(count for _, _, _, count in chosen_markers),
+        [marker_id for _, marker_id, _, _ in chosen_markers],
+    )
 
 
 def estimate_overdispersion(
@@ -1686,6 +1726,7 @@ def estimate_overdispersion(
     grid: Sequence[float] = OVERDISPERSION_GRID,
     start: float = POLYRAD_OVERDISPERSION,
     parallel_map=map,
+    marker_ids: Optional[Sequence[str]] = None,
 ) -> OverdispersionEstimate:
     """Choose the overdispersion that makes the observed read counts most probable.
 
@@ -1696,13 +1737,23 @@ def estimate_overdispersion(
         whatever prior the run uses (``choose_read_model``).
     parallel_map: a function like ``map``, used to work on the markers; a
         process pool's ``map`` spreads them over its workers.
+    marker_ids: the markers' IDs, which decide the markers the estimate is
+        made on when there are more than it uses (``_markers_for_estimate``).
 
-    For every value in ``grid`` the log-likelihood of the counts is added up
-    over the markers (``marker_overdispersion_log_likelihoods``), and the
-    value with the highest total is chosen.  Each marker's allele frequency,
-    genotype prior and allelic bias come from calling it under the current
-    value, so the search is repeated with the chosen value until the choice
-    no longer changes, which usually takes two rounds.
+    A value of ``grid`` is judged by the log-likelihood of the counts under
+    it, added up over the markers, with each marker's allele frequency,
+    genotype prior and allelic bias fitted at that same value
+    (``marker_overdispersion_log_likelihoods``).  The search starts at the
+    value nearest ``start`` and moves to a neighbouring value for as long as
+    one is more probable.  Every move raises the log-likelihood, so the
+    search always ends, and it ends only where neither neighbour is better.
+
+    Each value has to be judged with its own fit.  With the allele
+    frequencies and dosage weights fitted at one value held fixed while the
+    others are tried, that value looks best: on a hexaploid table of 3,087
+    markers such a search stayed at 30 when started below it and at 40 when
+    started above, while the counts were more probable at 40 by 317 log
+    units once both were fitted (docs/DEVELOPMENT.md).
 
     This is a maximum-likelihood estimate and MADCATS's own; updog instead
     fits an overdispersion for every marker.  polyRAD's ``TestOverdispersion``
@@ -1711,36 +1762,46 @@ def estimate_overdispersion(
     rough estimate assigns the wrong dosage often enough that the counts look
     more scattered than they are (see docs/DEVELOPMENT.md).
     """
-    markers, cells_with_reads = _markers_for_estimate(depths_by_marker, len(ploidies))
+    markers, cells_with_reads, chosen_ids = _markers_for_estimate(depths_by_marker, len(ploidies), marker_ids)
     if cells_with_reads < OVERDISPERSION_MIN_CELLS:
-        return OverdispersionEstimate(None, {}, len(markers), [], cells_with_reads=cells_with_reads)
-
-    current = start
-    values_by_round: List[float] = []
-    log_likelihood: Dict[float, float] = {}
-    for _ in range(OVERDISPERSION_MAX_ROUNDS):
-        per_marker = parallel_map(
-            functools.partial(
-                marker_overdispersion_log_likelihoods,
-                ploidies=ploidies,
-                settings=dataclasses.replace(settings, overdispersion=current),
-                grid=grid,
-            ),
-            markers,
+        return OverdispersionEstimate(
+            None, {}, len(markers), [], cells_with_reads=cells_with_reads, marker_ids=chosen_ids
         )
-        totals = [0.0] * len(grid)
-        for marker_totals in per_marker:
-            if marker_totals is not None:
-                totals = [total + marker_total for total, marker_total in zip(totals, marker_totals)]
-        log_likelihood = dict(zip(grid, totals))
-        best = max(grid, key=lambda value: log_likelihood[value])
-        values_by_round.append(best)
-        if best == current:
+
+    values = sorted(grid)
+    log_likelihood: Dict[float, float] = {}
+
+    def log_likelihood_at(index: int) -> float:
+        value = values[index]
+        if value not in log_likelihood:
+            per_marker = parallel_map(
+                functools.partial(
+                    marker_overdispersion_log_likelihoods,
+                    ploidies=ploidies,
+                    settings=dataclasses.replace(settings, overdispersion=value),
+                    grid=(value,),
+                ),
+                markers,
+            )
+            log_likelihood[value] = sum(totals[0] for totals in per_marker if totals is not None)
+        return log_likelihood[value]
+
+    best = min(range(len(values)), key=lambda index: abs(values[index] - start))
+    values_visited = [values[best]]
+    while True:
+        neighbours = [index for index in (best - 1, best + 1) if 0 <= index < len(values)]
+        better = [index for index in neighbours if log_likelihood_at(index) > log_likelihood_at(best)]
+        if not better:
             break
-        current = best
-    chosen = values_by_round[-1]
-    at_limit = "lowest" if chosen == min(grid) else "highest" if chosen == max(grid) else None
-    return OverdispersionEstimate(chosen, log_likelihood, len(markers), values_by_round, at_limit, cells_with_reads)
+        best = max(better, key=log_likelihood_at)
+        values_visited.append(values[best])
+    log_likelihood_at(best)   # a grid of one value has no neighbour to compare with
+    chosen = values[best]
+    at_limit = "lowest" if chosen == values[0] else "highest" if chosen == values[-1] else None
+    return OverdispersionEstimate(
+        chosen, dict(sorted(log_likelihood.items())), len(markers), values_visited, at_limit, cells_with_reads,
+        chosen_ids,
+    )
 
 
 @dataclasses.dataclass
@@ -1767,6 +1828,7 @@ def estimate_read_model(
     parallel_map=map,
     start_background_rate: float = FALLBACK_BACKGROUND_RATE,
     start_overdispersion: float = POLYRAD_OVERDISPERSION,
+    marker_ids: Optional[Sequence[str]] = None,
 ) -> ReadModelEstimate:
     """Choose the background-read rate and the overdispersion that make the read counts most probable.
 
@@ -1791,7 +1853,7 @@ def estimate_read_model(
     rates = sorted(background_rates)
     tried: Dict[float, OverdispersionEstimate] = {}
     # Every rate is judged on the same markers, selected once.
-    depths_by_marker, _ = _markers_for_estimate(depths_by_marker, len(ploidies))
+    depths_by_marker, _, marker_ids = _markers_for_estimate(depths_by_marker, len(ploidies), marker_ids)
 
     def log_likelihood_at(index: int) -> float:
         rate = rates[index]
@@ -1805,7 +1867,7 @@ def estimate_read_model(
                 start = overdispersions[0]
             tried[rate] = estimate_overdispersion(
                 depths_by_marker, ploidies, dataclasses.replace(settings, background_rate=rate),
-                overdispersions, start, parallel_map,
+                overdispersions, start, parallel_map, marker_ids,
             )
         estimate = tried[rate]
         if not estimate.log_likelihood_by_value:
@@ -2935,22 +2997,25 @@ def _number_or_auto(parse):
     return parse_value
 
 
-def target_depths_by_marker(tasks: Sequence[MarkerTask], sample_count: int) -> List[List[List[int]]]:
+def target_depths_by_marker(
+    tasks: Sequence[MarkerTask], sample_count: int
+) -> Tuple[List[str], List[List[List[int]]]]:
     """Reference-type and alternate-type read counts of every marker that has an alternate row.
 
-    Returns ``[marker][sample][allele]``.  These are the counts the target
-    records are called from; the read-model estimate and the search for like
-    samples use them because every marker has them, whatever VCF types were
-    asked for.
+    Returns the markers' IDs and their counts, ``[marker][sample][allele]``.
+    These are the counts the target records are called from; the read-model
+    estimate and the search for like samples use them because every marker
+    has them, whatever VCF types were asked for.
     """
-    depths_by_marker = []
+    marker_ids, depths_by_marker = [], []
     for task in tasks:
         rows = [row for row in task.rows if row.sequence]
         if not any(row.category in ALTERNATE_CATEGORIES for row in rows):
             continue
         counts_by_row, _ = _without_negative_cells(rows)
+        marker_ids.append(task.clone_id)
         depths_by_marker.append(target_allele_depths(rows, counts_by_row, sample_count)[0])
-    return depths_by_marker
+    return marker_ids, depths_by_marker
 
 
 @dataclasses.dataclass
@@ -3025,8 +3090,9 @@ def _read_model_from_estimate(
         overdispersion_report.update(
             estimate=overdispersion_estimate.value,
             markers_used=overdispersion_estimate.markers_used,
+            markers=sorted(overdispersion_estimate.marker_ids),
             cells_with_reads=overdispersion_estimate.cells_with_reads,
-            values_by_round=overdispersion_estimate.values_by_round,
+            values_visited=overdispersion_estimate.values_visited,
             at_limit=overdispersion_estimate.at_limit,
             log_likelihood_by_value={
                 format(value, "g"): round(total, 3)
@@ -3069,13 +3135,15 @@ def choose_read_model(
     requested_overdispersion,
     requested_background_rate,
     parallel_map=map,
+    marker_ids: Optional[Sequence[str]] = None,
 ) -> ReadModelChoice:
     """Settle the overdispersion and the background-read rate of a run.
 
     ``requested_overdispersion`` and ``requested_background_rate`` are
     numbers or ``auto``.  Whatever is ``auto`` is estimated from each
     marker's reference-type and alternate-type read counts,
-    ``depths_by_marker`` (``estimate_read_model``).
+    ``depths_by_marker`` (``estimate_read_model``), on markers chosen by
+    their ``marker_ids``.
 
     The estimate is made with the free-weights prior whatever prior the run
     uses, because the estimate is only as good as the genotype proportions
@@ -3116,7 +3184,7 @@ def choose_read_model(
     )
     estimate_without_bias = estimate_read_model(
         depths_by_marker, ploidies, dataclasses.replace(estimate_settings, fit_allele_bias=False), background_rates,
-        overdispersions, parallel_map,
+        overdispersions, parallel_map, marker_ids=marker_ids,
     )
     baseline = estimate_without_bias.overdispersion_estimate
     if baseline.value is None:
@@ -3140,7 +3208,8 @@ def choose_read_model(
         )
     with_bias = _read_model_from_estimate(
         estimate_read_model(
-            depths_by_marker, ploidies, estimate_settings, background_rates, overdispersions, parallel_map, **starts
+            depths_by_marker, ploidies, estimate_settings, background_rates, overdispersions, parallel_map,
+            marker_ids=marker_ids, **starts
         ),
         requested_overdispersion, requested_background_rate,
         used_for="for records called with their bias" if some_records_without_bias else "",
@@ -3347,9 +3416,9 @@ def run_call(args: argparse.Namespace) -> int:
     try:
         # The read-model estimate and the search for like samples both work on these counts.
         needs_target_depths = AUTO in (args.overdispersion, args.background_rate) or args.prior == PRIOR_STRUCTURE
-        target_depths = target_depths_by_marker(tasks, len(ploidies)) if needs_target_depths else []
+        target_ids, target_depths = target_depths_by_marker(tasks, len(ploidies)) if needs_target_depths else ([], [])
         read_model = choose_read_model(
-            target_depths, ploidies, model, args.overdispersion, args.background_rate, parallel_map
+            target_depths, ploidies, model, args.overdispersion, args.background_rate, parallel_map, target_ids
         )
         settings = dataclasses.replace(
             model, overdispersion=read_model.overdispersion, background_rate=read_model.background_rate,

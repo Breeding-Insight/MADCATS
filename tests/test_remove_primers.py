@@ -304,7 +304,7 @@ class TableTests(unittest.TestCase):
     def setUpClass(cls):
         cls.loci, cls.parts = make_panel()
 
-    def write(self, rows_by_marker, remove_primers, directory, **options):
+    def write(self, rows_by_marker, remove_primers, directory, gap_band=GAP_BAND, **options):
         """Write a two-sample table; ``rows_by_marker`` maps a marker to {tag: (reads, reads)}."""
         results = []
         index_of = {locus.marker: locus.index for locus in self.loci}
@@ -321,7 +321,7 @@ class TableTests(unittest.TestCase):
         summary = mp.write_madc(
             output, self.loci, results, rule,
             mp.OutputOptions(variants_path=output.with_suffix(".variants.csv"), remove_primers=remove_primers, **options),
-            GAP_BAND,
+            gap_band,
         )
         with open(output, newline="") as handle:
             table = list(csv.DictReader(handle))
@@ -386,6 +386,87 @@ class TableTests(unittest.TestCase):
 
     def variants_of(self, table, sequence):
         return next(row["Variants"] for row in table if row["AlleleSequence"] == sequence)
+
+    def test_known_target_alleles_and_events_before_and_after_primer_removal(self):
+        locus = self.loci[0]
+        parts = self.parts[locus.marker]
+        insert = parts[1]
+        # Fixed simulated truth: the target is G/T at full position 31, insert
+        # position 11. Expected events are literal Ref coordinates, independent
+        # of the aligner and annotation helpers being tested.
+        self.assertEqual(insert, "ATACACGTCAGCACGAAACTTGTTGGCCCAGT")
+        alt = substituted(insert, TARGET)
+        cases = [
+            (insert[:4] + insert[6:], "RefMatch", "22:TAC>T;overhang=2", "2:TAC>T", "indel"),
+            (alt[:4] + alt[6:], "AltMatch", "22:TAC>T;31:G>T;overhang=2", "2:TAC>T;11:G>T", "indel"),
+            (insert[:4] + "AG" + insert[4:], "RefMatch", "24:C>CAG;clip=2", "4:C>CAG", "indel"),
+            (alt[:4] + "AG" + alt[4:], "AltMatch", "24:C>CAG;31:G>T;clip=2", "4:C>CAG;11:G>T", "indel"),
+            (insert[:10] + insert[11:], "Other", "30:AG>A;overhang=1", "10:AG>A", "indel"),
+            (alt[:17] + alt[19:], "AltMatch", "31:G>T;37:AAC>A;overhang=2", "11:G>T;17:AAC>A", "indel"),
+            (substituted(insert, 25), "RefMatch", "46:G>T", "26:G>T", "snp"),
+        ]
+        counts = {locus.ref_tag: (40, 0), locus.alt_tag: (0, 30)}
+        counts.update({tag_of(parts, row): (9, 11) for row, *_ in cases})
+        with tempfile.TemporaryDirectory() as directory:
+            for trimmed in (False, True):
+                with self.subTest(remove_primers=trimmed):
+                    summary, table = self.write({locus.marker: counts}, trimmed, directory)
+                    by_sequence = {row["AlleleSequence"]: row for row in table if row["CloneID"] == locus.marker}
+                    for insert_row, category, full_events, trimmed_events, marker_type in cases:
+                        sequence = insert_row if trimmed else tag_of(parts, insert_row)
+                        row = by_sequence[sequence]
+                        self.assertEqual(row["AlleleID"], f"{locus.marker}|{category}")
+                        self.assertEqual(row["Variants"], trimmed_events if trimmed else full_events)
+                        self.assertEqual(row["MarkerType"], marker_type)
+                        self.assertEqual((row["s0"], row["s1"]), ("9", "11"))
+                    self.assertEqual(summary["reads_in_emitted_rows"], 70 + 20 * len(cases))
+                    if trimmed:
+                        self.assertEqual(summary["primer_removal"]["rows_merged_across_allele_groups"], 0)
+
+    def test_rescue_off_can_misclassify_an_indel_that_passes_assignment(self):
+        # A known Alt haplotype has an insertion upstream of its target. The
+        # base at the old offset happens to be Ref, despite passing the default
+        # 80% identity filter. Primer removal cannot repair this fixed-offset
+        # interpretation. Exercise all four switch combinations through FASTQ.
+        ref = "CCGTAATGCCTTTCCCTAACAGAGTTTTTCGAACTCGTGTTGTCGAGCGACGGAATTAGATCAGTTAAATGGCAGAAAACT"
+        target = 65
+        alt = ref[:target] + "A" + ref[target + 1:]
+        indel = (alt[:60] + "C" + alt[60:])[:len(ref)]
+        self.assertEqual((ref[target], indel[target], indel[target + 1]), ("T", "T", "A"))
+        locus = mp.Locus(0, "late", ref[:20], "", "T", "A", target, ref, alt)
+        self.assertEqual(mp.select_marker(indel, [0], [locus], 16, gap_band=0), (0, "assigned"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tags = root / "tags.csv"
+            mp.write_reference_tags(tags, [locus])
+            fastqs = root / "fastq"
+            fastqs.mkdir()
+            with (fastqs / "sample.fastq").open("w") as handle:
+                for number, sequence in enumerate([ref] * 40 + [alt] * 40 + [indel] * 40):
+                    handle.write(f"@r{number}\n{sequence}\n+\n{'I' * len(sequence)}\n")
+            for rescue in ("on", "off"):
+                for trimmed in ("on", "off"):
+                    with self.subTest(gapped_rescue=rescue, remove_primers=trimmed):
+                        output = root / "madc.csv"
+                        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                            mp.main([
+                                "generate", "--fastq-dir", str(fastqs), "--reference-tags", str(tags),
+                                "--output", str(output), "--jobs", "1", "--gapped-rescue", rescue,
+                                "--remove-primers", trimmed,
+                            ])
+                        with output.open(newline="") as handle:
+                            rows = list(csv.DictReader(handle))
+                        row = next(row for row in rows if row["AlleleSequence"] == (indel[20:] if trimmed == "on" else indel))
+                        self.assertEqual(row["AlleleID"], "late|AltMatch" if rescue == "on" else "late|RefMatch")
+                        self.assertEqual(row["sample"], "40")
+                        self.assertEqual(sum(int(row["sample"]) for row in rows), 120)
+                        if rescue == "on":
+                            self.assertEqual(row["Variants"], "40:A>AC;46:T>A;clip=1" if trimmed == "on" else "60:A>AC;66:T>A;clip=1")
+                            self.assertEqual(row["MarkerType"], "indel")
+                        else:
+                            self.assertEqual(row["MarkerType"], "snp")
+                            self.assertNotIn("clip=", row["Variants"])
+                            self.assertNotIn("46:T>A" if trimmed == "on" else "66:T>A", row["Variants"])
 
     def test_gapped_reading_of_the_full_tag_is_kept_after_the_primer_that_verified_it_is_cut(self):
         # A deletion and an insertion of three bases each: the row keeps the Ref length.  On the full

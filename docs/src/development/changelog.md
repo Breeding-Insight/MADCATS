@@ -43,8 +43,9 @@ Notable changes by version. Measurements behind each change are in the
   anchor base (`31:G>A;32:CACG>.`), as one on the first base of a tag already was, because the
   substitution uses that base; `call` reads this form. `--remove-primers on` writes the rows from
   the same reading. On pecan, sweetpotato, alfalfa and blackberry 0.07% to 0.25% of rows get other
-  `Variants` (28 to 75 rows), and no row is left whose `Variants` and category put different bases
-  on the target. Categories and counts do not change.
+  `Variants` (28 to 75 rows), and with primers kept no row is left whose `Variants` and category
+  put different bases on the target. Without primers 16 to 31 rows per panel still do: rows cut at
+  their right primer to another length than the Ref row. Categories and counts do not change.
 - `Variants` writes an insertion or deletion on the very first base of a tag without an anchor
   base (`1:.>GG`, `1:TT>.`). Before, it borrowed the base after it, which another event could use
   as well, and the row then could not be rebuilt from its `Variants`. A tag that starts with a

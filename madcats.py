@@ -239,6 +239,8 @@ GAP_MAX_EVENTS = 6           # ... in few separate gap events; a co-amplified pa
 GAP_VERIFIED_SUFFIX = 12     # bases that must follow the last gap before a gapped reading may re-read the target
 PARTIAL_TAIL_DEFAULT = 9     # --min-partial-length defaults to --tag-length minus this: at most 9 unobserved tail bases
 LEADING_ANCHOR_SEARCH = 40   # --leading-anchor: the anchor must end within this many bases beyond its own length
+LEADING_ANCHOR_MISMATCHES_DEFAULT = 1  # --leading-anchor-mismatches: substitutions tolerated in the anchor
+LEADING_ANCHOR_MISMATCH_MIN_LENGTH = 12  # shortest anchor that may be matched with a substitution (fewer bases match junk by chance)
 DENOISE_LOOKUP_THRESHOLD = 2 # denoiser: look up single-substitution neighbours once centroids exceed this many per tag base
 GAP_OPEN_SCALE = 1 << 10     # annotation alignments weigh one edit this much more than one gap opening
 
@@ -335,6 +337,7 @@ class AssignmentSettings:
     gap_band: int                   # --max-indel-length, or 0 with --gapped-rescue off
     leading_anchor: str = ""        # --leading-anchor: constant sequence preceding the amplicon in raw deliveries
     tile_families: Tuple[Tuple[int, ...], ...] = ()  # --tile-groups: marker indices credited together (tile_families)
+    leading_anchor_mismatches: int = 0  # --leading-anchor-mismatches: substitutions tolerated when no exact anchor is found
 
     def cache_arguments(self) -> Dict[str, object]:
         arguments: Dict[str, object] = {
@@ -351,6 +354,15 @@ class AssignmentSettings:
         # tile family (and any change to the families) gives a new fingerprint.
         if self.tile_families:
             arguments["tile_families"] = [list(family) for family in self.tile_families]
+        # Likewise keyed only when it changes the read pass: exact-anchor and
+        # anchor-free runs keep the fingerprints (and caches) they had before,
+        # and so do anchors too short to be matched with a substitution.
+        if (
+            self.leading_anchor
+            and self.leading_anchor_mismatches
+            and len(self.leading_anchor) >= LEADING_ANCHOR_MISMATCH_MIN_LENGTH
+        ):
+            arguments["leading_anchor_mismatches"] = self.leading_anchor_mismatches
         return arguments
 
 
@@ -1355,7 +1367,6 @@ def _infer_fuzzy_init(
         marker: enumerate_variant_windows(targets[marker], tag_length)
         for marker in unresolved
     }
-    _INFER_STATE["leading_anchor"] = leading_anchor
     seed_length = max(12, min(18, tag_length // 3))
     offsets = sorted({*range(0, tag_length - seed_length + 1, seed_length), tag_length - seed_length})
     seeds: Dict[str, set] = {}
@@ -1380,6 +1391,8 @@ def _infer_fuzzy_init(
             "offsets": offsets,
             "seed_length": seed_length,
             "sinks": tuple(sink_tags),
+            # Stored with the rest, after the clear, so the fuzzy pass cuts raw reads as the exact pass does.
+            "leading_anchor": leading_anchor,
         }
     )
 
@@ -1975,12 +1988,53 @@ class PrimerIndex:
         return sorted(candidates)
 
 
+def locate_leading_anchor(sequence: str, anchor: str, max_mismatches: int = 0) -> Tuple[int, int]:
+    """Where the amplicon starts in a raw read: ``(cut, mismatches)``, or ``(-1, 0)``.
+
+    The anchor must end within LEADING_ANCHOR_SEARCH bases beyond its own
+    length.  Its first exact occurrence wins.  Only when there is none, and
+    ``max_mismatches`` is 1, may one placement within a single substitution
+    stand in — and only when it is the one such placement in the window, so a
+    read never gets a guessed cut.  Substitutions only: an indel would move
+    the cut, and the primer match that follows needs the exact frame.  A
+    sequencing error in the anchor is upstream of the amplicon, so the reads
+    this recovers carry no allele bias.  An anchor shorter than
+    LEADING_ANCHOR_MISMATCH_MIN_LENGTH is always matched exactly, because
+    fewer bases match unrelated sequence by chance.  Candidates come from
+    the pigeonhole principle (with one substitution, one half of the anchor
+    still matches exactly), so the search stays in ``str.find``.
+    """
+    width = len(anchor)
+    search_end = width + LEADING_ANCHOR_SEARCH
+    start = sequence.find(anchor, 0, search_end)
+    if start >= 0:
+        return start + width, 0
+    if max_mismatches <= 0 or width < LEADING_ANCHOR_MISMATCH_MIN_LENGTH:
+        return -1, 0
+    last_start = min(search_end, len(sequence)) - width
+    if last_start < 0:
+        return -1, 0
+    half = width // 2
+    placements = set()
+    for offset, piece in ((0, anchor[:half]), (half, anchor[half:])):
+        end = last_start + offset + len(piece)
+        position = sequence.find(piece, offset, end)
+        while position >= 0:
+            candidate = position - offset
+            if candidate not in placements and tag_mismatches(sequence[candidate:candidate + width], anchor, stop_after=1) <= 1:
+                placements.add(candidate)
+            position = sequence.find(piece, position + 1, end)
+    if len(placements) != 1:
+        return -1, 0
+    return placements.pop() + width, 1
+
+
 def fastq_records(path: Path, leading_anchor: str = "") -> Iterator[Tuple[str, str]]:
     """``(sequence, quality)`` records.  With ``leading_anchor`` (raw deliveries
     that keep the library's common sequence in front of the amplicon) each
-    read starts where the anchor ends, and reads without it are skipped;
-    callers that must count those reads cut for themselves (``process_sample``)."""
-    search_end = len(leading_anchor) + LEADING_ANCHOR_SEARCH
+    read starts where an exact copy of the anchor ends, and reads without one
+    are skipped.  ``process_sample`` cuts for itself: it counts the reads it
+    skips and may match the anchor with a substitution."""
     with open_text(path, "rt") as handle:
         record_number = 0
         while True:
@@ -2000,31 +2054,34 @@ def fastq_records(path: Path, leading_anchor: str = "") -> Iterator[Tuple[str, s
             if len(sequence) != len(quality):
                 raise MadcError(f"Sequence/quality length mismatch at FASTQ record {record_number} in {path}")
             if leading_anchor:
-                cut = sequence.find(leading_anchor, 0, search_end)
+                cut, _ = locate_leading_anchor(sequence, leading_anchor)
                 if cut < 0:
                     continue
-                cut += len(leading_anchor)
                 sequence, quality = sequence[cut:], quality[cut:]
             yield sequence, quality
 
 
 LEADING_ANCHOR_PREFIX = 15          # bases of a panel tag that identify where the amplicon starts in a read
-LEADING_ANCHOR_SAMPLE = 2000        # reads of the first FASTQ inspected by the raw-delivery check
+LEADING_ANCHOR_SAMPLE = 2000        # reads inspected by the raw-delivery check, split evenly over the sampled FASTQs
 LEADING_ANCHOR_MIN_LENGTH = 8       # a detected anchor must be at least this long
-LEADING_ANCHOR_FILES = 8            # FASTQs the check samples, so per-sample barcodes vary and only the shared part survives
+LEADING_ANCHOR_FILES = 24           # FASTQs the check samples: each has its own barcode, and the anchor is what they all share
+LEADING_ANCHOR_MIN_FILES = 3        # with fewer, barcode bases the files happen to share cannot be told from the anchor
 
 
 def detect_leading_anchor(fastqs: Sequence[Path], tag_prefixes: Set[str], sample_reads: int = LEADING_ANCHOR_SAMPLE) -> Dict[str, object]:
     """Do these FASTQs look like a raw delivery, with a constant sequence in
     front of every amplicon?  A read is *anchored* when a panel tag begins at
     its first base and *shifted* when a panel tag begins further in; the
-    bases before a shifted tag are barcode plus common sequence, and the
-    anchor is the suffix that at least 90% of those prefixes share.  Reads
-    are sampled from several files because an inline barcode is constant
-    within a sample and must not be mistaken for the common sequence."""
+    bases before a shifted tag are an inline barcode plus the common
+    sequence.  The barcode is constant within a file and differs between
+    files, in length too, so each file gives one prefix, the most common
+    among its shifted reads, and the anchor is the longest suffix those
+    prefixes share.  With a single file that is the whole prefix, barcode
+    included (``anchor_files`` says how many files defined the anchor)."""
     anchored = shifted = sampled = 0
-    prefixes: List[str] = []
     offsets: Counter = Counter()
+    file_prefixes: List[Tuple[str, int]] = []   # per file: its prefix, and the shifted reads behind it
+    file_offsets: List[int] = []
     search = LEADING_ANCHOR_PREFIX + LEADING_ANCHOR_SEARCH + 20
     # Spread the sample across the run: neighbouring files often share a
     # plate and part of their barcode, which must not be read as anchor.
@@ -2035,6 +2092,8 @@ def detect_leading_anchor(fastqs: Sequence[Path], tag_prefixes: Set[str], sample
     per_file = max(1, sample_reads // max(1, len(files)))
     for fastq in files:
         taken = 0
+        prefixes: Counter = Counter()
+        reads: List[str] = []
         for sequence, _quality in fastq_records(Path(fastq)):
             sampled += 1
             taken += 1
@@ -2044,42 +2103,59 @@ def detect_leading_anchor(fastqs: Sequence[Path], tag_prefixes: Set[str], sample
                 for offset in range(1, min(len(sequence) - LEADING_ANCHOR_PREFIX, search)):
                     if sequence[offset:offset + LEADING_ANCHOR_PREFIX] in tag_prefixes:
                         shifted += 1
-                        prefixes.append(sequence[:offset])
+                        prefixes[sequence[:offset]] += 1
+                        reads.append(sequence)
                         offsets[offset] += 1
                         break
             if taken >= per_file:
                 break
+        # The file's prefix is its most common one, seen at least twice.
+        # That sets aside sequencing errors, and a tag found a base or two
+        # early: a candidate window that happens to begin with the last
+        # bases of the anchor (chance 1 in 4 per base).
+        prefix, count = prefixes.most_common(1)[0] if prefixes else ("", 0)
+        if count < 2:
+            continue
+        file_offsets.append(len(prefix))
+        # A file that mixes barcodes has no prefix of its own: shorten the
+        # most common one until 90% of its shifted reads would be cut by it,
+        # which leaves what those barcodes share.
+        while prefix and sum(read.find(prefix, 0, len(prefix) + LEADING_ANCHOR_SEARCH) >= 0 for read in reads) < 0.9 * len(reads):
+            prefix = prefix[1:]
+        if len(prefix) >= LEADING_ANCHOR_MIN_LENGTH:
+            file_prefixes.append((prefix, len(reads)))
     anchor = ""
+    agreeing: List[str] = []
+    if file_prefixes:
+        # Files holding 90% of the shifted reads must end in the same bases,
+        # so one failed sample does not hide the anchor.  Among the files that
+        # do, every one must agree on each further base: a base that even one
+        # of them lacks is barcode, and an anchor that kept it would lose
+        # every read of the samples without it.
+        endings: Counter = Counter()
+        for prefix, reads_behind in file_prefixes:
+            endings[prefix[-LEADING_ANCHOR_MIN_LENGTH:]] += reads_behind
+        ending, support = endings.most_common(1)[0]
+        if support >= 0.9 * sum(endings.values()):
+            agreeing = [prefix for prefix, _reads_behind in file_prefixes if prefix.endswith(ending)]
+            anchor = os.path.commonprefix([prefix[::-1] for prefix in agreeing])[::-1]
     modal_offset = offsets.most_common(1)[0][0] if offsets else None
-    if prefixes:
-        # The amplicon starts at the modal offset; a tag found a base or two
-        # earlier is a candidate window that happens to begin with the same
-        # base as the prefix (chance 1 in 4 per base), so only prefixes of
-        # the modal length define the anchor.
-        modal_prefixes = [prefix for prefix in prefixes if len(prefix) == modal_offset]
-        length = 1
-        while modal_prefixes and length <= modal_offset:
-            suffix, count = Counter(prefix[-length:] for prefix in modal_prefixes).most_common(1)[0]
-            if count < 0.9 * len(modal_prefixes):
-                break
-            anchor = suffix
-            length += 1
-    if len(anchor) < LEADING_ANCHOR_MIN_LENGTH:
-        anchor = ""
     return {
         "fastqs": [str(fastq) for fastq in files],
         "reads_sampled": sampled,
         "anchored_rate": anchored / max(1, sampled),
         "shifted_rate": shifted / max(1, sampled),
         "offset": modal_offset,
+        "offsets": (min(file_offsets), max(file_offsets)) if file_offsets else None,
         "anchor": anchor,
+        "anchor_files": len(agreeing),
     }
 
 
 def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag_prefixes: Set[str], command: str) -> str:
     """Settle ``--leading-anchor`` before any read pass: an explicit sequence
-    is used as given; ``auto`` detects it from the first FASTQ; with no
-    option the first FASTQ is still checked, and a run that would assign
+    is used as given; ``auto`` detects it from a sample of the FASTQs; with
+    no option the same sample is still checked, and a run that would assign
     almost nothing because the reads carry a constant prefix stops and names
     the anchor to use, rather than producing an empty table."""
     value = getattr(args, "leading_anchor", None)
@@ -2090,6 +2166,13 @@ def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag
     report = detect_leading_anchor([Path(fastq) for fastq in fastqs], tag_prefixes)
     where = Path(fastqs[0]).name + (f" and {len(report['fastqs']) - 1} more" if len(report["fastqs"]) > 1 else "")
     looks_raw = report["shifted_rate"] >= 0.5 and report["anchored_rate"] < 0.05 and report["anchor"]
+    # Barcodes differ in length, so the tag starts at a range of offsets.
+    low, high = report["offsets"] or (report["offset"], report["offset"])
+    tag_start = f"tag start at offset {low}" + (f" to {high}" if high != low else "")
+    # From one or two files the anchor may keep barcode bases they share.
+    # It still cuts these files correctly, so it is used, and flagged.
+    few = report["anchor"] and report["anchor_files"] < LEADING_ANCHOR_MIN_FILES
+    files_behind = f"{report['anchor_files']} FASTQ{'s' if report['anchor_files'] != 1 else ''}"
     if value and value.lower() == "auto":
         if not report["anchor"] or report["shifted_rate"] < 0.5:
             raise MadcError(
@@ -2101,16 +2184,26 @@ def resolve_leading_anchor(args: argparse.Namespace, fastqs: Sequence[Path], tag
         args.leading_anchor_detected = True
         print(
             f"{command}: leading anchor {report['anchor']} detected in {where} "
-            f"(tag start at offset {report['offset']} in {report['shifted_rate']:.0%} of {report['reads_sampled']} reads)",
+            f"({tag_start}, in {report['shifted_rate']:.0%} of {report['reads_sampled']} reads)",
             file=sys.stderr,
         )
+        if few:
+            print(
+                f"warning: the leading anchor was detected from {files_behind}, too few to tell the common sequence "
+                "from the sample barcode in front of it; it fits these reads, but do not reuse it for other samples",
+                file=sys.stderr,
+            )
         return report["anchor"]
     if looks_raw:
+        caution = (
+            f"; with {files_behind} that prefix may include the sample barcode, so it fits these files only"
+            if few else ""
+        )
         raise MadcError(
-            f"{command}: {where} looks like a raw delivery: {report['shifted_rate']:.0%} of the first "
-            f"{report['reads_sampled']} reads carry a panel tag after a constant prefix ending in {report['anchor']} "
-            f"(tag start at offset {report['offset']}), and {report['anchored_rate']:.0%} start with one; rerun with "
-            f"--leading-anchor {report['anchor']} (or --leading-anchor auto)"
+            f"{command}: {where} looks like a raw delivery: {report['shifted_rate']:.0%} of "
+            f"{report['reads_sampled']} sampled reads carry a panel tag after a constant prefix ending in {report['anchor']} "
+            f"({tag_start}), and {report['anchored_rate']:.0%} start with one; rerun with "
+            f"--leading-anchor {report['anchor']} (or --leading-anchor auto){caution}"
         )
     return ""
 
@@ -2494,11 +2587,14 @@ def process_sample(
         if settings.leading_anchor:
             # Raw deliveries that keep the library's common sequence in front
             # of the amplicon: the read starts where that anchor ends.
-            cut = sequence.find(settings.leading_anchor, 0, len(settings.leading_anchor) + LEADING_ANCHOR_SEARCH)
+            cut, anchor_mismatches = locate_leading_anchor(
+                sequence, settings.leading_anchor, settings.leading_anchor_mismatches
+            )
             if cut < 0:
                 qc["reads_no_leading_anchor"] += 1
                 continue
-            cut += len(settings.leading_anchor)
+            if anchor_mismatches:
+                qc["reads_leading_anchor_mismatch"] += 1
             sequence, quality = sequence[cut:], quality[cut:]
         if len(sequence) < settings.tag_length:
             if settings.partial_min_length <= 0 or len(sequence) < settings.partial_min_length:
@@ -5022,6 +5118,7 @@ def _assignment_settings(args: argparse.Namespace, families: Tuple[Tuple[int, ..
         gap_band=args.max_indel_length if args.gapped_rescue == "on" else 0,
         leading_anchor=(getattr(args, "leading_anchor", None) or "").upper(),
         tile_families=families,
+        leading_anchor_mismatches=args.leading_anchor_mismatches,
     )
 
 
@@ -5152,7 +5249,10 @@ def _generate_provenance(args: argparse.Namespace) -> str:
             f"annotations={args.annotations}",
             f"partial_read_mode={args.partial_read_mode}",
             f"min_partial_length={args.min_partial_length}",
-            *([f"leading_anchor={args.leading_anchor.upper()}"] if getattr(args, "leading_anchor", None) else []),
+            *(
+                [f"leading_anchor={args.leading_anchor.upper()}", f"leading_anchor_mismatches={args.leading_anchor_mismatches}"]
+                if getattr(args, "leading_anchor", None) else []
+            ),
             *(["remove_primers=on"] if args.remove_primers == "on" else []),   # absent when off: the default line is unchanged
             f"denoise_distance={args.denoise_distance}",
             f"global_denoise_distance={args.global_denoise_distance}",
@@ -5191,6 +5291,9 @@ def _read_accounting(
     return {
         "reads_total": total("reads_total"),
         "reads_no_leading_anchor": total("reads_no_leading_anchor"),
+        # Of the reads that went on past the anchor, those cut at a placement
+        # one substitution away (--leading-anchor-mismatches 1).
+        "reads_leading_anchor_mismatch": total("reads_leading_anchor_mismatch"),
         "reads_assigned_full_length": total("reads_assigned"),
         "reads_assigned_gapped": total("reads_assigned_gapped"),
         # A read credited to several tiles of one family counts once above;
@@ -5225,6 +5328,7 @@ def _generate_parameters(args: argparse.Namespace, settings: AssignmentSettings,
         "minimum_partial_length": args.min_partial_length,
         "leading_anchor": (getattr(args, "leading_anchor", None) or "").upper() or None,
         "leading_anchor_detected": bool(getattr(args, "leading_anchor_detected", False)),
+        "leading_anchor_mismatches": args.leading_anchor_mismatches if getattr(args, "leading_anchor", None) else None,
         "sample_denoise_distance": args.denoise_distance,
         "global_denoise_distance": args.global_denoise_distance,
         "denoise_alpha": args.denoise_alpha,
@@ -6100,12 +6204,22 @@ def _add_generate_command(subparsers) -> None:
         "--leading-anchor",
         default=None,
         help=(
-            "constant sequence that precedes the amplicon in every read of a raw delivery (DArT raw "
-            "FASTQs carry an inline barcode and the common sequence GATGGATCCAGTGC); each read is cut "
-            f"to start right after its first occurrence within the first {LEADING_ANCHOR_SEARCH} bases "
-            "beyond the anchor's length, and reads without it are counted as reads_no_leading_anchor; "
-            "'auto' detects the anchor from the first FASTQ (default: none; preprocessed deliveries are "
-            "primer-started, and a run whose reads carry an undeclared constant prefix stops and names it)"
+            "constant sequence before the amplicon in raw deliveries (DArT: GATGGATCCAGTGC): cut each "
+            "read where it ends, and count reads without it as reads_no_leading_anchor; 'auto' detects it "
+            f"from up to {LEADING_ANCHOR_FILES} FASTQs (default: none; on a raw delivery, the run stops "
+            "and names the anchor)"
+        ),
+    )
+    assignment.add_argument(
+        "--leading-anchor-mismatches",
+        type=int,
+        choices=(0, 1),
+        default=LEADING_ANCHOR_MISMATCHES_DEFAULT,
+        help=(
+            "substitutions allowed in the leading anchor: with 1, cut a read that has no exact copy after "
+            "its only one-substitution match, and count it as reads_leading_anchor_mismatch; anchors under "
+            f"{LEADING_ANCHOR_MISMATCH_MIN_LENGTH} bases must match exactly "
+            f"(default: {LEADING_ANCHOR_MISMATCHES_DEFAULT})"
         ),
     )
     assignment.add_argument(
@@ -6171,7 +6285,7 @@ def _add_generate_command(subparsers) -> None:
         "--cache-dir",
         help=(
             "folder for a reusable per-sample cache, so re-runs skip the read pass. The cache is rebuilt "
-            "when the panel or --tag-length, --min-identity, --leading-anchor, --primer-mismatches, "
+            "when the panel or --tag-length, --min-identity, --leading-anchor (or its mismatches), --primer-mismatches, "
             "--gapped-rescue, --max-indel-length, --min-partial-length or the tile families "
             "(--tile-groups) change"
         ),

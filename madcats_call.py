@@ -1702,6 +1702,8 @@ def _markers_for_estimate(
     """
     if marker_ids is None:
         marker_ids = [str(position) for position in range(len(depths_by_marker))]
+    elif len(marker_ids) != len(depths_by_marker):
+        raise ValueError("marker_ids and depths_by_marker must have the same length")
     usable = []
     for marker_id, depths in zip(marker_ids, depths_by_marker):
         samples_with_reads = sum(1 for sample_depths in depths if sum(sample_depths) > 0)

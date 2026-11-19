@@ -163,13 +163,30 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(mp.row_decision(locus, ONE_BASE_DELETION, 0), mp.RowDecision(None, None))
         self.assertNotIn("unresolved", cell(locus, ONE_BASE_DELETION, 0))
 
-    def test_marker_designed_as_an_indel_keeps_its_gapped_variants(self):
-        # Every row of such a marker is described through gaps against the Ref tag, which is
-        # neither of the two readings; only the category follows the decision.
+    def test_marker_designed_as_an_indel_marks_the_unread_end_in_ref_coordinates(self):
+        # The Alt tag lacks base 41, so every row is written through gaps against the Ref tag.
+        # A designed deletion does not settle a second gap near the row's end: that end is
+        # unread on such a marker too, counted on the Ref tag whichever tag the row was read from.
         alt = REF[:40] + REF[41:] + "A"
         locus = mp.Locus(0, "m1", REF[:LEFT], "", REF[40], alt[40], 40, REF, alt)
-        self.assertIsNone(mp.unresolved_end(locus, TWO_BASE_DELETION, BAND))
-        self.assertNotIn("unresolved", cell(locus, TWO_BASE_DELETION))
+        self.assertEqual(mp.format_variants(mp._designed_events(REF, alt, BAND)), "39:CT>C;overhang=1")
+        # A Ref haplotype without bases 73 and 74.
+        self.assertEqual(mp.unresolved_end(locus, TWO_BASE_DELETION, BAND), (72, 72))
+        self.assertEqual(cell(locus, TWO_BASE_DELETION), "unresolved=9")
+        # The same two bases missing from an Alt haplotype: Alt base 72 is Ref base 73.
+        on_alt = alt[:71] + alt[73:] + "GT"
+        self.assertEqual(mp.row_decision(locus, on_alt, BAND).unresolved, (71, 71))
+        self.assertEqual(mp.unresolved_end(locus, on_alt, BAND), (72, 71))
+        self.assertEqual(cell(locus, on_alt), "39:CT>C;unresolved=9")
+        self.assertEqual(mp.classify_sequence(locus, on_alt, BAND), "AltMatch")   # the target lies before it
+        for row in (TWO_BASE_DELETION, on_alt):
+            events = mp.variant_events(locus, row, BAND)
+            self.assertEqual(replay(REF, mp.format_variants(events), row), row)
+            self.assertEqual(mp.parse_variants(mp.format_variants(events), REF, row), events)
+            # ``call`` is shown no base in the unread end.
+            reading = call.RowReading(REF, events)
+            self.assertIsNone(reading.base_at(77))
+            self.assertEqual(reading.base_at(60), REF[59])
 
 
 class VariantsCellTests(unittest.TestCase):
@@ -320,29 +337,48 @@ class TableTests(unittest.TestCase):
 class PrimerCutTests(unittest.TestCase):
     """Rows of a panel whose tags end with the first bases of the right primer."""
 
-    def test_row_cut_at_its_primer_to_another_length_is_read_through_its_gap(self):
+    def trimmed_row(self, target):
+        """A marker with its target at this insert base, and a row without insert bases 30 and 31.
+
+        One insert base and ten primer bases follow the gap on the full tag, so the row's end is
+        unread from insert base 30.  The row's primer is found two bases early and cut off, which
+        leaves the row two bases shorter than the Ref row."""
         import test_remove_primers as primers
 
-        loci, parts = primers.make_panel()
-        locus = loci[0]
-        left, insert, right = parts[locus.marker]
-        # Two insert bases are missing one base before the right primer.  On the full tag 11
-        # bases follow, ten of them primer: the end is unresolved.  Without primers the row is
-        # two bases shorter than the Ref row, which only a deletion explains, so it is written.
-        row = primers.tag_of(parts[locus.marker], insert[:29] + insert[31:])
-        self.assertEqual(mp.format_variants(mp.variant_events(locus, row, BAND)).split(";")[-1][:11], "unresolved=")
-        site = (primers.LEFT + primers.INSERT, right)
-        shown, rows, _, readings = mp.trim_locus_rows(
-            locus, [(1, "Ref", locus.ref_tag), (2, "Alt", locus.alt_tag), (3, "RefMatch", row)],
-            {locus.ref_tag: [5], locus.alt_tag: [5], row: [5]}, site, BAND, mock.MagicMock(),
+        rng = random.Random(11)
+        left, insert, right = primers.dna(rng, primers.LEFT), primers.dna(rng, primers.INSERT), primers.dna(rng, primers.RIGHT)
+        alt_insert = primers.substituted(insert, target)
+        tag = lambda body: (left + body + right + primers.ADAPTER)[: primers.TAG]
+        locus = mp.Locus(0, "m", left, right, insert[target], alt_insert[target], primers.LEFT + target, tag(insert), tag(alt_insert))
+        row = tag(insert[:29] + insert[31:])
+        self.assertEqual(mp.unresolved_end(locus, row, BAND), (49, 49))
+        category = mp.classify_sequence(locus, row, BAND)
+        shown, _, _, readings = mp.trim_locus_rows(
+            locus, [(1, "Ref", locus.ref_tag), (2, "Alt", locus.alt_tag), (3, category, row)],
+            {locus.ref_tag: [5], locus.alt_tag: [5], row: [5]}, (primers.LEFT + primers.INSERT, right), BAND, mock.MagicMock(),
         )
         trimmed = insert[:29] + insert[31:]
+        self.assertEqual((len(shown.ref_tag), len(trimmed)), (32, 30))
         self.assertIn(trimmed, readings)
-        self.assertIsNone(readings[trimmed][2])
         text = mp.format_variants(mp._describe(shown.ref_tag, trimmed, BAND, *readings[trimmed]))
-        self.assertNotIn("unresolved", text)
         self.assertEqual(replay(shown.ref_tag, text, trimmed), trimmed)
-        self.assertEqual(len(trimmed), len(shown.ref_tag) - 2)
+        return category, readings[trimmed], text
+
+    def test_row_cut_at_its_primer_to_another_length_keeps_its_unread_end(self):
+        # The target, insert base 11, is read: the category stands.  The row's other length shows
+        # that something is missing, but not which reading of its end was right, so the end stays
+        # unread in the row as printed: the last three Ref bases, where one base of the row stands.
+        category, reading, text = self.trimmed_row(target=10)
+        self.assertEqual(category, "RefMatch")
+        self.assertEqual(reading[2], (29, 29))
+        self.assertEqual(text, "unresolved=3")
+
+    def test_row_that_is_other_for_an_unread_target_never_shows_a_reading_of_it(self):
+        # The target is the last insert base, inside the unread end: the row is Other.  Cut at
+        # its primer, the row must not be written through a deletion that puts a base on it.
+        category, reading, text = self.trimmed_row(target=31)
+        self.assertEqual(category, "Other")
+        self.assertEqual(text, "unresolved=3")
 
 
 class PooledDenoiserTests(unittest.TestCase):

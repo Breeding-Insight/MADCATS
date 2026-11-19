@@ -71,8 +71,9 @@ bases. `unresolved=k` drops the last `k` Ref bases too, and then appends whateve
 not been built yet. No two tokens of a row use the same Ref base, so applying them in order
 rebuilds the row from the Ref row.
 
-On a marker whose own design is an insertion or deletion, every row is written through gaps, so
-its rows carry no `unresolved` token; their category still follows the same decision.
+On a marker whose own design is an insertion or deletion, every row is written through gaps
+against the Ref row, and the unread end is counted on the Ref row as everywhere else. The designed
+insertion or deletion does not settle another gap near the row's end.
 
 A row with `unresolved=k` says nothing about Ref positions from `length - k + 1` on: no
 substitution, no insertion or deletion, and no agreement with the Ref row either. A consumer that
@@ -89,11 +90,10 @@ Every other row is a fixed-length window and keeps `clip` and `overhang`. A row 
 the Ref row in length by more than `--max-indel-length` is compared base by base from its start,
 and the rest is `clip` or `overhang`.
 
-An unresolved end is decided on the full tag as well, and carried: the row keeps `unresolved=k`
-when it is as long as the Ref row. Two cases drop it. The unread bases were primer and were cut
-off. Or the row was cut at its right primer to another length than the Ref row, which only an
-insertion or a deletion explains; that row is read through it, and its category is still the one
-decided on the full tag.
+An unresolved end is decided on the full tag as well, and carried: the row keeps `unresolved=k`,
+counted on the Ref row as printed, whatever length it was cut to. A right primer found at another
+place shows that the row gained or lost bases, not which reading of its end was right. Only an
+unread stretch that lay wholly in the primer cut from the Ref row leaves nothing to mark.
 
 ## Variants Sidecar
 

@@ -3506,15 +3506,34 @@ def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT
 
 
 def unresolved_end(locus: Locus, sequence: str, gap_band: int) -> Optional[Tuple[int, int]]:
-    """row_decision's unresolved stretch as a row's Variants show it, or None.
+    """row_decision's unresolved stretch in the Ref tag's coordinates, as a row's Variants show it, or None.
 
-    Every row of a marker whose own design is an indel is described through
-    gaps against the Ref tag (_read_through_gaps), which is neither of the
-    two readings the decision compares, so its Variants are left as they
-    are; only its category follows the decision."""
-    if any(kind in ("ins", "del") for kind, *_ in _designed_events(locus.ref_tag, locus.alt_tag, gap_band)):
+    The decision counts positions on the canonical tag each reading was
+    made against.  Those are the Ref tag's positions, except on a marker
+    whose own design is an indel, for a reading against the Alt tag past
+    the designed indel.  There the stretch is placed by the base of the row
+    it starts at, which is the same in every frame: the Ref position is the
+    one the row's alignment to the Ref tag (the one its Variants are
+    written from, _read_through_gaps) puts under that base, moved back over
+    any Ref bases deleted right before it.  A known designed indel does not
+    settle another gap near the row's end."""
+    stretch = row_decision(locus, sequence, gap_band).unresolved
+    if stretch is None or stretch[0] <= locus.variant_pos:
+        return stretch
+    if not any(kind in ("ins", "del") for kind, *_ in _designed_events(locus.ref_tag, locus.alt_tag, gap_band)):
+        return stretch
+    start = stretch[1]
+    ops = _left_align(gapped_alignment(sequence, locus.ref_tag, gap_band)[0], sequence, locus.ref_tag)
+    at = next((k for k, (kind, i, _) in enumerate(ops) if kind != "D" and i >= start), None)
+    if at is None:
+        return None   # the row's unread bases lie past the Ref tag's end: no Ref position stands for them
+    first = ops[at][2]
+    while at > 0 and ops[at - 1][0] == "D":
+        at -= 1
+        first = ops[at][2]
+    if first >= len(locus.ref_tag) or abs(first - start) > gap_band:
         return None
-    return row_decision(locus, sequence, gap_band).unresolved
+    return first, start
 
 
 def events_either_way(ref: str, sequence: str, gap_band: int):
@@ -3880,9 +3899,11 @@ def trim_locus_rows(
     made again.  ``whole`` marks a row that was cut at its right primer on
     a marker whose Ref row ends at its own: the two are compared end to
     end, every other row as a fixed-length window.  ``unresolved`` is the
-    stretch the full tag's decision left unread (row_decision), counted in
-    the trimmed frame, or None: also when that stretch lay in the primer
-    that was cut off.
+    stretch the full tag's decision left unread (unresolved_end), counted in
+    the trimmed frame, and it is carried whatever length the row was cut
+    to: a row that is Other because its target was not read never shows a
+    reading of that target.  It is None only when the whole row is read, or
+    when the stretch lay in the primer that was cut from the Ref row.
     """
     after_left = len(locus.left_primer)
     cuts = {sequence: right_primer_cut(locus, sequence, site, gap_band) for _, _, sequence in rows}
@@ -3932,14 +3953,17 @@ def trim_locus_rows(
             continue
         trimmed = without_primers(sequence)
         first, start = max(stretch[0] - after_left, 0), max(stretch[1] - after_left, 0)
-        # The stretch still shows in a row described base by base at the Ref
-        # row's length, and in one read through a verified gap before it.  A
-        # row cut at its primer to another length is aligned whatever its
-        # reading was, as every such row is: its primer located the gap.
-        still_open = len(trimmed) == len(shown.ref_tag) or row_reading(locus, sequence, gap_band) is not None
-        if still_open and first < len(shown.ref_tag) and start < len(trimmed):
-            if trimmed not in unresolved or first < unresolved[trimmed][0]:
-                unresolved[trimmed] = (first, start)
+        # A row cut before the stretch begins lost bases both readings agree
+        # on; the Ref bases that stood for them are not read either.
+        cut_short = start - len(trimmed)
+        if cut_short > 0:
+            first, start = max(first - cut_short, 0), len(trimmed)
+        # Kept whatever the row's length: a right primer found at another
+        # place does not by itself say which reading of the end was right.
+        # Only a stretch that lay wholly in the primer cut from the Ref row
+        # leaves nothing to mark.
+        if first < len(shown.ref_tag) and (trimmed not in unresolved or first < unresolved[trimmed][0]):
+            unresolved[trimmed] = (first, start)
     readings = {
         sequence: (gapped[sequence], ref_ends_at_primer and len(sequence) < uncut, unresolved.get(sequence))
         for sequence in merged

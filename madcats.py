@@ -3623,12 +3623,16 @@ def right_primer_site(locus: Locus, geometry: Optional[Tuple[int, bool]]) -> Tup
 
     ``primer`` is the right primer as the tag reads it.  ``start`` may lie
     past the end of the tag: the Ref tag then holds no primer base, but a
-    deletion can still bring the primer into a row.  Without a panel
-    amplicon length (``geometry`` is None) only a primer that lies whole
-    inside the Ref tag is located.  A marker whose target would fall inside
-    the primer, or whose tag contradicts the amplicon length, is not
-    located: its rows are cut on the right only where right_primer_cut
-    finds the primer itself.
+    deletion can still bring the primer into a row.  With a panel amplicon
+    length the primer starts where that length puts it.  A whole copy of
+    the primer elsewhere in the tag is then part of the insert, unless the
+    tag does not read as the primer at that place: such a marker has an
+    amplicon of another length, and its primer is the copy.  Without a
+    panel amplicon length (``geometry`` is None) only a primer that lies
+    whole inside the Ref tag is located.  A marker whose target would fall
+    inside the primer, or whose tag contradicts the amplicon length and
+    holds no whole primer, is not located: its rows are cut on the right
+    only where right_primer_cut finds the primer itself.
     """
     if not locus.right_primer:
         return None, "no_right_primer"
@@ -3642,12 +3646,16 @@ def right_primer_site(locus: Locus, geometry: Optional[Tuple[int, bool]]) -> Tup
         return (min(hits), "located") if hits else (None, "no_amplicon_length")
     length, reverse = geometry
     primer = reverse_complement(locus.right_primer) if reverse else locus.right_primer
-    inside = _find_primer(locus.ref_tag, primer, after_left)
-    start = inside if inside >= 0 else length - len(primer)
+    start = length - len(primer)
+    shown = locus.ref_tag[start : start + len(primer)]   # the tag's bases at that place; none when it lies past the tag
+    agrees = compatible_mismatches(shown, primer[: len(shown)], 0) == 0
+    if not agrees:
+        inside = _find_primer(locus.ref_tag, primer, after_left)
+        if inside >= 0:
+            start, agrees = inside, True
     if start <= locus.variant_pos:
         return None, "target_in_right_primer"
-    overlap = len(locus.ref_tag) - start
-    if inside < 0 and overlap > 0 and compatible_mismatches(locus.ref_tag[start:], primer[:overlap], 0) != 0:
+    if not agrees:
         return None, "disagrees_with_amplicon_length"
     return (start, primer), "located"
 
@@ -3700,7 +3708,9 @@ def right_primer_cut(
     as an exact start of PRIMER_TAIL_MIN bases or more that ends the row
     (PRIMER_TAIL_UNLOCATED without a site, where nothing says the primer is
     near and either strand is tried).  That finds products shorter than
-    ``gap_band`` allows for.
+    ``gap_band`` allows for.  The whole primer is not looked for on a
+    marker whose own Ref tag holds a copy of it before the site: there a
+    copy in a row is the insert's, not the end of a shorter product.
     """
     after_left = len(locus.left_primer)
     body = sequence[after_left:]
@@ -3749,8 +3759,9 @@ def right_primer_cut(
     elif locus.right_primer:
         primers = (locus.right_primer, reverse_complement(locus.right_primer))
     if not (site is not None and cut < size and primer_from(cut, primers[0])):
+        repeated = site is not None and 0 <= _find_primer(locus.ref_tag, site[1], after_left) < site[0]
         for primer in primers:
-            hit = _find_primer(body, primer, 1)
+            hit = -1 if repeated else _find_primer(body, primer, 1)
             if hit < 0:
                 least = PRIMER_TAIL_MIN if site is not None else PRIMER_TAIL_UNLOCATED
                 tails = range(1, min(cut, size - least + 1))

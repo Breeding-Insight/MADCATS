@@ -285,8 +285,9 @@ class MadcPipelineTests(unittest.TestCase):
         self.assertEqual(max(1, args.tag_length - mp.PARTIAL_TAIL_DEFAULT), 100)
 
     def test_one_reading_for_category_and_variants(self):
-        # A deletion inside the last 12 bases is not a verified reading: both the
-        # category (fixed offset) and the Variants (substitutions) ignore it.
+        # A deletion inside the last 12 bases is not a verified reading, yet it is
+        # cheaper than substitutions: the row is read up to it and no further.  The
+        # target lies before it, so the category still reads it at the fixed offset.
         random.seed(11)
         ref = "".join(random.choice("ACGT") for _ in range(109))
         alt = ref[:60] + ("A" if ref[60] != "A" else "C") + ref[61:]
@@ -294,8 +295,9 @@ class MadcPipelineTests(unittest.TestCase):
         tail_deletion = ref[:100] + ref[102:] + "GT"
         self.assertEqual(mp.classify_sequence(locus, tail_deletion, 20), "RefMatch")
         events = mp.variant_events(locus, tail_deletion, 20)
-        self.assertTrue(events and all(kind == "snp" for kind, *_ in events))
-        self.assertEqual(mp.marker_type_label(locus, tail_deletion, 20, events), "snp")
+        self.assertEqual(events, [("unresolved", 101, ref[100:], tail_deletion[100:])])
+        self.assertEqual(mp.format_variants(events), "unresolved=9")
+        self.assertEqual(mp.marker_type_label(locus, tail_deletion, 20, events), "unresolved")
         # A verified upstream deletion shifts the target for both consumers alike.
         shifted = ref[:30] + ref[31:60] + alt[60] + ref[61:] + "G"
         self.assertEqual(mp.classify_sequence(locus, shifted, 20), "AltMatch")
@@ -1758,7 +1760,7 @@ class ReviewFixTests(unittest.TestCase):
         # Deletion at 37 pushes ref[40]='C' into index 39 and appends a T.
         read = ref[:37] + ref[38:] + "T"
         self.assertEqual(read[variant_pos], "C")
-        self.assertEqual(mp.classify_sequence(locus, read), "Other")  # fixed-offset reading, not the gapped one
+        self.assertEqual(mp.classify_sequence(locus, read), "Other")  # neither reading: the target is not read
 
     def test_denoise_prefers_closer_parent_before_deeper(self):
         ref = "A" * 20

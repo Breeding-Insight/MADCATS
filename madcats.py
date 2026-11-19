@@ -122,8 +122,9 @@ section opens with a banner comment:
 1. Sequence and file utilities (IUPAC matching, mismatch counts, CSV/FASTQ
    helpers).
 2. Alignment engine: the Myers prescreen, the banded DP, and
-   ``accepted_gapped_reading``/``row_reading`` — the one gapped reading a
-   row may be given.
+   ``accepted_gapped_reading``/``row_decision`` — the one gapped reading a
+   row may be given, and where a row stops being read because its end has
+   two explanations.
 3. Panel definition: design-file reconstruction, reference-tag tables, and
    primer-free inference.
 4. Platform intake: pair merging, window location and freezing, tiling and
@@ -317,6 +318,19 @@ class GappedReading(NamedTuple):
     end_ref: int
     last_gap_end: int
     ref_to_read: Dict[int, int]
+
+
+class RowDecision(NamedTuple):
+    """How a row is read against its marker (row_decision).
+
+    ``reading`` is the accepted gapped reading, or None when the row is read
+    at the fixed offsets.  ``unresolved`` is None when the whole row is
+    read, or ``(ref_index, row_index)``: the Ref-tag position and the base
+    of the row from which, to their ends, the row is not read at all.
+    """
+
+    reading: Optional[GappedReading]
+    unresolved: Optional[Tuple[int, int]]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -784,10 +798,27 @@ def accepted_gapped_reading(
     substitution-only reading (``substitutions``, the caller's bound; by
     default the mismatch count against ``template``), well composed
     (``gapped_explanation_ok``) and verified by at least GAP_VERIFIED_SUFFIX
-    bases after its last gap.  A reading that fails any test is not a
-    reading of the row at all: the row is then classified at the fixed
-    offset and described as substitutions, by both consumers alike.
+    bases after its last gap.  A reading that is no cheaper or badly
+    composed is not a reading of the row at all: the row is then classified
+    at the fixed offset and described as substitutions, by both consumers
+    alike.  One that only lacks the verifying bases is not taken either,
+    but it leaves the row's end unresolved (row_decision).
     """
+    reading = _unverified_gapped_reading(sequence, template, gap_band, substitutions)
+    return reading if reading is not None and _gap_verified(reading, sequence) else None
+
+
+def _gap_verified(reading: GappedReading, sequence: str) -> bool:
+    """At least GAP_VERIFIED_SUFFIX bases of the row follow the reading's last gap."""
+    return reading.last_gap_end <= len(sequence) - GAP_VERIFIED_SUFFIX
+
+
+def _unverified_gapped_reading(
+    sequence: str, template: str, gap_band: int, substitutions: Optional[int] = None
+) -> Optional[GappedReading]:
+    """accepted_gapped_reading before its last test: the fewest-openings
+    alignment when it is strictly cheaper than substitutions and well
+    composed, whether or not enough bases follow its last gap to verify it."""
     if gap_band <= 0 or len(template) != len(sequence):
         return None
     if substitutions is None:
@@ -812,10 +843,7 @@ def accepted_gapped_reading(
         previous = kind
     if not gapped_explanation_ok(guard_subs, guard_bases, guard_events):
         return None
-    reading = _reading_from_ops(sequence, template, ops, end_read, end_ref, edits)
-    if reading.last_gap_end > len(sequence) - GAP_VERIFIED_SUFFIX:
-        return None
-    return reading
+    return _reading_from_ops(sequence, template, ops, end_read, end_ref, edits)
 
 
 def _reading_from_ops(sequence: str, template: str, ops, end_read: int, end_ref: int, edits: int) -> GappedReading:
@@ -843,15 +871,102 @@ def row_reading(locus: Locus, sequence: str, gap_band: int) -> Optional[GappedRe
     substitution-only readings, and the composition guard is applied against
     the canonical the row is read from, so a designed substitution never counts
     against an AltMatch row's indel reading."""
-    if gap_band <= 0:
-        return None
-    substitutions = min(tag_mismatches(sequence, locus.ref_tag), tag_mismatches(sequence, locus.alt_tag))
-    best: Optional[GappedReading] = None
-    for template in (locus.ref_tag, locus.alt_tag):
-        accepted = accepted_gapped_reading(sequence, template, gap_band, substitutions)
-        if accepted is not None and (best is None or accepted.edits < best.edits):
-            best = accepted
-    return best
+    return row_decision(locus, sequence, gap_band).reading
+
+
+def row_decision(locus: Locus, sequence: str, gap_band: int) -> RowDecision:
+    """How a row is read: its accepted gapped reading, and where it stops being read.
+
+    Over both canonicals there is the cheapest gapped reading that is
+    verified (row_reading: GAP_VERIFIED_SUFFIX bases follow its last gap)
+    and the cheapest one whether verified or not.  Where the two are the
+    same reading, or no gapped reading is cheaper than substitutions, the
+    whole row is read.  Where they differ, the row's end has two
+    explanations and too few bases to tell them apart: a gap there, or the
+    reading without it.  The row is then read up to the first Ref-tag
+    position at which the two explanations show a different base of the
+    row, and from there on it is unresolved.  Neither explanation is taken
+    for that stretch: a target in it classifies as Other, and the row's
+    Variants close with ``unresolved`` in place of substitutions or a gap.
+
+    The first such position is found with each gap at the rightmost of its
+    equal placements (_right_align), so every base both explanations agree
+    on stays read.  The decision is made once here and shared by
+    classify_sequence, variant_events and the primer removal.
+    """
+    if gap_band <= 0 or sequence in (locus.ref_tag, locus.alt_tag):
+        return RowDecision(None, None)
+    return _row_decision(locus.ref_tag, locus.alt_tag, sequence, gap_band, GAP_VERIFIED_SUFFIX)
+
+
+@functools.lru_cache(maxsize=65536)
+def _row_decision(ref_tag: str, alt_tag: str, sequence: str, gap_band: int, verified_suffix: int) -> RowDecision:
+    """row_decision, cached per row (classification and annotation both ask)."""
+    substitutions = min(tag_mismatches(sequence, ref_tag), tag_mismatches(sequence, alt_tag))
+    verified = cheapest = None
+    verified_template = cheapest_template = ""
+    for template in (ref_tag, alt_tag):
+        reading = _unverified_gapped_reading(sequence, template, gap_band, substitutions)
+        if reading is None:
+            continue
+        if cheapest is None or reading.edits < cheapest.edits:
+            cheapest, cheapest_template = reading, template
+        if reading.last_gap_end <= len(sequence) - verified_suffix and (verified is None or reading.edits < verified.edits):
+            verified, verified_template = reading, template
+    if cheapest is None or (verified is not None and verified.ops == cheapest.ops and verified_template == cheapest_template):
+        return RowDecision(verified, None)
+    # Two explanations of the row's end.  Which base of the row stands at each
+    # Ref-tag position under each, gaps at their rightmost placement:
+    shown = {j: i for kind, i, j in _right_align(cheapest.ops, sequence, cheapest_template) if kind == "M"}
+    kept_ops = None if verified is None else _right_align(verified.ops, sequence, verified_template)
+    kept = None if kept_ops is None else {j: i for kind, i, j in kept_ops if kind == "M"}
+    first = next(
+        (j for j in range(len(sequence)) if (j if kept is None else kept.get(j)) != shown.get(j)), None
+    )
+    if first is None:
+        return RowDecision(verified, None)
+    # The row bases the agreed part uses: an insertion placed right before the
+    # first disputed position belongs to the dispute.
+    start = first if kept_ops is None else sum(1 for kind, _, j in kept_ops if kind != "D" and j < first)
+    return RowDecision(verified, (first, start))
+
+
+def _right_align(ops, read: str, ref: str):
+    """Shift every gap run right across matching bases: the mirror of _left_align.
+
+    Of the equal placements of a gap inside a repeat this is the one that
+    agrees with the reading without the gap for the longest, so it marks
+    where two readings of a row really part ways."""
+    ops = list(ops)
+    k = len(ops) - 1
+    while k >= 0:
+        kind = ops[k][0]
+        if kind == "M":
+            k -= 1
+            continue
+        a = k
+        while a - 1 >= 0 and ops[a - 1][0] == kind:
+            a -= 1
+        b = k
+        start = a
+        while b + 1 < len(ops) and ops[b + 1][0] == "M":
+            _, next_i, next_j = ops[b + 1]
+            if read[next_i] != ref[next_j]:
+                break
+            if kind == "I":
+                first_i = ops[a][1]
+                if read[next_i] != read[first_i]:
+                    break
+                ops[a : b + 2] = [("M", first_i, next_j)] + [("I", ops[t][1] + 1, next_j + 1) for t in range(a, b + 1)]
+            else:
+                first_j = ops[a][2]
+                if ref[next_j] != ref[first_j]:
+                    break
+                ops[a : b + 2] = [("M", next_i, first_j)] + [("D", next_i + 1, ops[t][2] + 1) for t in range(a, b + 1)]
+            a += 1
+            b += 1
+        k = start - 1
+    return ops
 
 
 def _left_align(ops, read: str, ref: str):
@@ -3237,8 +3352,10 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     inherited indel and the SNP.  'snp' = substitutions only, 'indel' =
     gaps only, 'both' = gaps plus substitutions, '.' = no concrete event
     beyond the canonical (the Ref row; a row that merely realises an
-    ambiguity code).  Downstream users can keep or drop undesigned indel
-    haplotypes by this label alone.  ``events`` may be passed when already
+    ambiguity code), 'unresolved' = the row's end is not read
+    (row_decision), whatever the row carries before it: a gap there is
+    likely but unverified.  Downstream users can keep or drop undesigned
+    indel haplotypes by this label alone.  ``events`` may be passed when already
     computed, and ``designed`` (the Alt row's events) when the caller knows
     more than the two tags show, as for a marker written without primers.
     """
@@ -3255,6 +3372,8 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
             else:
                 residual.append(event)
         events = residual
+    if any(event[0] == "unresolved" for event in events):
+        return "unresolved"
     kinds = {event[0] for event in events if event[0] in ("snp", "ins", "del")}
     if not kinds:
         return "."
@@ -3263,7 +3382,9 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     return "both" if "snp" in kinds else "indel"
 
 
-def _describe(ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool = False):
+def _describe(
+    ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool = False, unresolved: Optional[Tuple[int, int]] = None
+):
     """Events of ``sequence`` against ``ref`` (the core of variant_events).
 
     ``gapped`` is the caller's decision — row_reading for an observed row,
@@ -3280,7 +3401,21 @@ def _describe(ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool 
     primer from one an insertion pushed the primer out of.  When the
     lengths differ by more than ``gap_band`` no alignment is attempted: the
     shared length is compared base by base and the rest is ``clip`` or
-    ``overhang``."""
+    ``overhang``.
+
+    ``unresolved`` is row_decision's ``(ref_index, row_index)`` in the frame
+    of these two sequences.  The part before it is described end to end
+    (both readings of the row agree on it), and one closing ``unresolved``
+    event holds the Ref bases not read and the row's bases that stand
+    there."""
+    if unresolved is not None:
+        first, start = unresolved
+        if first and not start:   # nothing of the row before it: the Ref bases before it are deleted
+            events = [("del", 1, ref[:first], ".")]
+        else:
+            events = _describe(ref[:first], sequence[:start], gap_band, gapped or first != start, whole=True)
+        events.append(("unresolved", first + 1, ref[first:], sequence[start:]))
+        return events
     if sequence == ref:
         return []
     difference = abs(len(sequence) - len(ref))
@@ -3359,8 +3494,27 @@ def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT
     substitutions).  Positions are on the tag as printed (design strand); a
     consumer that knows the strand flips them, as it does for substitutions
     already.
+
+    A row whose end is unresolved (row_decision) lists its events up to
+    there and closes with ``unresolved``: the first Ref position not read,
+    the Ref bases from it on, and the row's own bases that stand there.
     """
-    return _describe(locus.ref_tag, sequence, gap_band, _read_through_gaps(locus, sequence, gap_band))
+    return _describe(
+        locus.ref_tag, sequence, gap_band, _read_through_gaps(locus, sequence, gap_band),
+        unresolved=unresolved_end(locus, sequence, gap_band),
+    )
+
+
+def unresolved_end(locus: Locus, sequence: str, gap_band: int) -> Optional[Tuple[int, int]]:
+    """row_decision's unresolved stretch as a row's Variants show it, or None.
+
+    Every row of a marker whose own design is an indel is described through
+    gaps against the Ref tag (_read_through_gaps), which is neither of the
+    two readings the decision compares, so its Variants are left as they
+    are; only its category follows the decision."""
+    if any(kind in ("ins", "del") for kind, *_ in _designed_events(locus.ref_tag, locus.alt_tag, gap_band)):
+        return None
+    return row_decision(locus, sequence, gap_band).unresolved
 
 
 def events_either_way(ref: str, sequence: str, gap_band: int):
@@ -3380,11 +3534,14 @@ def events_either_way(ref: str, sequence: str, gap_band: int):
 
 
 def format_variants(events) -> str:
-    """The Variants cell: ``;``-joined tokens, ``pos:REF>ALT`` per event plus ``clip=k`` / ``overhang=k``; '.' when empty."""
+    """The Variants cell: ``;``-joined tokens, ``pos:REF>ALT`` per event plus ``clip=k`` / ``overhang=k`` /
+    ``unresolved=k`` (the last ``k`` Ref bases are not read in this row); '.' when empty."""
     tokens = []
     for kind, position, ref_allele, alt_allele in events:
         if kind == "clip":
             tokens.append(f"clip={len(ref_allele)}")
+        elif kind == "unresolved":
+            tokens.append(f"unresolved={len(ref_allele)}")
         elif kind == "overhang":
             tokens.append(f"overhang={len(alt_allele)}")
         else:
@@ -3399,13 +3556,26 @@ def parse_variants(text: str, ref: str, sequence: str):
     what the ``clip`` and ``overhang`` tokens leave out.  Lets a consumer
     of the table take a row's reading from it and not derive its own,
     which matters for a table written without primers: only ``generate``
-    knows which rows end at their right primer.
+    knows which rows end at their right primer.  A token this version does
+    not know raises ValueError: the cell then says something about the row
+    that cannot be read here, and must not be replaced by a guess.
     """
     events = []
     for token in text.split(";"):
         if token in ("", "."):
             continue
-        if token.startswith("clip="):
+        if token.startswith("unresolved="):
+            # The row's bases that stand there are what the tokens before it leave over.
+            first = len(ref) - int(token[11:])
+            shift = sum(
+                len(added.strip(".")) - len(removed.strip("."))
+                for kind, _, removed, added in events
+                if kind in ("ins", "del")
+            )
+            if first < 0 or not 0 <= first + shift <= len(sequence):
+                raise ValueError(f"Variants token {token!r} does not fit the row")
+            events.append(("unresolved", first + 1, ref[first:], sequence[first + shift :]))
+        elif token.startswith("clip="):
             clipped = int(token[5:])
             events.append(("clip", len(ref) - clipped + 1, ref[len(ref) - clipped :], "."))
         elif token.startswith("overhang="):
@@ -3433,7 +3603,10 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     clustered errors at the read end must not masquerade as a shift).  That
     reading is the same one variant_events describes, so a row's category
     and its Variants never disagree about where the target sits.  A target inside a deletion, or
-    pushed past the read, is missing data and classifies as Other.  The
+    pushed past the read, is missing data and classifies as Other.  So does
+    a target in the unresolved end of a row (row_decision): a gapped reading
+    is cheaper there but unverified, the two readings can put different
+    bases at the target, and neither is taken.  The
     variant-base comparison is IUPAC-aware on the design side only: an
     ambiguous observed base such as N is missing data, not evidence for
     either allele, and classifies as Other.
@@ -3447,7 +3620,9 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
         # The cheapest substitution-only reading over both canonicals is the
         # bound a gapped reading must beat; the reading itself is the one
         # accepted_gapped_reading gives, shared with the row's Variants.
-        best = row_reading(locus, sequence, gap_band)
+        best, unresolved = row_decision(locus, sequence, gap_band)
+        if unresolved is not None and locus.variant_pos >= unresolved[0]:
+            return "Other"
         if best is not None:
             mapped = best.ref_to_read.get(locus.variant_pos)
             if mapped is None or mapped >= len(sequence):
@@ -3699,12 +3874,15 @@ def trim_locus_rows(
     printed.
 
     ``readings`` gives ``_describe`` what the trimmed sequences no longer
-    show, as ``(gapped, whole)`` per row.  ``gapped`` is the decision made
-    on the full tag (_read_through_gaps): a primer that verified a gap is
-    gone from the row, so the decision is carried, not made again.
-    ``whole`` marks a row that was cut at its right primer on a marker
-    whose Ref row ends at its own: the two are compared end to end, every
-    other row as a fixed-length window.
+    show, as ``(gapped, whole, unresolved)`` per row.  ``gapped`` is the
+    decision made on the full tag (_read_through_gaps): a primer that
+    verified a gap is gone from the row, so the decision is carried, not
+    made again.  ``whole`` marks a row that was cut at its right primer on
+    a marker whose Ref row ends at its own: the two are compared end to
+    end, every other row as a fixed-length window.  ``unresolved`` is the
+    stretch the full tag's decision left unread (row_decision), counted in
+    the trimmed frame, or None: also when that stretch lay in the primer
+    that was cut off.
     """
     after_left = len(locus.left_primer)
     cuts = {sequence: right_primer_cut(locus, sequence, site, gap_band) for _, _, sequence in rows}
@@ -3747,7 +3925,25 @@ def trim_locus_rows(
     uncut = len(locus.ref_tag) - after_left
     # The Ref row ends at its primer when it was cut, or when the primer starts exactly where the tag ends.
     ref_ends_at_primer = len(shown.ref_tag) < uncut or (site is not None and site[0] == len(locus.ref_tag))
-    readings = {sequence: (gapped[sequence], ref_ends_at_primer and len(sequence) < uncut) for sequence in merged}
+    unresolved: Dict[str, Tuple[int, int]] = {}
+    for _, _, sequence in rows:
+        stretch = unresolved_end(locus, sequence, gap_band)
+        if stretch is None:
+            continue
+        trimmed = without_primers(sequence)
+        first, start = max(stretch[0] - after_left, 0), max(stretch[1] - after_left, 0)
+        # The stretch still shows in a row described base by base at the Ref
+        # row's length, and in one read through a verified gap before it.  A
+        # row cut at its primer to another length is aligned whatever its
+        # reading was, as every such row is: its primer located the gap.
+        still_open = len(trimmed) == len(shown.ref_tag) or row_reading(locus, sequence, gap_band) is not None
+        if still_open and first < len(shown.ref_tag) and start < len(trimmed):
+            if trimmed not in unresolved or first < unresolved[trimmed][0]:
+                unresolved[trimmed] = (first, start)
+    readings = {
+        sequence: (gapped[sequence], ref_ends_at_primer and len(sequence) < uncut, unresolved.get(sequence))
+        for sequence in merged
+    }
     return shown, trimmed_rows, {sequence: entry[1] for sequence, entry in merged.items()}, readings
 
 
@@ -4001,6 +4197,7 @@ def write_madc(
     }
     reads_in_emitted_rows = 0
     per_sample_emitted = [0] * len(results)
+    unresolved_ends = {"rows": 0, "reads": 0, "rows_target_not_read": 0, "reads_target_not_read": 0}
     primer_tally: Counter = Counter()
     if options.remove_primers:
         geometry = amplicon_geometry(loci)
@@ -4031,6 +4228,15 @@ def write_madc(
             for sequence in sequences:
                 category = forced.get(sequence) or classify_sequence(locus, sequence, gap_band)
                 rows.append((ALLELE_TYPE_ORDER.get(category, 99), category, sequence))
+                stretch = row_decision(locus, sequence, gap_band).unresolved
+                if stretch is not None:
+                    # Counted on the full tags, so the tally is the same with and without primers.
+                    reads = observed[locus.index][sequence]
+                    target_in_it = locus.variant_pos >= stretch[0]
+                    unresolved_ends["rows"] += 1
+                    unresolved_ends["reads"] += reads
+                    unresolved_ends["rows_target_not_read"] += target_in_it
+                    unresolved_ends["reads_target_not_read"] += reads * target_in_it
             rows.sort(key=lambda row: (row[0], row[2]))
             counts_by_sequence = {
                 sequence: [result.counts.get((locus.index, sequence), 0) for result in results] for _, _, sequence in rows
@@ -4137,6 +4343,7 @@ def write_madc(
         },
         "novel_rows_by_evidence_route": dict(route_counts),
         "excluded_novel": excluded,
+        "unresolved_ends": unresolved_ends,
         "reads_in_emitted_rows": reads_in_emitted_rows,
         "per_sample_reads_in_emitted_rows": per_sample_emitted,
     }

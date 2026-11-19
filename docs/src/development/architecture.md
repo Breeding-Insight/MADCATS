@@ -29,7 +29,7 @@ The module follows the order a read travels. Each section opens with a banner co
 |---------|----------|
 | 0. Constants, errors and data types | `Locus`, `Sample`, `SampleResult`, MADC column definitions |
 | 1. Sequence and file utilities | IUPAC matching, mismatch counts, CSV/FASTQ helpers |
-| 2. Alignment engine | Myers bit-vector prescreen, banded DP, `accepted_gapped_reading` / `row_reading` |
+| 2. Alignment engine | Myers bit-vector prescreen, banded DP, `accepted_gapped_reading` / `row_decision` |
 | 3. Panel definition | Design-file reconstruction (`build_panel`), reference-tag tables, primer-free inference |
 | 4. Platform intake | Pair merging, window location and freezing, tiling and routing, window-scan |
 | 5. Per-sample read assignment | `PrimerIndex`, `select_marker`, `process_sample` and its cache |

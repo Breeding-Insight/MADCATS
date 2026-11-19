@@ -2240,15 +2240,17 @@ class RowReading:
     the MADC's Variants column when the table has one, otherwise
     ``madcats.variant_events``, the reading that fills that column.  A
     position is not shown when the row deleted it or when an insertion pushed
-    it out of the fixed-length window.  A row that is not ``comparable``
-    shows no position at all: one of another length than the Ref tag whose
-    events the table does not state, or whose length differs by more than
-    the gap limit.
+    it out of the fixed-length window, or when ``generate`` left the row's
+    end unresolved.  A row that is not ``comparable`` shows no position at
+    all: one of another length than the Ref tag whose events the table does
+    not state, or whose length differs by more than the gap limit, or one
+    whose Variants cell this version cannot read (not ``understood``).
     """
 
-    def __init__(self, ref_tag: str, events, comparable: bool = True) -> None:
+    def __init__(self, ref_tag: str, events, comparable: bool = True, understood: bool = True) -> None:
         self.ref_tag = ref_tag
-        self.comparable = comparable
+        self.comparable = comparable and understood
+        self.understood = understood
         self.substitutions: Dict[int, str] = {}
         self.positions_not_shown: Set[int] = set()
         for kind, position, ref_allele, alt_allele in events:
@@ -2261,7 +2263,9 @@ class RowReading:
                 # cannot always be told apart there, so the whole span is treated as not shown.
                 first_missing = position if position == 1 else position + 1
                 self.positions_not_shown.update(range(first_missing, position + len(ref_allele)))
-            elif kind == "clip":
+            elif kind in ("clip", "unresolved"):
+                # Pushed out of the window by an insertion, or left unread by ``generate``
+                # because the row's end has two explanations (madcats.row_decision).
                 self.positions_not_shown.update(range(position, len(ref_tag) + 1))
 
     def base_at(self, position: int) -> Optional[str]:
@@ -2273,14 +2277,24 @@ class RowReading:
         return base if base in CONCRETE_BASES else None
 
 
+NOT_UNDERSTOOD = "variants cell not understood"   # table_events' answer for a cell this version cannot read
+
+
 def table_events(row: MadcRow, ref_tag: str):
-    """The events of a row's Variants cell, or None when the row has none or it cannot be read."""
+    """The events of a row's Variants cell; None when the row has no cell.
+
+    A cell that cannot be read gives NOT_UNDERSTOOD.  It may hold a token a
+    later version of ``generate`` writes, which says something about the row
+    this version does not know, so the events are not derived from the
+    sequences in its place: that would put another reading where the table
+    stated one.  The caller leaves such a row unread and counts it.
+    """
     if row.variants is None:
         return None
     try:
         return parse_variants(row.variants, ref_tag, row.sequence)
-    except ValueError:   # not written by ``generate``: derive the events instead
-        return None
+    except ValueError:
+        return NOT_UNDERSTOOD
 
 
 def read_row(locus: Locus, row: MadcRow, gap_band: int, use_variants: bool = True) -> RowReading:
@@ -2295,10 +2309,13 @@ def read_row(locus: Locus, row: MadcRow, gap_band: int, use_variants: bool = Tru
     without primers, and whether it ends at its right primer cannot be told
     from its sequence: it is read only if its events are the same either way
     (``events_either_way``).  Otherwise its reads are left out of every
-    off-target record.
+    off-target record.  So are those of a row whose Variants cell cannot be
+    read (``table_events``).
     """
     events = table_events(row, locus.ref_tag) if use_variants else None
     difference = abs(len(row.sequence) - len(locus.ref_tag))
+    if events is NOT_UNDERSTOOD:
+        return RowReading(locus.ref_tag, [], understood=False)
     if events is not None:
         return RowReading(locus.ref_tag, events, comparable=difference <= gap_band)
     if difference:
@@ -2695,10 +2712,13 @@ def process_marker(task: MarkerTask, ploidies: Sequence[int], options: CallOptio
         # The Alt row's own Variants state the design when they were written against this Ref tag.
         alt_row = next((row for row in rows if row.category == "Alt" and row.sequence == alt_tag), None)
         stated = alt_row is not None and ref_tag == _first_sequence(rows, "Ref")
-        target, skip_reason = resolve_target(
-            ref_tag, alt_tag, task.declared_target_position, options.gap_band,
-            table_events(alt_row, ref_tag) if stated else None,
-        )
+        designed = table_events(alt_row, ref_tag) if stated else None
+        if designed is NOT_UNDERSTOOD:
+            target, skip_reason = None, "variants_not_understood"
+        else:
+            target, skip_reason = resolve_target(
+                ref_tag, alt_tag, task.declared_target_position, options.gap_band, designed
+            )
         if target is None:
             for vcf_type in site_types:
                 output.tallies[(vcf_type, f"targets_skipped_{skip_reason}")] += 1
@@ -2762,7 +2782,10 @@ def _off_target_records(
     readings = [read_row(locus, row, options.gap_band, stated) for row in rows]
     rows_with_reads = [index for index, counts in enumerate(counts_by_row) if any(counts)]
     tallies[("markers", "rows_with_reads_not_read_for_their_length")] += sum(
-        1 for index in rows_with_reads if not readings[index].comparable
+        1 for index in rows_with_reads if readings[index].understood and not readings[index].comparable
+    )
+    tallies[("markers", "rows_with_reads_whose_variants_were_not_understood")] += sum(
+        1 for index in rows_with_reads if not readings[index].understood
     )
     target_is_substitution = target is not None and len(target.ref_allele) == len(target.alt_allele) == 1
     site_positions = sorted(
@@ -3587,6 +3610,13 @@ def run_call(args: argparse.Namespace) -> int:
                     else ". The MADC has no Variants column, which call needs to read such rows: call a table "
                     "written with generate --remove-primers on with its Variants column"
                 ),
+                file=sys.stderr,
+            )
+        not_understood = tallies.get(("markers", "rows_with_reads_whose_variants_were_not_understood"), 0)
+        if not_understood and vcf_type == VCF_ALL:
+            print(
+                f"  {not_understood:,} rows with reads have a Variants cell this version of call cannot read and "
+                "were not read; their reads are in XD. Call the table with the madcats version that wrote it",
                 file=sys.stderr,
             )
         if counts.get("records_not_converged"):

@@ -106,7 +106,5 @@ madcats validate --generated results/other_MADC.csv --expected results/demo_MADC
 ## Next Steps
 
 - [Choosing a Workflow](workflows.md) to find which commands your own data needs
-- [Calling Genotypes from a MADC](../tutorials/genotype-calling.md) for genotypes and VCFs from this
-  example's MADC
 - [Evidence Model](../reference/evidence-model.md) on how MADCATS assigns, discovers and denoises reads
 - [Output Formats](../reference/output-formats.md) for every column of the MADC table

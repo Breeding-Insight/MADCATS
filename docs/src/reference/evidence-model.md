@@ -110,10 +110,30 @@ three stay consistent.
 | `AltMatch` | Carries the Alt target allele plus other differences |
 | `Other` | Neither target allele. The target base is a third base, missing, or deleted |
 
-`generate` normally reads the target base at its fixed offset in the tag. When a gapped alignment
+With `--gapped-rescue on` (the default), `generate` first considers the target's fixed offset.
+When a gapped alignment
 explains the row with fewer edits, stays within the substitution and gap limits, and is confirmed by
 at least 12 bases after its last gap, the target base comes from that alignment instead. A target
 inside a deletion, or pushed past the end of the read, is `Other`.
+
+This applies even to a row whose reads passed the substitution-only assignment check. An upstream
+insertion moves the target farther along the observed sequence; a deletion moves it earlier.
+The `Variants` annotation uses the same decision about whether to read through gaps, and reports
+events in the Ref tag's coordinates, with equivalent indel placements left-normalised.
+
+With `--gapped-rescue off`, both classification and annotation use the fixed offsets. Many indel
+reads fail assignment, but some still pass the substitution-only identity limit. Those rows can
+receive the wrong biological category, and an indel can appear as several substitutions. Turning
+rescue off is therefore not an indel-safe way to classify target alleles. Even with rescue on,
+a gap that fails the acceptance checks falls back to fixed offsets; repeats and gaps near the
+tag end can remain unresolved. Agreement between a category and its annotation is not independent
+proof of the biological event.
+
+`--remove-primers on` acts after classification and preserves that decision. It changes the
+printed sequences and annotation coordinates, not how the target was identified. Identical
+trimmed rows are merged; a merge across target-allele groups is reported as
+`primer_removal.rows_merged_across_allele_groups` in the QC JSON. Such a merge can change the
+category under which some reads are reported. See [Removing primers](../commands/generate.md#removing-primers).
 
 ## IUPAC Codes and N Bases
 

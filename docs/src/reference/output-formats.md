@@ -121,15 +121,6 @@ It also writes `OUTPUT.genome_labels.csv` (one line per input row, dropped rows 
 the row's score at its marker and its best score elsewhere) and `OUTPUT.genome_markers.csv` (where
 it placed each marker). The command page describes both.
 
-## Genotype VCFs
-
-`madcats call` writes up to three VCFs from a MADC, chosen with `--vcf`. They are `PREFIX.targets.vcf`
-(the designed variant of each marker), `PREFIX.all.vcf` (targets plus other base substitutions in
-the tags) and `PREFIX.haplotypes.vcf` (whole tag sequences as alleles). It also writes a QC JSON and,
-for the haplotype VCF, a table tying each allele number to its MADC rows. Coordinates are
-marker-local, so `CHROM` is the marker and `POS` a position on its Ref tag. The fields and the
-model behind them are on the [command page](../commands/call.md#outputs).
-
 ## Vendor-Style Preamble (HapApp)
 
 `--dart-preamble` prepends the seven starred rows that vendor raw MADCs carry above the header, so
@@ -157,8 +148,7 @@ A MADCATS table is a raw MADC. Its allele IDs are per-project (`|RefMatch`, `|Al
 are not yet matched to the panel's fixed allele IDs. Run it through HapApp or HapApp_utils
 (generate with `--dart-preamble`) before using it in BIGr, updog or other downstream tools. HapApp
 assigns the fixed allele IDs and maintains the panel's cross-project allele database, and MADCATS does
-neither. [`madcats call`](../commands/call.md) is the exception. It calls genotypes from the raw
-MADC directly, identifying haplotypes by their sequences.
+neither.
 
 polyRAD's `readDArTag` is one example. In polyRAD 2.0.1 it rejects raw MADCs, from MADCATS or the
 vendor. Match rows share allele IDs, and it reads the statistics columns as samples. It does read

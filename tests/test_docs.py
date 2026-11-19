@@ -1,6 +1,6 @@
 """Keep the command reference pages in step with the command-line parser.
 
-Every option a subcommand accepts must appear in a table on its page in
+Every option a published subcommand accepts must appear in a table on its page in
 docs/src/commands/, and every option those tables list must exist. Where a
 table gives a choice set or a plain default, it must match the parser too.
 """
@@ -12,6 +12,9 @@ from pathlib import Path
 import madcats
 
 COMMANDS_DIR = Path(__file__).resolve().parents[1] / "docs" / "src" / "commands"
+# The caller remains available for development, but is withheld from public docs
+# until its biological validation is ready.
+UNPUBLISHED_COMMANDS = {"call"}
 OPTION = re.compile(r"`(--[a-z0-9-]+)")
 CHOICES = re.compile(r"\{([^}]*)\}")
 
@@ -56,6 +59,8 @@ def documented_default_matches(action: argparse.Action, cell: str):
 class CommandReferenceTests(unittest.TestCase):
     def test_option_tables_match_parser(self):
         for name, subparser in subcommand_parsers().items():
+            if name in UNPUBLISHED_COMMANDS:
+                continue
             with self.subTest(command=name):
                 page = COMMANDS_DIR / f"{name}.md"
                 self.assertTrue(page.is_file(), f"no reference page for {name}")

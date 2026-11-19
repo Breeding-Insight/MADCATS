@@ -63,7 +63,7 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 | `--min-identity <FLOAT>` | 0.80 | Minimum substitution-only identity to a Ref or Alt tag. A gapped alignment uses the same edit limit |
 | `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). Each read is cut where the anchor ends (it must end within 40 bases beyond its own length). `auto` detects it from the first FASTQ |
 | `--primer-mismatches {0,1}` | 1 | Mismatches allowed while assigning a primer/anchor. With `0`, reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost |
-| `--gapped-rescue {on,off}` | `on` | Give reads that fail substitution-only identity one gapped alignment, so the counts include undesigned indels |
+| `--gapped-rescue {on,off}` | `on` | Rescue indel reads and allow accepted gapped alignments to locate the target allele and annotate variants. With `off`, retained indel rows can have incorrect target categories; see [Classification](../reference/evidence-model.md#classification) |
 | `--max-indel-length <INT>` | 10 | Widest gap (alignment band) a gapped alignment may use |
 | `--tile-groups {auto,declared,off}` | `auto` | Link tiled markers (markers that read the same tag window of one amplicon), so a read is credited to every tile it fits instead of being dropped as a tie. `auto` links tiles declared with `LocusGroup` and detects undeclared ones, `declared` links only the declared ones, and `off` links none. See [Tiled Markers](../getting-started/input-formats.md#tiled-markers) |
 | `--partial-read-mode {on,off}` | `on` | Add a read shorter than the tag to the one full-length allele (already passing the evidence rules) whose start it matches, only when it is longer than every prefix shared between that locus's alleles. `off` drops such reads |
@@ -124,6 +124,11 @@ The option acts only when the table is written. Reads are assigned, counted, den
 classified on the full tags, as with `off`, and a row keeps the category it was given there. No
 read is gained or lost.
 
+The primer-removal option alone leaves the table unchanged when set to `off`. This is not a
+blanket guarantee of v0.13 output: tile-group crediting was added after v0.13 and defaults to
+`--tile-groups auto`. For comparisons with v0.13, use the same panel, reads and analysis settings,
+plus `--tile-groups off --remove-primers off`. Version/provenance metadata still differs.
+
 What to know before using it:
 
 - **The panel must list the real primers.** The cut uses `LeftPrimerSequence` and
@@ -160,14 +165,13 @@ What to know before using it:
   also writes the Ref and Alt rows from the database, with their primers, beside the other rows
   without them. Use one setting for every project that shares a database.
 - **It cannot be combined with `--annotations off`.** The `Variants` column is the only record of
-  how each row of such a table was read, and `madcats call` needs it. `generate` stops with an
-  error if both are given. A step that drops the column later, such as HapApp's fixed-allele-ID
-  output, leaves `call` with less to go on. See
-  [Tables without primers](call.md#tables-without-primers).
-- **Not every downstream tool takes rows of different lengths.** `madcats call` does, and so do
-  `BIGr::madc2vcf_targets` and `BIGr::madc2vcf_all` on a pecan table in the fixed-allele-ID
-  layout. `BIGr::madc2vcf_multi` does not: polyRAD, which it runs, cuts every row of a marker to
-  the length of the marker's shortest row, and it did not write a VCF from that table.
+  how each row of such a table was read. `generate` stops with an error if both are given.
+  A step that drops the column later, such as HapApp's fixed-allele-ID output, loses that record;
+  keep the original table and variants sidecar for downstream interpretation.
+- **Not every downstream tool takes rows of different lengths.** `BIGr::madc2vcf_targets` and
+  `BIGr::madc2vcf_all` accepted a pecan table in the fixed-allele-ID layout. `BIGr::madc2vcf_multi`
+  does not: polyRAD, which it runs, cuts every row of a marker to the length of the marker's
+  shortest row, and it did not write a VCF from that table.
   `filter-paralogs` has not been run on a table without primers. Its rows are shorter, about 25
   bases on a 54-base alfalfa tag, and short rows are harder to place on a genome.
 

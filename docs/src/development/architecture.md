@@ -1,22 +1,17 @@
 # Architecture
 
-MADCATS is three Python modules. `madcats.py` holds every command but two and uses only the Python
-standard library. `madcats_paralogs.py` holds `filter-paralogs`, the one command with a dependency
-outside it. That dependency is the `mappy` aligner, imported when the command runs
-(`pip install 'madcats[genome]'`), so no other command depends on it. `madcats_call.py` holds
-`call`, the genotype caller, which also uses only the standard library and has its own module
-because it is a separate subject. It is a statistical model on a finished table, not read
-processing. There is nothing to compile, and the same files run as a script
+`madcats.py` holds the read-processing pipeline and uses only the Python standard library.
+`madcats_paralogs.py` holds `filter-paralogs`, which needs the optional `mappy` aligner.
+It imports that dependency when the command runs (`pip install 'madcats[genome]'`).
+There is nothing to compile, and the same files run as a script
 (`python3 madcats.py`), as the installed `madcats` command, or frozen into a standalone binary.
 
 ## Repository Layout
 
 | Path | Contents |
 |------|----------|
-| `madcats.py` | Library functions and the command line for every command but `filter-paralogs` and `call` |
+| `madcats.py` | Read processing, count-table generation and the main command line |
 | `madcats_paralogs.py` | `filter-paralogs`, with genome alignment, marker placement, labels and the table filter |
-| `madcats_call.py` | `call`, with the genotype model, what each VCF type counts, and VCF writing |
-| `scripts/make_polyrad_fixture.R`, `scripts/make_updog_fixture.R` | Regenerate `tests/fixtures/polyrad_parity.json` and `tests/fixtures/updog_norm.json`, the polyRAD and updog values the `call` tests compare against (they need R with polyRAD or updog, but the tests do not) |
 | `tests/` | Unit and end-to-end tests (`unittest`) |
 | `scripts/` | Diagnostic and conversion scripts (e.g. `madc_to_reference_tags.py`, `validate_inferred_design.py`) |
 | `docs/` | This documentation (mdBook), plus `DEVELOPMENT.md`, the long-form development record |
@@ -48,14 +43,6 @@ The module follows the order a read travels. Each section opens with a banner co
 `genome_label`), the two-pass table filter (`filter_paralogs`), then its command line. It imports
 the MADC helpers it shares with `validate` from `madcats`, so `build_parser` imports it while
 building the parser rather than at the top of `madcats.py`.
-
-The parser imports `madcats_call.py` the same way. The module opens with the genotype model
-(`call_record` and the functions it is built from, adapted from polyRAD), then the step from
-per-allele posteriors to one genotype (`correct_dosages_to_ploidy`), input (`read_count_table`,
-`read_ploidy_table`), what each VCF type counts (`resolve_target`, `RowReading`, `process_marker`),
-VCF text (`format_record`, `vcf_header`) and its command line. It reads rows against the Ref tag
-from the MADC's `Variants` column (`read_row`), and derives the same reading with
-`variant_events` when the table has no such column.
 
 ## The `generate` Pipeline
 

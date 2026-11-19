@@ -17,8 +17,7 @@ counts the alleles a panel was designed for and finds additional ones in the rea
 The output is a raw MADC table. It goes through HapApp, which assigns fixed allele IDs for building
 a microhaplotype database and comparing sequencing runs. For existing downstream pipelines, a MADC
 converts to a VCF of SNP genotype calls, with
-[BIGr and updog](https://softwarehub.breedinginsight.org/learn/madc-to-vcf.html) after HapApp or
-with `madcats call` (experimental) straight from the raw table.
+[BIGr and updog](https://softwarehub.breedinginsight.org/learn/madc-to-vcf.html) after HapApp.
 
 The same code handles DArTag, AgriSeq (Ion Torrent), GT-seq, rhAmpSeq and Flex-Seq capture data.
 It needs only the Python 3 standard library. Every analysis threshold is a command-line option, and
@@ -40,8 +39,6 @@ each run writes a JSON file recording its parameters and read counts.
 - Handles indels, including ones the panel was not designed for.
 - Works with AgriSeq-style reads that don't start at a primer (`madcats normalize-reads`) and with
   paired-end reads (`madcats merge-pairs`).
-- Calls diploid and polyploid genotypes from the MADC (`madcats call`, experimental) and writes
-  VCFs of the designed targets, of all tag variants, or of whole microhaplotypes.
 - Optional genome-based paralog filter (`madcats filter-paralogs`, experimental, needs
   `pip install 'madcats[genome]'`) for panels where co-amplified paralogous copies inflate
   heterozygosity. It works on vendor and HapApp fixed-allele-ID MADCs too.
@@ -87,11 +84,6 @@ madcats validate \
   --expected vendor_MADC.csv \
   --report results/validation.json
 
-# 4) Optional: call genotypes and write a VCF
-madcats call \
-  --madc results/project_MADC.csv \
-  --ploidy 4 \
-  --output-prefix results/project
 ```
 
 The tutorials cover the other routes, which are panels
@@ -104,7 +96,7 @@ and [paired-end reads](https://madcats.readthedocs.io/en/latest/tutorials/paired
 Full documentation is available at [madcats.readthedocs.io](https://madcats.readthedocs.io), including:
 
 - [Getting Started](https://madcats.readthedocs.io/en/latest/getting-started/installation.html) for installation and first steps
-- [Tutorials](https://madcats.readthedocs.io/en/latest/tutorials/dartag.html) with step-by-step examples for DArTag, primer-free, AgriSeq and paired-end data, the paralog filter and genotype calling
+- [Tutorials](https://madcats.readthedocs.io/en/latest/tutorials/dartag.html) with step-by-step examples for DArTag, primer-free, AgriSeq and paired-end data, and the paralog filter
 - [Command Reference](https://madcats.readthedocs.io/en/latest/commands/overview.html) for every subcommand and option
 - [Evidence Model](https://madcats.readthedocs.io/en/latest/reference/evidence-model.html) on how MADCATS counts, discovers and denoises alleles
 
@@ -123,10 +115,9 @@ gives the design rationale and version-by-version measurements behind every defa
 | `madcats generate` | Generate the MADC count table |
 | `madcats validate` | Compare a generated MADC against a reference MADC |
 | `madcats filter-paralogs` | Drop or flag MADC rows that a reference genome places at another locus (experimental, needs `mappy`) |
-| `madcats call` | Call genotypes from a MADC and write target, all-variant or haplotype VCFs (experimental) |
 
-Run `madcats <command> --help` for full options. `filter-paralogs` and `call` are new in 0.14.0 and
-experimental, so their options, defaults and outputs may change.
+Run `madcats <command> --help` for full options. `filter-paralogs` is new in 0.14.0 and
+experimental, so its options, defaults and outputs may change.
 
 ## Input and Output
 

@@ -11,7 +11,7 @@ platform-independent command-line tool that turns targeted-sequencing FASTQs int
 microhaplotype count tables. It recovers the alleles a panel was designed to detect, discovers the
 additional microhaplotypes present in the reads, and writes a raw MADC table. That table goes
 through HapApp (or HapApp_utils) before dosage calling and VCF conversion with BIGr and related
-tools, or straight to [`madcats call`](commands/call.md) for genotypes and VCFs.
+tools.
 
 The name also reflects the tool's origins as a FASTQ-to-MADC workflow, where MADC is the
 *Missing Allele Discovery Counts* format.
@@ -28,7 +28,6 @@ The name also reflects the tool's origins as a FASTQ-to-MADC workflow, where MAD
 | [`madcats generate`](commands/generate.md) | Generate the MADC count table |
 | [`madcats validate`](commands/validate.md) | Compare a generated MADC against a reference MADC |
 | [`madcats filter-paralogs`](commands/filter-paralogs.md) | Drop or flag MADC rows that a reference genome places at another locus |
-| [`madcats call`](commands/call.md) | Call genotypes from a MADC and write target, all-variant or haplotype VCFs |
 
 ## Key Features
 
@@ -46,9 +45,6 @@ The name also reflects the tool's origins as a FASTQ-to-MADC workflow, where MAD
 - **Optional paralog filter.** For panels where co-amplified paralogs inflate heterozygosity,
   [`filter-paralogs`](commands/filter-paralogs.md) drops or flags haplotypes a reference genome
   places at another locus.
-- **Genotype calling.** [`call`](commands/call.md) estimates diploid and polyploid genotypes from
-  the MADC and writes VCFs of the designed targets, of all tag variants, or of whole
-  microhaplotypes.
 
 ## A prior MADC is not an input
 

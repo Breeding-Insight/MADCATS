@@ -6125,7 +6125,8 @@ def _add_generate_command(subparsers) -> None:
         help=(
             "give reads that fail the substitution-only identity check for every marker one gapped "
             "alignment under the same edit limit, so undesigned indels are counted instead of dropped "
-            "(default: on)"
+            "(default: on); also allow accepted gapped alignments to locate the target allele and "
+            "annotate variants in every retained row. With off, fixed offsets can misclassify indel rows"
         ),
     )
     assignment.add_argument(

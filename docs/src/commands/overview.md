@@ -1,7 +1,6 @@
 # Command Overview
 
-MADCATS is a single executable with nine subcommands. Each handles one stage of defining the panel,
-adapting reads, counting, filtering, checking the result, or calling genotypes.
+MADCATS commands define the panel, adapt reads, count alleles, filter paralogs and check the result.
 
 ## Command Structure
 
@@ -53,12 +52,6 @@ Each produces the reference-tag CSV that `generate` consumes.
 |---------|-------------|-------------|
 | [`filter-paralogs`](filter-paralogs.md) | Drop or flag haplotypes a reference genome places at another locus. It needs `pip install 'madcats[genome]'` | Panels whose co-amplified paralogs inflate heterozygosity, in MADCATS, vendor or HapApp fixed-ID MADCs |
 
-### Genotype Calling Command
-
-| Command | Description | Primary Use |
-|---------|-------------|-------------|
-| [`call`](call.md) | Call genotypes from a MADC and write target, all-variant or haplotype VCFs | Diploid and polyploid genotypes without leaving MADCATS, from MADCATS, vendor or HapApp fixed-ID MADCs |
-
 ## Typical Workflows
 
 ### DArTag
@@ -67,7 +60,6 @@ Each produces the reference-tag CSV that `generate` consumes.
 madcats design --primers primers.csv --probe-design probes.txt --output tags.csv
 madcats generate --fastq-dir fastqs/ --reference-tags tags.csv --jobs 8 --output MADC.csv
 madcats validate --generated MADC.csv --expected vendor_MADC.csv --report validation.json
-madcats call --madc MADC.csv --output-prefix genotypes --vcf target haplotype
 ```
 
 ### Paralog-heavy panel (optional genome filter)

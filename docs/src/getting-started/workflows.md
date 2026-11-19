@@ -82,17 +82,6 @@ madcats filter-paralogs --madc MADC.csv --genome genome.fa --genome-index genome
 
 See [Filtering Paralogs with a Reference Genome](../tutorials/paralog-filter.md).
 
-## Optional: Call Genotypes
-
-`call` estimates each sample's genotype from the MADC (from `generate`, `filter-paralogs`, the
-vendor, or HapApp) and writes VCFs. Ploidy can differ between samples:
-
-```bash
-madcats call --madc MADC.csv --ploidy 4 --output-prefix genotypes
-```
-
-See [Calling Genotypes from a MADC](../tutorials/genotype-calling.md).
-
 ## Freeze Windows Across Runs
 
 The chemistry fixes a primer-defined tag, but `normalize-reads` places each window based on

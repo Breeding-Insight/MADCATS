@@ -140,8 +140,10 @@ from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from madcats import (
+    ANNOTATION_COLUMNS,
     GAP_BAND_DEFAULT,
     IUPAC_BASES,
+    VARIANTS_COLUMN,
     CountOverflowCheck,
     Locus,
     MadcError,
@@ -156,7 +158,9 @@ from madcats import (
     madc_read_counts,
     madc_sample_start,
     nonnegative_int,
+    events_either_way,
     open_text,
+    parse_variants,
     positive_int,
     proper_fraction,
     variant_events,
@@ -2113,6 +2117,7 @@ def find_neighbours(
 # Input: the MADC count table and the ploidy table
 # ---------------------------------------------------------------------------
 
+VARIANTS_HEADER = ANNOTATION_COLUMNS[VARIANTS_COLUMN]   # the MADC column that holds each row's events
 VCF_TARGET = "target"
 VCF_ALL = "all"
 VCF_HAPLOTYPE = "haplotype"
@@ -2135,12 +2140,14 @@ NOTABLE_EXCLUDED_READ_SHARE = 0.10
 
 class MadcRow(NamedTuple):
     """One allele row of a MADC: its ID, category (Ref, Alt, RefMatch, AltMatch or Other),
-    tag sequence and read count in each sample."""
+    tag sequence and read count in each sample.  ``variants`` is the row's Variants cell
+    when the table has that column (one written by ``generate`` with annotations)."""
 
     allele_id: str
     category: str
     sequence: str
     counts: Tuple[int, ...]
+    variants: Optional[str] = None
 
 
 @dataclasses.dataclass
@@ -2174,6 +2181,7 @@ def read_count_table(path: Path) -> Tuple[List[str], Dict[str, List[MadcRow]], D
     allele_column, clone_column, sequence_column = madc_identity_columns(header, path)
     sample_start = madc_sample_start(header)
     sample_names = header[sample_start:]
+    variants_column = header.index(VARIANTS_HEADER) if VARIANTS_HEADER in header[:sample_start] else None
     if not sample_names or any(not name for name in sample_names):
         raise MadcError(f"MADC has no sample columns, or a sample column without a name: {path}")
     repeated = sorted(name for name, occurrences in Counter(sample_names).items() if occurrences > 1)
@@ -2190,8 +2198,9 @@ def read_count_table(path: Path) -> Tuple[List[str], Dict[str, List[MadcRow]], D
         counts = madc_read_counts(padded[sample_start : sample_start + len(sample_names)], path)
         overflow.add(clone_id, counts)
         allele_id = padded[allele_column].strip()
+        variants = padded[variants_column].strip() or None if variants_column is not None else None
         rows_by_marker.setdefault(clone_id, []).append(
-            MadcRow(allele_id, allele_type(allele_id), padded[sequence_column].strip().upper(), tuple(counts))
+            MadcRow(allele_id, allele_type(allele_id), padded[sequence_column].strip().upper(), tuple(counts), variants)
         )
     if not rows_by_marker:
         raise MadcError(f"MADC has no allele rows: {path}")
@@ -2237,7 +2246,9 @@ class TargetVariant(NamedTuple):
     """The designed variant of a marker: 1-based position on the Ref tag and its two alleles.
 
     A substitution has single-base alleles.  An insertion or deletion is
-    written the VCF way, starting at the base before it (``C`` > ``CAAAA``).
+    written the VCF way, starting at the base before it (``C`` > ``CAAAA``),
+    or ending at the base after it when it is on the first base of the tag
+    (position 1, ``A`` > ``GGA``).
     """
 
     position: int
@@ -2250,7 +2261,7 @@ def _is_concrete(sequence: str) -> bool:
 
 
 def resolve_target(
-    ref_tag: str, alt_tag: str, declared_position: Optional[int], gap_band: int
+    ref_tag: str, alt_tag: str, declared_position: Optional[int], gap_band: int, designed=None
 ) -> Tuple[Optional[TargetVariant], Optional[str]]:
     """Find the designed variant from the marker's Ref and Alt tags.
 
@@ -2259,18 +2270,34 @@ def resolve_target(
     exactly one substitution, insertion or deletion, or when they differ by
     more but ``declared_position`` (``VariantPositionInTagSequence`` of the
     reference tags) names one of the substitutions.  The target is never
-    guessed among several differences.
+    guessed among several differences.  ``designed`` is the Alt row's events
+    when the table states them (``table_events``); otherwise they are derived
+    from the two tags.  Two tags of different lengths come from a MADC
+    written without primers, and their sequences alone do not show whether
+    both end at the right primer.  Without stated events the design is read
+    only if it is the same either way (``events_either_way``); otherwise the
+    marker gets no target record.
     """
     if not alt_tag:
         return None, "no_alt_row"
-    differences = [
-        event for event in _designed_events(ref_tag, alt_tag, gap_band) if event[0] in ("snp", "ins", "del")
-    ]
+    if designed is None and len(ref_tag) != len(alt_tag):
+        designed = events_either_way(ref_tag, alt_tag, gap_band)
+        if designed is None:
+            return None, "tags_differ_in_length"
+    if designed is None:
+        designed = _designed_events(ref_tag, alt_tag, gap_band)
+    differences = [event for event in designed if event[0] in ("snp", "ins", "del")]
     if len(differences) != 1 and declared_position is not None:
         differences = [event for event in differences if event[0] == "snp" and event[1] == declared_position]
     if len(differences) != 1:
         return None, "ambiguous_design"
     _, position, ref_allele, alt_allele = differences[0]
+    if position == 1 and "." in (ref_allele, alt_allele):
+        # No base precedes an insertion or deletion on the first base, and Variants writes it
+        # without one (1:.>GG, 1:AC>.).  VCF then takes the base after it into both alleles.
+        removed, added = ref_allele.strip("."), alt_allele.strip(".")
+        after = ref_tag[len(removed) : len(removed) + 1]
+        ref_allele, alt_allele = removed + after, added + after
     if not _is_concrete(ref_allele) or not _is_concrete(alt_allele):
         return None, "ambiguous_design"
     return TargetVariant(position, ref_allele, alt_allele), None
@@ -2279,15 +2306,19 @@ def resolve_target(
 class RowReading:
     """Which base a row's tag shows at each position of the marker's Ref tag.
 
-    Built from the row's events against the Ref tag (``madcats.variant_events``,
-    the same reading that fills the MADC's Variants column).  A position is
-    not shown when the row deleted it, when an insertion pushed it out of the
-    fixed-length window, or when the row's tag is not the Ref tag's length.
+    Built from the row's events against the Ref tag (``read_row``): those of
+    the MADC's Variants column when the table has one, otherwise
+    ``madcats.variant_events``, the reading that fills that column.  A
+    position is not shown when the row deleted it or when an insertion pushed
+    it out of the fixed-length window.  A row that is not ``comparable``
+    shows no position at all: one of another length than the Ref tag whose
+    events the table does not state, or whose length differs by more than
+    the gap limit.
     """
 
-    def __init__(self, ref_tag: str, sequence: str, events) -> None:
+    def __init__(self, ref_tag: str, events, comparable: bool = True) -> None:
         self.ref_tag = ref_tag
-        self.comparable = len(sequence) == len(ref_tag)
+        self.comparable = comparable
         self.substitutions: Dict[int, str] = {}
         self.positions_not_shown: Set[int] = set()
         for kind, position, ref_allele, alt_allele in events:
@@ -2295,9 +2326,9 @@ class RowReading:
                 self.substitutions[position] = alt_allele
             elif kind == "del":
                 # Written from the base before the deleted ones: that base is still shown.
-                # A deletion at the very start of the tag is written from the base after it
-                # instead; the two cannot always be told apart there, so the whole span is
-                # treated as not shown.
+                # A deletion at the very start of the tag has no base before it and is written
+                # without one (alt "."), or in older tables from the base after it; the forms
+                # cannot always be told apart there, so the whole span is treated as not shown.
                 first_missing = position if position == 1 else position + 1
                 self.positions_not_shown.update(range(first_missing, position + len(ref_allele)))
             elif kind == "clip":
@@ -2310,6 +2341,40 @@ class RowReading:
             return None
         base = self.substitutions.get(position, self.ref_tag[position - 1])
         return base if base in CONCRETE_BASES else None
+
+
+def table_events(row: MadcRow, ref_tag: str):
+    """The events of a row's Variants cell, or None when the row has none or it cannot be read."""
+    if row.variants is None:
+        return None
+    try:
+        return parse_variants(row.variants, ref_tag, row.sequence)
+    except ValueError:   # not written by ``generate``: derive the events instead
+        return None
+
+
+def read_row(locus: Locus, row: MadcRow, gap_band: int, use_variants: bool = True) -> RowReading:
+    """What a row shows at each position of the marker's Ref tag.
+
+    The MADC's Variants cell is taken when the row has one and
+    ``use_variants`` (the Variants were written against the table's own Ref
+    row).  ``generate`` knows more than the sequences show: which rows it
+    read through a gap and, in a table without primers, which rows end at
+    their right primer.  Without the cell, a row of the Ref tag's length is
+    read from the two sequences.  A row of another length comes from a table
+    without primers, and whether it ends at its right primer cannot be told
+    from its sequence: it is read only if its events are the same either way
+    (``events_either_way``).  Otherwise its reads are left out of every
+    off-target record.
+    """
+    events = table_events(row, locus.ref_tag) if use_variants else None
+    difference = abs(len(row.sequence) - len(locus.ref_tag))
+    if events is not None:
+        return RowReading(locus.ref_tag, events, comparable=difference <= gap_band)
+    if difference:
+        events = events_either_way(locus.ref_tag, row.sequence, gap_band)
+        return RowReading(locus.ref_tag, events or [], comparable=events is not None)
+    return RowReading(locus.ref_tag, variant_events(locus, row.sequence, gap_band))
 
 
 def vcf_reference_sequence(tag: str) -> str:
@@ -2659,6 +2724,22 @@ def _first_sequence(rows: Sequence[MadcRow], category: str) -> str:
     return next((row.sequence for row in rows if row.category == category and row.sequence), "")
 
 
+def design_as_written(design: Locus, rows: Sequence[MadcRow]) -> Tuple[str, str, int]:
+    """A marker's Ref tag, Alt tag and 1-based target position, in the frame of its MADC rows.
+
+    ``generate --remove-primers on`` writes every row without its primers.
+    The Ref row is then the design's Ref tag from the end of the left primer,
+    possibly ending early.  When the table shows that, its Ref and Alt rows
+    are the tags and the target is counted from the first base after the
+    left primer; otherwise the design is used as it is.
+    """
+    after_left = len(design.left_primer)
+    ref_row, alt_row = _first_sequence(rows, "Ref"), _first_sequence(rows, "Alt")
+    if ref_row and ref_row != design.ref_tag and design.ref_tag.startswith(ref_row, after_left):
+        return ref_row, alt_row, design.variant_pos + 1 - after_left
+    return design.ref_tag, design.alt_tag, design.variant_pos + 1
+
+
 def process_marker(task: MarkerTask, ploidies: Sequence[int], options: CallOptions) -> MarkerOutput:
     """Call one marker and format its records for every requested VCF type."""
     output = MarkerOutput(task.clone_id, lines={vcf_type: [] for vcf_type in options.vcf_types})
@@ -2681,7 +2762,13 @@ def process_marker(task: MarkerTask, ploidies: Sequence[int], options: CallOptio
     site_types = [vcf_type for vcf_type in (VCF_TARGET, VCF_ALL) if vcf_type in options.vcf_types]
     target = None
     if site_types:
-        target, skip_reason = resolve_target(ref_tag, alt_tag, task.declared_target_position, options.gap_band)
+        # The Alt row's own Variants state the design when they were written against this Ref tag.
+        alt_row = next((row for row in rows if row.category == "Alt" and row.sequence == alt_tag), None)
+        stated = alt_row is not None and ref_tag == _first_sequence(rows, "Ref")
+        target, skip_reason = resolve_target(
+            ref_tag, alt_tag, task.declared_target_position, options.gap_band,
+            table_events(alt_row, ref_tag) if stated else None,
+        )
         if target is None:
             for vcf_type in site_types:
                 output.tallies[(vcf_type, f"targets_skipped_{skip_reason}")] += 1
@@ -2698,7 +2785,7 @@ def process_marker(task: MarkerTask, ploidies: Sequence[int], options: CallOptio
 
     if VCF_ALL in options.vcf_types:
         for line, tallies, bias_row in _off_target_records(
-            task.clone_id, rows, counts_by_row, ref_tag, alt_tag, target, ploidies, options
+            task.clone_id, rows, counts_by_row, ref_tag, alt_tag, target, ploidies, options, output.tallies
         ):
             add(VCF_ALL, line, tallies)
             if bias_row is not None:
@@ -2724,13 +2811,15 @@ def _off_target_records(
     target: Optional[TargetVariant],
     ploidies: Sequence[int],
     options: CallOptions,
+    tallies: Counter,
 ):
     """Yield ``format_record``'s result for each substitution site away from the target.
 
     A site is a Ref-tag position where at least one row with reads shows a
     base other than the Ref tag's.  Reads are grouped by the base their row
     shows there; reads of rows that do not show the position are excluded.
-    Insertions and deletions are not written as records.
+    Insertions and deletions are not written as records.  ``tallies`` gets
+    the number of rows with reads that could not be read at all (read_row).
     """
     sample_count = len(ploidies)
     # variant_events needs a Locus but reads only its two tags.
@@ -2738,10 +2827,13 @@ def _off_target_records(
         index=0, marker=clone_id, left_primer="", right_primer="", ref_base="", alt_base="", variant_pos=-1,
         ref_tag=ref_tag, alt_tag=alt_tag or ref_tag,
     )
-    readings = [
-        RowReading(ref_tag, row.sequence, variant_events(locus, row.sequence, options.gap_band)) for row in rows
-    ]
+    # The table's own Variants are used when they were written against this Ref tag.
+    stated = _first_sequence(rows, "Ref") == ref_tag
+    readings = [read_row(locus, row, options.gap_band, stated) for row in rows]
     rows_with_reads = [index for index, counts in enumerate(counts_by_row) if any(counts)]
+    tallies[("markers", "rows_with_reads_not_read_for_their_length")] += sum(
+        1 for index in rows_with_reads if not readings[index].comparable
+    )
     target_is_substitution = target is not None and len(target.ref_allele) == len(target.alt_allele) == 1
     site_positions = sorted(
         {
@@ -3356,6 +3448,7 @@ def run_call(args: argparse.Namespace) -> int:
         raise MadcError(f"--allele-bias {args.allele_bias} cannot be combined with --prior structure")
 
     sample_names, rows_by_marker, count_overflow = read_count_table(madc)
+    has_variants = any(row.variants is not None for rows in rows_by_marker.values() for row in rows)
     ploidy_by_sample = read_ploidy_table(Path(args.ploidy_file)) if args.ploidy_file else {}
     ploidies = [ploidy_by_sample.get(name, args.ploidy) for name in sample_names]
     samples_not_in_madc = sorted(set(ploidy_by_sample) - set(sample_names))
@@ -3392,7 +3485,7 @@ def run_call(args: argparse.Namespace) -> int:
         if design is None:
             tasks.append(MarkerTask(clone_id, rows))
         else:
-            tasks.append(MarkerTask(clone_id, rows, design.ref_tag, design.alt_tag, design.variant_pos + 1))
+            tasks.append(MarkerTask(clone_id, rows, *design_as_written(design, rows)))
 
     model = ModelSettings(
         contamination_rate=args.contamination_rate,
@@ -3558,6 +3651,19 @@ def run_call(args: argparse.Namespace) -> int:
             print(
                 f"  {skipped:,} markers have no target record because the designed variant could not be "
                 "identified; see the QC JSON, and give --reference-tags if you have them",
+                file=sys.stderr,
+            )
+        unread = tallies.get(("markers", "rows_with_reads_not_read_for_their_length"), 0)
+        if unread and vcf_type == VCF_ALL:
+            print(
+                f"  {unread:,} rows with reads differ in length from their marker's Ref row and were not read; "
+                "their reads are in XD"
+                + (
+                    ""
+                    if has_variants
+                    else ". The MADC has no Variants column, which call needs to read such rows: call a table "
+                    "written with generate --remove-primers on with its Variants column"
+                ),
                 file=sys.stderr,
             )
         if counts.get("records_not_converged"):

@@ -10,6 +10,7 @@ from pathlib import Path
 import madcats
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "madcats-demo"
+V013 = Path(__file__).resolve().parent / "fixtures" / "generate_v013"
 
 
 def read_csv(path: Path):
@@ -52,6 +53,25 @@ class ExampleProjectTests(unittest.TestCase):
         emitted = {(row["CloneID"], row["AlleleSequence"]) for row in self.rows}
         simulated = {(row["MarkerName"], row["TagSequence"]) for row in self.truth}
         self.assertEqual(emitted, simulated)
+
+    def test_untrimmed_tables_match_frozen_v013_output(self):
+        # Compare the entire table with output from the released implementation,
+        # including categories, Variants and all sample counts, not just row IDs.
+        with tempfile.TemporaryDirectory() as directory:
+            for rescue in ("on", "off"):
+                for tiles in ("auto", "off"):
+                    with self.subTest(gapped_rescue=rescue, tile_groups=tiles):
+                        output = Path(directory) / "madc.csv"
+                        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                            madcats.main([
+                                "generate", "--fastq-dir", str(EXAMPLE / "fastq"),
+                                "--reference-tags", str(self.tags),
+                                "--sample-lookup", str(EXAMPLE / "sample_names.csv"),
+                                "--jobs", "1", "--remove-primers", "off",
+                                "--gapped-rescue", rescue, "--tile-groups", tiles,
+                                "--output", str(output),
+                            ])
+                        self.assertEqual(output.read_bytes(), (V013 / f"gapped_{rescue}.csv").read_bytes())
 
     def test_undesigned_insertion_is_annotated(self):
         insertion = next(row for row in self.truth if row["Haplotype"] == "Insertion")

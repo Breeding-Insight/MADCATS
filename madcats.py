@@ -108,6 +108,9 @@ Pipeline stages (the ``generate`` command; see ``run_generate``):
    Ref and Alt rows — even at zero reads — because downstream dosage tools
    need the biallelic axis present unconditionally.  Novel rows must pass
    the evidence rule; excluded reads are tallied, never silently dropped.
+   ``--remove-primers on`` acts here and nowhere earlier: the rows are
+   chosen and classified on the full tags, then written without their
+   primers, and rows that become identical are added together.
 7. QC/provenance.  A JSON sidecar records inputs, parameters, panel
    fingerprints, per-sample QC, and a full read-accounting ledger from raw
    records through emitted rows, so any run can be audited and reproduced.
@@ -130,7 +133,8 @@ section opens with a banner comment:
 6. Evidence, denoising and partial-read salvage: ``EvidenceRule``,
    ``collect_evidence``, ``finalize_counts``, ``apply_partial_reads``.
 7. Classification and annotation: ``classify_sequence``, ``variant_events``,
-   ``marker_type_label``.
+   ``marker_type_label``; then primer removal (``--remove-primers``):
+   ``amplicon_geometry``, ``right_primer_cut``, ``trim_locus_rows``.
 8. MADC input/output and QC: ``read_madc``, ``write_madc``, ``validate_madc``.
    The genome paralog filter is in ``madcats_paralogs.py``.
 9. Commands and command line: one ``run_*`` per subcommand, ``build_parser``.
@@ -373,12 +377,13 @@ class DenoiseSettings:
 
 @dataclasses.dataclass(frozen=True)
 class OutputOptions:
-    """How ``write_madc`` lays the table out; nothing here changes a count."""
+    """How ``write_madc`` lays the table out; nothing here adds or removes a read."""
 
     number_match_ids: bool = False
     preamble: Optional[Sequence[Sequence[str]]] = None
     annotations: bool = True
     variants_path: Optional[Path] = None
+    remove_primers: bool = False   # rows that become identical are then one row with their reads added
 
 
 # ============================================================================
@@ -687,7 +692,7 @@ def gapped_stats(read: str, ref: str, band: int):
 
 
 @functools.lru_cache(maxsize=4096)
-def gapped_alignment(read: str, ref: str, band: int):
+def gapped_alignment(read: str, ref: str, band: int, whole: bool = False):
     """The alignment the annotations describe: ``(ops, end_read, end_ref, edits)``.
 
     Same start-anchored, end-free band and the same minimum edit count as
@@ -702,10 +707,13 @@ def gapped_alignment(read: str, ref: str, band: int):
     deleted before read index ``i``).  ``end_read`` and ``end_ref`` are the
     aligned lengths: read bases from ``end_read`` on overhang the reference
     (a deletion pulled downstream sequence into the window) and reference
-    bases from ``end_ref`` on were pushed out of it by an insertion.  Cached
-    because a row is described more than once per run.
+    bases from ``end_ref`` on were pushed out of it by an insertion.  With
+    ``whole`` both sequences are aligned to their last base instead (two
+    sequences of different lengths that end at the same place, such as rows
+    cut at their right primer); their lengths may differ by at most ``band``.
+    Cached because a row is described more than once per run.
     """
-    return _three_state_alignment(read, ref, band, open_penalty=1, sub_penalty=0)
+    return _three_state_alignment(read, ref, band, open_penalty=1, sub_penalty=0, whole=whole)
 
 
 @functools.lru_cache(maxsize=4096)
@@ -723,9 +731,10 @@ def fewest_substitution_alignment(read: str, ref: str, band: int):
     return _three_state_alignment(read, ref, band, open_penalty=0, sub_penalty=1)
 
 
-def _three_state_alignment(read: str, ref: str, band: int, open_penalty: int, sub_penalty: int):
+def _three_state_alignment(read: str, ref: str, band: int, open_penalty: int, sub_penalty: int, whole: bool = False):
     """Start-anchored, end-free banded alignment minimising ``edits * GAP_OPEN_SCALE``
-    plus ``open_penalty`` per gap opening and ``sub_penalty`` per substitution."""
+    plus ``open_penalty`` per gap opening and ``sub_penalty`` per substitution.
+    ``whole`` anchors the end as well: both sequences are used to their last base."""
     n, m = len(read), len(ref)
     INF = 1 << 60
     scale = GAP_OPEN_SCALE
@@ -749,8 +758,9 @@ def _three_state_alignment(read: str, ref: str, band: int, open_penalty: int, su
             match_row[j] = diagonal + (sub_cost if base not in ref_sets[j - 1] else 0)
             insert_row[j] = min(match_up[j] + scale + open_penalty, insert_up[j] + scale, delete_up[j] + scale + open_penalty)
             delete_row[j] = min(match_row[j - 1] + scale + open_penalty, insert_row[j - 1] + scale + open_penalty, delete_row[j - 1] + scale)
-    ends = [(min(match_table[n][j], insert_table[n][j], delete_table[n][j]), n, j) for j in range(max(0, m - band), m + 1)]
-    ends += [(min(match_table[i][m], insert_table[i][m], delete_table[i][m]), i, m) for i in range(max(0, n - band), n + 1)]
+    ends = [(min(match_table[n][j], insert_table[n][j], delete_table[n][j]), n, j) for j in range(m if whole else max(0, m - band), m + 1)]
+    if not whole:
+        ends += [(min(match_table[i][m], insert_table[i][m], delete_table[i][m]), i, m) for i in range(max(0, n - band), n + 1)]
     cost, i, j = min(ends)
     end_read, end_ref = i, j
     state = min((match_table[i][j], 0), (insert_table[i][j], 1), (delete_table[i][j], 2))[1]
@@ -3312,7 +3322,7 @@ def _reading(sequence: str, template: str, gap_band: int, guard: bool = True) ->
     return _reading_from_ops(sequence, template, ops, end_read, end_ref, edits)
 
 
-def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT, events=None) -> str:
+def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT, events=None, designed=None) -> str:
     """What a row carries beyond its canonical: '.', 'snp', 'indel' or 'both'.
 
     Derived from the row's Variants (variant_events, always against the Ref
@@ -3325,14 +3335,15 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     beyond the canonical (the Ref row; a row that merely realises an
     ambiguity code).  Downstream users can keep or drop undesigned indel
     haplotypes by this label alone.  ``events`` may be passed when already
-    computed.
+    computed, and ``designed`` (the Alt row's events) when the caller knows
+    more than the two tags show, as for a marker written without primers.
     """
     if sequence == locus.ref_tag:
         return "."
     if events is None:
         events = variant_events(locus, sequence, gap_band)
     if sequence != locus.alt_tag:
-        designed = Counter(_designed_events(locus.ref_tag, locus.alt_tag, gap_band))
+        designed = Counter(_designed_events(locus.ref_tag, locus.alt_tag, gap_band) if designed is None else designed)
         residual = []
         for event in events:
             if designed[event]:
@@ -3348,22 +3359,40 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     return "both" if "snp" in kinds else "indel"
 
 
-def _describe(ref: str, sequence: str, gap_band: int, gapped: bool):
+def _describe(ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool = False):
     """Events of ``sequence`` against ``ref`` (the core of variant_events).
 
     ``gapped`` is the caller's decision — row_reading for an observed row,
     the unguarded cheapest reading for a design — so the description never
-    re-decides what classification decided."""
-    if sequence == ref or len(sequence) != len(ref):
+    re-decides what classification decided.
+
+    A sequence of another length than ``ref`` (a row whose primers were
+    removed, see trim_locus_rows) is always aligned: the lengths themselves
+    show a gap.  ``whole`` is also the caller's knowledge: the sequence and
+    ``ref`` both end at the same place (each was cut at its right primer),
+    so the alignment is anchored at both ends and a difference at the end
+    is an insertion or a deletion, not ``clip`` or ``overhang``.  It is
+    never inferred from the lengths, which cannot tell a row cut at its
+    primer from one an insertion pushed the primer out of.  When the
+    lengths differ by more than ``gap_band`` no alignment is attempted: the
+    shared length is compared base by base and the rest is ``clip`` or
+    ``overhang``."""
+    if sequence == ref:
         return []
-    if gapped:
-        ops, end_read, end_ref, _ = gapped_alignment(sequence, ref, gap_band)
-    else:
-        return [
+    difference = abs(len(sequence) - len(ref))
+    if difference > gap_band or not (gapped or difference):
+        shared = min(len(sequence), len(ref))
+        events = [
             ("snp", index + 1, ref[index], sequence[index])
-            for index in range(len(ref))
+            for index in range(shared)
             if not _design_matches(sequence[index], ref[index])
         ]
+        if shared < len(ref):
+            events.append(("clip", shared + 1, ref[shared:], "."))
+        if shared < len(sequence):
+            events.append(("overhang", len(ref) + 1, ".", sequence[shared:]))
+        return events
+    ops, end_read, end_ref, _ = gapped_alignment(sequence, ref, gap_band, whole)
     ops = _left_align(ops, sequence, ref)
     events = []
     k = 0
@@ -3377,19 +3406,17 @@ def _describe(ref: str, sequence: str, gap_band: int, gapped: bool):
         run_end = k
         while run_end + 1 < len(ops) and ops[run_end + 1][0] == kind:
             run_end += 1
-        if kind == "I":
-            inserted = sequence[i : ops[run_end][1] + 1]
-            if j > 0:
-                events.append(("ins", j, ref[j - 1], ref[j - 1] + inserted))
-            else:
-                events.append(("ins", 1, ref[0], inserted + ref[0]))
+        inserted = sequence[i : ops[run_end][1] + 1] if kind == "I" else ""
+        deleted = ref[j : ops[run_end][2] + 1] if kind == "D" else ""
+        name = "ins" if kind == "I" else "del"
+        if j > 0:
+            events.append((name, j, ref[j - 1] + deleted, ref[j - 1] + inserted))
         else:
-            deleted = ref[j : ops[run_end][2] + 1]
-            if j > 0:
-                events.append(("del", j, ref[j - 1] + deleted, ref[j - 1]))
-            else:
-                following = ops[run_end][2] + 1
-                events.append(("del", 1, deleted + ref[following], ref[following]))
+            # No base precedes a gap on the very first base, so it is written
+            # without an anchor: 1:.>GG inserts GG before base 1, 1:TT>. deletes
+            # bases 1 and 2.  Borrowing the base after it as an anchor would
+            # use that base twice whenever another event starts there.
+            events.append((name, 1, deleted or ".", inserted or "."))
         k = run_end + 1
     if end_ref < len(ref):
         events.append(("clip", end_ref + 1, ref[end_ref:], "."))
@@ -3402,6 +3429,14 @@ def _describe(ref: str, sequence: str, gap_band: int, gapped: bool):
 def _designed_events(ref: str, alt: str, gap_band: int):
     """The marker's own design against Ref: the Alt tag's events (cached per locus)."""
     return tuple(_describe(ref, alt, gap_band, gapped=_reading(alt, ref, gap_band, guard=False) is not None))
+
+
+def _read_through_gaps(locus: Locus, sequence: str, gap_band: int) -> bool:
+    """Whether a row is described through gaps: every row of a marker whose
+    own design is an indel, and otherwise a row with an accepted gapped
+    reading (row_reading, the decision classification made)."""
+    designed = _designed_events(locus.ref_tag, locus.alt_tag, gap_band)
+    return any(kind in ("ins", "del") for kind, *_ in designed) or row_reading(locus, sequence, gap_band) is not None
 
 
 def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT):
@@ -3421,10 +3456,23 @@ def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT
     consumer that knows the strand flips them, as it does for substitutions
     already.
     """
-    designed = _designed_events(locus.ref_tag, locus.alt_tag, gap_band)
-    force_gapped = any(kind in ("ins", "del") for kind, *_ in designed)
-    gapped = force_gapped or row_reading(locus, sequence, gap_band) is not None
-    return _describe(locus.ref_tag, sequence, gap_band, gapped)
+    return _describe(locus.ref_tag, sequence, gap_band, _read_through_gaps(locus, sequence, gap_band))
+
+
+def events_either_way(ref: str, sequence: str, gap_band: int):
+    """Events of a sequence of another length than ``ref`` when they are the
+    same whether or not the two end at the same place, otherwise ``None``.
+
+    For a consumer of a table without primers that has no Variants to read:
+    the sequences do not say whether a row was cut at its right primer
+    (``whole`` in _describe).  Where both readings agree the question does
+    not matter, an indel well inside the row; where they differ, or the
+    lengths differ by more than ``gap_band``, the row cannot be read.
+    """
+    if abs(len(sequence) - len(ref)) > gap_band:
+        return None
+    events = _describe(ref, sequence, gap_band, True)
+    return events if events == _describe(ref, sequence, gap_band, True, whole=True) else None
 
 
 def format_variants(events) -> str:
@@ -3438,6 +3486,33 @@ def format_variants(events) -> str:
         else:
             tokens.append(f"{position}:{ref_allele}>{alt_allele}")
     return ";".join(tokens) or "."
+
+
+def parse_variants(text: str, ref: str, sequence: str):
+    """The events a Variants cell holds: the inverse of format_variants.
+
+    ``ref`` and ``sequence`` (the Ref tag and the row, as printed) restore
+    what the ``clip`` and ``overhang`` tokens leave out.  Lets a consumer
+    of the table take a row's reading from it and not derive its own,
+    which matters for a table written without primers: only ``generate``
+    knows which rows end at their right primer.
+    """
+    events = []
+    for token in text.split(";"):
+        if token in ("", "."):
+            continue
+        if token.startswith("clip="):
+            clipped = int(token[5:])
+            events.append(("clip", len(ref) - clipped + 1, ref[len(ref) - clipped :], "."))
+        elif token.startswith("overhang="):
+            events.append(("overhang", len(ref) + 1, ".", sequence[len(sequence) - int(token[9:]) :]))
+        else:
+            position, alleles = token.split(":", 1)
+            ref_allele, alt_allele = alleles.split(">", 1)
+            removed, added = len(ref_allele.strip(".")), len(alt_allele.strip("."))
+            kind = "snp" if removed == added == 1 else ("ins" if added > removed else "del")
+            events.append((kind, int(position), ref_allele, alt_allele))
+    return events
 
 
 def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT) -> str:
@@ -3482,6 +3557,305 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     if bases_compatible(base, locus.alt_base):
         return "AltMatch"
     return "Other"
+
+
+# ----------------------------------------------------------------------------
+# Primer removal (--remove-primers): the same rows, shown without their primers
+# ----------------------------------------------------------------------------
+
+TRIM_MIN_BASES = 10         # a row keeps its right primer when fewer of its own bases than this would remain
+PRIMER_TAIL_MIN = 8         # bases of a right primer's start that identify it at the end of a row, on a marker with a site
+PRIMER_TAIL_UNLOCATED = 10  # ... on a marker without one, where 8 bases match by chance (8 in 100,000 rows; none at 10)
+AMPLICON_MIN_OVERLAP = 6    # bases a tag's end must share with the start of its right primer to vote on the amplicon length
+AMPLICON_MIN_MARKERS = 20   # such votes a panel needs before its amplicon length is used
+AMPLICON_MAX_CLASH = 0.05   # share of the overlapping tags that may contradict the amplicon length
+PRIMER_REMOVAL_TALLIES = (  # counted by trim_locus_rows, reported in the QC file
+    "rows_merged",
+    "rows_merged_across_allele_groups",
+    "rows_right_primer_removed",
+    "rows_right_primer_kept_target",
+    "rows_right_primer_kept_short",
+    "markers_right_primer_kept",
+)
+
+
+def amplicon_geometry(loci: Sequence[Locus]) -> Optional[Tuple[int, bool]]:
+    """The panel's amplicon length and whether its right primers are listed reverse-complemented, or ``None``.
+
+    On a platform with one amplicon length (DArTag) every right primer
+    starts ``amplicon length - primer length`` bases from the tag start, so
+    the tags that run into their own primer agree on one length.  Each
+    candidate length is scored by the tags whose end reads as the start of
+    their primer over AMPLICON_MIN_OVERLAP bases or more, less three for
+    each tag that contradicts it.  ``None`` when fewer than
+    AMPLICON_MIN_MARKERS tags support the best length or more than
+    AMPLICON_MAX_CLASH of the overlapping tags contradict it: the panel has
+    no single amplicon length, or its tags never reach the right primer.
+    """
+    with_primer = [locus for locus in loci if locus.right_primer]
+    if not with_primer:
+        return None
+    tag = len(with_primer[0].ref_tag)
+    best = None
+    for reverse in (False, True):
+        primers = [reverse_complement(locus.right_primer) if reverse else locus.right_primer for locus in with_primer]
+        for length in range(tag - 10, tag + 60):
+            agree = strong = clash = 0
+            for locus, primer in zip(with_primer, primers):
+                overlap = len(locus.ref_tag) - (length - len(primer))
+                if not 0 < overlap <= len(primer):
+                    continue
+                if compatible_mismatches(locus.ref_tag[-overlap:], primer[:overlap], 0) == 0:
+                    agree += 1
+                    strong += overlap >= AMPLICON_MIN_OVERLAP
+                else:
+                    clash += 1
+            if best is None or strong - 3 * clash > best[0]:
+                best = (strong - 3 * clash, strong, agree, clash, length, reverse)
+    _, strong, agree, clash, length, reverse = best
+    if strong < AMPLICON_MIN_MARKERS or clash > AMPLICON_MAX_CLASH * max(1, agree + clash):
+        return None
+    return length, reverse
+
+
+def right_primer_site(locus: Locus, geometry: Optional[Tuple[int, bool]]) -> Tuple[Optional[Tuple[int, str]], str]:
+    """Where a marker's right primer starts on its Ref tag: ``((start, primer), "located")`` or ``(None, reason)``.
+
+    ``primer`` is the right primer as the tag reads it.  ``start`` may lie
+    past the end of the tag: the Ref tag then holds no primer base, but a
+    deletion can still bring the primer into a row.  With a panel amplicon
+    length the primer starts where that length puts it.  A whole copy of
+    the primer elsewhere in the tag is then part of the insert, unless the
+    tag does not read as the primer at that place: such a marker has an
+    amplicon of another length, and its primer is the copy.  Without a
+    panel amplicon length (``geometry`` is None) only a primer that lies
+    whole inside the Ref tag is located.  A marker whose target would fall
+    inside the primer, or whose tag contradicts the amplicon length and
+    holds no whole primer, is not located: its rows are cut on the right
+    only where right_primer_cut finds the primer itself.
+    """
+    if not locus.right_primer:
+        return None, "no_right_primer"
+    after_left = len(locus.left_primer)
+    if geometry is None:
+        hits = [
+            (_find_primer(locus.ref_tag, primer, after_left), primer)
+            for primer in (locus.right_primer, reverse_complement(locus.right_primer))
+        ]
+        hits = [hit for hit in hits if hit[0] > locus.variant_pos]
+        return (min(hits), "located") if hits else (None, "no_amplicon_length")
+    length, reverse = geometry
+    primer = reverse_complement(locus.right_primer) if reverse else locus.right_primer
+    start = length - len(primer)
+    shown = locus.ref_tag[start : start + len(primer)]   # the tag's bases at that place; none when it lies past the tag
+    agrees = compatible_mismatches(shown, primer[: len(shown)], 0) == 0
+    if not agrees:
+        inside = _find_primer(locus.ref_tag, primer, after_left)
+        if inside >= 0:
+            start, agrees = inside, True
+    if start <= locus.variant_pos:
+        return None, "target_in_right_primer"
+    if not agrees:
+        return None, "disagrees_with_amplicon_length"
+    return (start, primer), "located"
+
+
+def _cheapest_ops(row: str, template: str, gap_band: int, slack: Sequence[int] = (0,)):
+    """How ``row`` reads along ``template``: base by base, unless a gapped alignment costs strictly less.
+
+    ``slack`` lists how many template bases beyond the row's length each
+    alignment may use: none leaves room for a net insertion, ``gap_band``
+    for a net deletion.  Cost is (edits, gap bases); gaps are left-aligned.
+    """
+    width = min(len(row), len(template))
+    best = (tag_mismatches(row[:width], template[:width]), 0, tuple(("M", index, index) for index in range(width)))
+    if gap_band > 0:
+        for extra in slack:
+            target = template[: len(row) + extra]
+            ops, _, _, edits = gapped_alignment(row, target, gap_band)
+            gaps = sum(1 for kind, _, _ in ops if kind != "M")
+            if gaps and (edits, gaps) < best[:2]:
+                best = (edits, gaps, tuple(_left_align(ops, row, target)))
+    return best[2]
+
+
+def right_primer_cut(
+    locus: Locus, sequence: str, site: Optional[Tuple[int, str]], gap_band: int
+) -> Tuple[int, Optional[str]]:
+    """How many bases after a row's left primer are the sample's own: ``(cut, kept)``.
+
+    The row without its primers is ``sequence[len(left primer):][:cut]``.
+    ``kept`` is None, or why a right primer found in the row stays in it:
+    "target" (the cut would remove the target base) or "short" (fewer than
+    TRIM_MIN_BASES bases would remain).
+
+    A row is a fixed-length window of its amplicon, so an insertion moves
+    the right primer toward the row's end and a deletion brings more of it
+    in.  With ``site`` (right_primer_site) the row is read along "the Ref
+    tag up to the primer, then the primer", and the cut is where that
+    reading reaches the primer.  An indel in the last bases before the
+    primer costs no less than substitutions there, so the reading misses
+    it.  Two rules read such an end from the primer instead.  A deletion:
+    the row reads exactly as primer from 2 to ``gap_band`` bases earlier,
+    and the reading leaves two or more bases from there on unexplained.
+    An insertion: the bases at the cut are not the primer's (two or more
+    differ), and the row reads exactly as primer from up to ``gap_band``
+    bases later.  Neither rule moves the cut onto the base the row's
+    category was read from.
+
+    Last, the primer is looked for directly, in a row whose cut does not
+    read as primer and in every row of a marker without a site: whole, or
+    as an exact start of PRIMER_TAIL_MIN bases or more that ends the row
+    (PRIMER_TAIL_UNLOCATED without a site, where nothing says the primer is
+    near and either strand is tried).  That finds products shorter than
+    ``gap_band`` allows for.  The whole primer is not looked for on a
+    marker whose own Ref tag holds a copy of it before the site: there a
+    copy in a row is the insert's, not the end of a shorter product.
+    """
+    after_left = len(locus.left_primer)
+    body = sequence[after_left:]
+    size = len(body)
+    cut = size
+
+    def primer_from(index: int, primer: str) -> bool:
+        """body[index:] is exactly the start of ``primer``."""
+        return size - index <= len(primer) and tag_mismatches(body[index:], primer[: size - index]) == 0
+
+    ops = None
+    primers: Tuple[str, ...] = ()
+    if site is not None:
+        start, primer = site
+        primers = (primer,)
+        ref_part = locus.ref_tag[after_left : min(start, len(locus.ref_tag))]
+        template = ref_part + "N" * (start - after_left - len(ref_part)) + primer
+        template += "N" * max(0, size + gap_band - len(template))   # what follows the primer is unknown
+        ops = _cheapest_ops(body, template, gap_band, (0, gap_band))
+        inserted = sum(1 for kind, _, j in ops if kind == "I" and j <= start - after_left)
+        deleted = sum(1 for kind, _, j in ops if kind == "D" and j < start - after_left)
+        cut = min(max(start - after_left + inserted - deleted, 0), size)
+        aligned = {i: j for kind, i, j in ops if kind == "M"}
+        moved = False
+        for shift in range(2, min(gap_band, cut - TRIM_MIN_BASES) + 1):
+            earlier = cut - shift
+            if primer_from(earlier, primer) and 2 <= sum(
+                1 for i in range(earlier, size) if i not in aligned or not _design_matches(body[i], template[aligned[i]])
+            ):
+                reading = row_reading(locus, sequence, gap_band)   # where classification read the category
+                category_base = locus.variant_pos if reading is None else reading.ref_to_read.get(locus.variant_pos)
+                if category_base is None or earlier > category_base - after_left:
+                    cut, moved = earlier, True
+                    ops = tuple(op for op in ops if op[1] < cut)
+                break
+        at_cut = body[cut : cut + len(primer)]
+        if not moved and size - cut >= 2 and tag_mismatches(at_cut, primer[: len(at_cut)]) >= 2:
+            for shift in range(1, gap_band + 1):
+                later = cut + shift
+                if later > size - 2:
+                    break
+                if primer_from(later, primer):
+                    ops = tuple(op for op in ops if op[1] < cut)
+                    cut = later
+                    break
+    elif locus.right_primer:
+        primers = (locus.right_primer, reverse_complement(locus.right_primer))
+    if not (site is not None and cut < size and primer_from(cut, primers[0])):
+        repeated = site is not None and 0 <= _find_primer(locus.ref_tag, site[1], after_left) < site[0]
+        for primer in primers:
+            hit = -1 if repeated else _find_primer(body, primer, 1)
+            if hit < 0:
+                least = PRIMER_TAIL_MIN if site is not None else PRIMER_TAIL_UNLOCATED
+                tails = range(1, min(cut, size - least + 1))
+                hit = next((index for index in tails if primer_from(index, primer)), -1)
+            if 0 < hit < cut:
+                cut = hit
+                break
+    if cut < size:
+        if ops is None:
+            ops = _cheapest_ops(body, locus.ref_tag[after_left:], gap_band)
+        target = next((i for kind, i, j in ops if kind == "M" and j == locus.variant_pos - after_left), None)
+        if target is not None and cut <= target:
+            return size, "target"
+        if cut < TRIM_MIN_BASES:
+            return size, "short"
+    return cut, None
+
+
+def trim_locus_rows(
+    locus: Locus,
+    rows: Sequence[Tuple[int, str, str]],
+    counts: Mapping[str, Sequence[int]],
+    site: Optional[Tuple[int, str]],
+    gap_band: int,
+    tally: Counter,
+):
+    """One marker's rows without their primers: ``(locus, rows, counts, readings)`` as the table shows them.
+
+    ``rows`` are write_madc's ``(order, category, sequence)`` and ``counts``
+    the per-sample reads of each sequence.  Categories were decided on the
+    full tags and are carried, never re-derived.  The left primer is a
+    fixed length (the read pass admits no indel in it); the right one is
+    cut where right_primer_cut finds it.  Rows that become the same
+    sequence are one row with their reads added: canonical if one of them
+    is, otherwise the category of the one with the most reads.  Only such a
+    merge of rows from two allele groups (tallied) can move reads between
+    the alleles of the target; everywhere else they are those of the
+    untrimmed table.  The
+    returned locus is the marker in the trimmed frame: its Ref and Alt rows
+    as its tags, the target counted from the first base after the left
+    primer, so the row annotations are computed against the Ref row as
+    printed.
+
+    ``readings`` gives ``_describe`` what the trimmed sequences no longer
+    show, as ``(gapped, whole)`` per row.  ``gapped`` is the decision made
+    on the full tag (_read_through_gaps): a primer that verified a gap is
+    gone from the row, so the decision is carried, not made again.
+    ``whole`` marks a row that was cut at its right primer on a marker
+    whose Ref row ends at its own: the two are compared end to end, every
+    other row as a fixed-length window.
+    """
+    after_left = len(locus.left_primer)
+    cuts = {sequence: right_primer_cut(locus, sequence, site, gap_band) for _, _, sequence in rows}
+    without_primers = lambda sequence: sequence[after_left : after_left + cuts[sequence][0]]
+    if without_primers(locus.ref_tag) == without_primers(locus.alt_tag):
+        # right_primer_cut keeps the target base, so the canonical rows stay
+        # distinct; if they ever would not, the marker keeps its right end.
+        cuts = {sequence: (len(sequence) - after_left, None) for sequence in cuts}
+        tally["markers_right_primer_kept"] += 1
+    merged: Dict[str, List] = {}
+    gapped: Dict[str, bool] = {}
+    for _, category, sequence in rows:
+        trimmed = without_primers(sequence)
+        gapped[trimmed] = gapped.get(trimmed, False) or _read_through_gaps(locus, sequence, gap_band)
+        reads = counts[sequence]
+        total = sum(reads)
+        tally["rows_right_primer_removed"] += after_left + len(trimmed) < len(sequence)
+        if cuts[sequence][1]:
+            tally[f"rows_right_primer_kept_{cuts[sequence][1]}"] += 1
+        entry = merged.get(trimmed)
+        if entry is None:
+            merged[trimmed] = [category, list(reads), total]
+            continue
+        tally["rows_merged"] += 1
+        tally["rows_merged_across_allele_groups"] += ALLELE_GROUP[category] != ALLELE_GROUP[entry[0]]
+        entry[1] = [kept + added for kept, added in zip(entry[1], reads)]
+        if entry[0] not in ("Ref", "Alt") and total > entry[2]:
+            entry[0] = category
+        entry[2] = max(entry[2], total)
+    shown = dataclasses.replace(
+        locus,
+        left_primer="",
+        right_primer="",
+        variant_pos=locus.variant_pos - after_left,
+        ref_tag=without_primers(locus.ref_tag),
+        alt_tag=without_primers(locus.alt_tag),
+    )
+    trimmed_rows = [(ALLELE_TYPE_ORDER.get(entry[0], 99), entry[0], sequence) for sequence, entry in merged.items()]
+    trimmed_rows.sort(key=lambda row: (row[0], row[2]))
+    uncut = len(locus.ref_tag) - after_left
+    # The Ref row ends at its primer when it was cut, or when the primer starts exactly where the tag ends.
+    ref_ends_at_primer = len(shown.ref_tag) < uncut or (site is not None and site[0] == len(locus.ref_tag))
+    readings = {sequence: (gapped[sequence], ref_ends_at_primer and len(sequence) < uncut) for sequence in merged}
+    return shown, trimmed_rows, {sequence: entry[1] for sequence, entry in merged.items()}, readings
 
 
 # ============================================================================
@@ -3705,6 +4079,11 @@ def write_madc(
     '.' rather than blank.  Reads in sequences that pass no route are
     tallied in the exclusion buckets so the table's coverage of assigned
     reads is always visible.
+
+    With ``options.remove_primers`` the rows are chosen and classified as
+    above, then shown without their primers (trim_locus_rows): sequences,
+    consensus, Variants and MarkerType are those of the trimmed rows, and
+    rows that become identical are one row.
     """
     output.parent.mkdir(parents=True, exist_ok=True)
     observed: Dict[int, Counter] = defaultdict(Counter)
@@ -3729,6 +4108,10 @@ def write_madc(
     }
     reads_in_emitted_rows = 0
     per_sample_emitted = [0] * len(results)
+    primer_tally: Counter = Counter()
+    if options.remove_primers:
+        geometry = amplicon_geometry(loci)
+        primer_sites = {locus.marker: right_primer_site(locus, geometry) for locus in loci}
     with output.open("w", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
         for row in options.preamble or ():
@@ -3756,14 +4139,24 @@ def write_madc(
                 category = forced.get(sequence) or classify_sequence(locus, sequence, gap_band)
                 rows.append((ALLELE_TYPE_ORDER.get(category, 99), category, sequence))
             rows.sort(key=lambda row: (row[0], row[2]))
+            counts_by_sequence = {
+                sequence: [result.counts.get((locus.index, sequence), 0) for result in results] for _, _, sequence in rows
+            }
+            readings = designed = None
+            if options.remove_primers:
+                # From here on ``locus`` is the marker as the table shows it.
+                locus, rows, counts_by_sequence, readings = trim_locus_rows(
+                    locus, rows, counts_by_sequence, primer_sites[locus.marker][0], gap_band, primer_tally
+                )
+                designed = _describe(locus.ref_tag, locus.alt_tag, gap_band, *readings[locus.alt_tag])
             type_serials = Counter()
-            ref_counts = [result.counts.get((locus.index, locus.ref_tag), 0) for result in results]
-            alt_counts = [result.counts.get((locus.index, locus.alt_tag), 0) for result in results]
+            ref_counts = counts_by_sequence[locus.ref_tag]
+            alt_counts = counts_by_sequence[locus.alt_tag]
             canonical_call_rate = sum((ref + alt) > 0 for ref, alt in zip(ref_counts, alt_counts)) / len(results)
             avg_ref = mean_nonzero(ref_counts)
             avg_alt = mean_nonzero(alt_counts)
             for _, category, sequence in rows:
-                counts = [result.counts.get((locus.index, sequence), 0) for result in results]
+                counts = counts_by_sequence[sequence]
                 type_serials[category] += 1
                 suffix = category
                 if options.number_match_ids and category in ("RefMatch", "AltMatch", "Other"):
@@ -3787,8 +4180,11 @@ def write_madc(
                 # its MarkerType label; the sidecar gets one line per event.
                 label = variants = "."
                 if options.annotations:
-                    events = variant_events(locus, sequence, gap_band)
-                    label = marker_type_label(locus, sequence, gap_band, events)
+                    if readings is None:
+                        events = variant_events(locus, sequence, gap_band)
+                    else:
+                        events = _describe(locus.ref_tag, sequence, gap_band, *readings[sequence])
+                    label = marker_type_label(locus, sequence, gap_band, events, designed)
                     marker_type_counts[label] += 1
                     variants = format_variants(events)
                     if events:
@@ -3828,7 +4224,16 @@ def write_madc(
             writer.writerows(sidecar_rows)
     elif options.variants_path is not None and options.variants_path.exists():
         options.variants_path.unlink()  # a sidecar from an earlier run must not outlive the table it described
+    primer_removal = {}
+    if options.remove_primers:
+        primer_removal["primer_removal"] = {
+            "amplicon_length": geometry[0] if geometry else None,
+            "right_primers_reverse_complemented": geometry[1] if geometry else None,
+            "markers_by_right_primer": dict(Counter(reason for _, reason in primer_sites.values())),
+            **{name: primer_tally[name] for name in PRIMER_REMOVAL_TALLIES},
+        }
     return {
+        **primer_removal,
         "rows": rows_written,
         "categories": dict(category_counts),
         "marker_types": dict(marker_type_counts),
@@ -4859,6 +5264,7 @@ def _generate_provenance(args: argparse.Namespace) -> str:
                 [f"leading_anchor={args.leading_anchor.upper()}", f"leading_anchor_mismatches={args.leading_anchor_mismatches}"]
                 if getattr(args, "leading_anchor", None) else []
             ),
+            *(["remove_primers=on"] if args.remove_primers == "on" else []),   # absent when off: the default line is unchanged
             f"denoise_distance={args.denoise_distance}",
             f"global_denoise_distance={args.global_denoise_distance}",
             f"denoise_alpha={args.denoise_alpha}",
@@ -4884,6 +5290,7 @@ def _output_options(args: argparse.Namespace, samples: Sequence[Sample], output:
         preamble=preamble,
         annotations=args.annotations == "on",
         variants_path=output.with_suffix(output.suffix + ".variants.csv"),
+        remove_primers=args.remove_primers == "on",
     )
 
 
@@ -4927,6 +5334,7 @@ def _generate_parameters(args: argparse.Namespace, settings: AssignmentSettings,
         "max_indel_length": args.max_indel_length,
         "tile_groups": args.tile_groups,
         "annotations": args.annotations,
+        "remove_primers": args.remove_primers,
         "partial_read_mode": args.partial_read_mode,
         "minimum_partial_length": args.min_partial_length,
         "leading_anchor": (getattr(args, "leading_anchor", None) or "").upper() or None,
@@ -4958,6 +5366,14 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
 def run_generate(args: argparse.Namespace) -> int:
     """The pipeline, stage by stage (see the module docstring)."""
     _resolve_generate_defaults(args)
+    if args.remove_primers == "on" and args.annotations == "off":
+        # Only the Variants column records which rows of a table without primers end at their right
+        # primer and which were read through an indel a primer verified.  A table without it cannot
+        # be told from one with primers, and `call` would read some of those indels as substitutions.
+        raise MadcError(
+            "--remove-primers on cannot be combined with --annotations off: the Variants column is what tells "
+            "`madcats call` how each row of a table without primers was read. Keep the annotations, or keep the primers."
+        )
     loci = _define_panel(args)
     rule = _evidence_rule(args)
     samples, fastq_directory, metadata_paths = _discover_samples(args)
@@ -5010,6 +5426,16 @@ def run_generate(args: argparse.Namespace) -> int:
         ],
     }
     _write_json(qc_path, qc)
+    if "primer_removal" in output_summary:
+        removal = output_summary["primer_removal"]
+        length = removal["amplicon_length"]
+        print(
+            f"Removed primers: the right primer was located at {removal['markers_by_right_primer'].get('located', 0):,} "
+            f"of {len(loci):,} markers ("
+            + (f"amplicon length {length}" if length else "the panel shows no single amplicon length")
+            + f"); {removal['rows_merged']:,} rows became identical to another and were added to it",
+            file=sys.stderr,
+        )
     print(f"Wrote {output_summary['rows']:,} allele rows to {output}", file=sys.stderr)
     print(f"Wrote QC/provenance to {qc_path}", file=sys.stderr)
     return 0
@@ -5824,7 +6250,8 @@ def _add_generate_command(subparsers) -> None:
         help=(
             "give reads that fail the substitution-only identity check for every marker one gapped "
             "alignment under the same edit limit, so undesigned indels are counted instead of dropped "
-            "(default: on)"
+            "(default: on); also allow accepted gapped alignments to locate the target allele and "
+            "annotate variants in every retained row. With off, fixed offsets can misclassify indel rows"
         ),
     )
     assignment.add_argument(
@@ -5980,6 +6407,19 @@ def _add_generate_command(subparsers) -> None:
             "55:C>CAAAA;91:A>T;clip=4), AvgPIC becomes MarkerType ('.', 'snp', 'indel' or 'both' relative "
             "to the nearest canonical), and OUTPUT.variants.csv lists one event per line; 'off' keeps the "
             "exact vendor header and writes no sidecar (default: on)"
+        ),
+    )
+    output.add_argument(
+        "--remove-primers",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "write every row without its primers: the left primer is cut at its length and the right primer "
+            "where it begins in the row. AlleleSequence, ClusterConsensusSequence, Variants and MarkerType then "
+            "describe the trimmed rows, positions count from the first base after the left primer, and rows "
+            "that become identical are added together. Alleles are counted, denoised and classified on the "
+            "full tags first, so the reads behind each target allele are the same as with 'off'. Needs "
+            "--annotations on, the default (default: off)"
         ),
     )
     output.add_argument(

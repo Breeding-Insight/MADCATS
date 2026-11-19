@@ -53,23 +53,6 @@ Li, H. (2021). New strategies to improve minimap2 alignment accuracy.
 Bioinformatics 37(23):4572-4574. https://doi.org/10.1093/bioinformatics/btab705
 ```
 
-If you call genotypes with `madcats call`, please also cite the methods its model adapts.
-The likelihood and the Hardy-Weinberg prior come from polyRAD, and the allelic bias
-(`--allele-bias fit`) and the `norm` prior (`--prior norm`) come from updog:
-
-```
-Clark, L.V., Lipka, A.E., & Sacks, E.J. (2019). polyRAD: genotype calling with
-uncertainty from sequencing data in polyploids and diploids. G3 9(3):663-673.
-https://doi.org/10.1534/g3.118.200913
-
-Gerard, D., Ferrão, L.F.V., Garcia, A.A.F., & Stephens, M. (2018). Genotyping
-polyploids from messy sequencing data. Genetics 210(3):789-807.
-https://doi.org/10.1534/genetics.118.301468
-
-Gerard, D., & Ferrão, L.F.V. (2020). Priors for genotyping polyploids.
-Bioinformatics 36(6):1795-1800. https://doi.org/10.1093/bioinformatics/btz852
-```
-
 ## Example Acknowledgment
 
 In your methods section:

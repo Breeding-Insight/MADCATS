@@ -128,6 +128,31 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(mp.right_primer_site(loci[0], None), (None, "no_amplicon_length"))
         whole = dataclasses.replace(loci[0], ref_tag=(left + insert[:22] + right + ADAPTER)[:TAG])
         self.assertEqual(mp.right_primer_site(whole, None), ((LEFT + 22, right), "located"))
+        # With one, such a tag does not read as the primer where the panel's length puts it: the
+        # marker's amplicon is another length, and its primer is the whole copy.
+        self.assertEqual(mp.right_primer_site(whole, geometry), ((LEFT + 22, right), "located"))
+
+    def test_copy_of_the_primer_in_the_insert_is_not_the_primer(self):
+        loci, parts = make_panel()
+        geometry = mp.amplicon_geometry(loci)
+        left, insert, right = parts["m00"]
+        # The insert repeats the marker's right primer after the target.  The tag still reads as the
+        # primer where the panel's amplicon length puts it, so that is the primer.
+        repeat = insert[: TARGET + 2] + right + insert[TARGET + 2 + RIGHT :]
+        tags = lambda length: {
+            "ref_tag": (left + repeat + right + ADAPTER)[:length],
+            "alt_tag": (left + substituted(repeat, TARGET) + right + ADAPTER)[:length],
+        }
+        for what, length in (("tag with 8 bases of the primer", TAG), ("tag that stops at the primer", LEFT + INSERT)):
+            with self.subTest(tag=what):
+                locus = dataclasses.replace(loci[0], **tags(length))
+                site, reason = mp.right_primer_site(locus, geometry)
+                self.assertEqual((site, reason), ((LEFT + INSERT, right), "located"))
+                # No row is cut at the copy: every row keeps its insert.
+                for row_insert in (repeat, substituted(repeat, TARGET), substituted(repeat, 5)):
+                    row = (left + row_insert + right + ADAPTER)[:length]
+                    cut, kept = mp.right_primer_cut(locus, row, site, GAP_BAND)
+                    self.assertEqual((row[LEFT:][:cut], kept), (row_insert, None))
 
 
 class CutTests(unittest.TestCase):

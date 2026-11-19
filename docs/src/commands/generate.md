@@ -61,7 +61,8 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--min-identity <FLOAT>` | 0.80 | Minimum substitution-only identity to a Ref or Alt tag. A gapped alignment uses the same edit limit |
-| `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). Each read is cut where the anchor ends (it must end within 40 bases beyond its own length). `auto` detects it from the first FASTQ |
+| `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). MADCATS cuts each read where the anchor ends, and the anchor must end within 40 bases beyond its own length. `auto` detects it from a sample of up to 24 FASTQs. With one or two FASTQs the detected anchor may include the sample barcode, and the run warns about it |
+| `--leading-anchor-mismatches {0,1}` | 1 | Substitutions allowed in the leading anchor. With `1`, MADCATS cuts a read that has no exact copy after its only one-substitution match, and counts it as `reads_leading_anchor_mismatch`. A read with no such match, or more than one, counts as `reads_no_leading_anchor`. Anchors under 12 bases must match exactly. `0` requires an exact match for every anchor, as in 0.13.0 |
 | `--primer-mismatches {0,1}` | 1 | Mismatches allowed while assigning a primer/anchor. With `0`, reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost |
 | `--gapped-rescue {on,off}` | `on` | Rescue indel reads and allow accepted gapped alignments to locate the target allele and annotate variants. A row whose end has a cheaper but unverified gap is read up to it and marked `unresolved`. With `off`, retained indel rows can have incorrect target categories; see [Classification](../reference/evidence-model.md#classification) |
 | `--max-indel-length <INT>` | 10 | Widest gap (alignment band) a gapped alignment may use |
@@ -126,11 +127,13 @@ read is gained or lost.
 
 The primer-removal option alone leaves the table unchanged when set to `off`. This is not a
 blanket guarantee of v0.13 output. Tile-group crediting was added after v0.13 and defaults to
-`--tile-groups auto`; `--tile-groups off --remove-primers off` restores the v0.13 assignment. And
-a row whose end has a cheaper but unverified gap is now marked `unresolved`, where v0.13 read it at
-the fixed offsets (see [Classification](../reference/evidence-model.md#classification)): about 2 to
-3 rows in 100 on the cohorts measured, of which the ones with the target in that end become
-`Other`. No option restores the old reading of those rows. Version/provenance metadata differs too.
+`--tile-groups auto`, and a leading anchor now matches with one substitution by default;
+`--tile-groups off --remove-primers off`, with `--leading-anchor-mismatches 0` where reads are cut
+at a leading anchor, restores the v0.13 assignment. And a row whose end has a cheaper but
+unverified gap is now marked `unresolved`, where v0.13 read it at the fixed offsets (see
+[Classification](../reference/evidence-model.md#classification)): about 2 to 3 rows in 100 on the
+cohorts measured, of which the ones with the target in that end become `Other`. No option restores
+the old reading of those rows. Version/provenance metadata differs too.
 
 What to know before using it:
 

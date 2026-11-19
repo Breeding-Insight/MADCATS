@@ -2258,10 +2258,13 @@ class RowReading:
                 self.substitutions[position] = alt_allele
             elif kind == "del":
                 # Written from the base before the deleted ones: that base is still shown.
-                # A deletion at the very start of the tag has no base before it and is written
-                # without one (alt "."), or in older tables from the base after it; the forms
-                # cannot always be told apart there, so the whole span is treated as not shown.
-                first_missing = position if position == 1 else position + 1
+                # A deletion without that base (alt ".") starts on its own first base: one at
+                # the very start of the tag, or one right after a substituted base, which a
+                # substitution already uses.  Older tables wrote a deletion at the start of the
+                # tag from the base after it; the forms cannot always be told apart there, so
+                # the whole span is treated as not shown.
+                anchored = position != 1 and alt_allele.strip(".") != ""
+                first_missing = position + 1 if anchored else position
                 self.positions_not_shown.update(range(first_missing, position + len(ref_allele)))
             elif kind in ("clip", "unresolved"):
                 # Pushed out of the window by an insertion, or left unread by ``generate``

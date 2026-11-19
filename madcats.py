@@ -307,6 +307,7 @@ class GappedReading(NamedTuple):
     counts describe it; ``last_gap_end`` is the read index just after the
     last gap; ``ref_to_read`` maps aligned reference indices to read indices
     (reference bases inside a deletion, or past the aligned end, are absent).
+    ``template`` is the canonical tag the reading was made against.
     """
 
     edits: int
@@ -318,6 +319,7 @@ class GappedReading(NamedTuple):
     end_ref: int
     last_gap_end: int
     ref_to_read: Dict[int, int]
+    template: str = ""
 
 
 class RowDecision(NamedTuple):
@@ -861,7 +863,7 @@ def _reading_from_ops(sequence: str, template: str, ops, end_read: int, end_ref:
             gap_events += previous != kind
             last_gap_end = max(last_gap_end, i + 1 if kind == "I" else i)
         previous = kind
-    return GappedReading(edits, substitutions, gap_bases, gap_events, ops, end_read, end_ref, last_gap_end, ref_to_read)
+    return GappedReading(edits, substitutions, gap_bases, gap_events, ops, end_read, end_ref, last_gap_end, ref_to_read, template)
 
 
 def _reading_cost(reading: GappedReading) -> Tuple[int, int]:
@@ -3398,13 +3400,21 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
 
 
 def _describe(
-    ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool = False, unresolved: Optional[Tuple[int, int]] = None
+    ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool = False, unresolved: Optional[Tuple[int, int]] = None,
+    against: Optional[str] = None,
 ):
     """Events of ``sequence`` against ``ref`` (the core of variant_events).
 
     ``gapped`` is the caller's decision — row_reading for an observed row,
     the unguarded cheapest reading for a design — so the description never
-    re-decides what classification decided.
+    re-decides what classification decided.  ``against`` is part of that
+    decision: the Alt tag, in the frame and at the length of ``ref``, for a
+    row that was read from it (_read_from_alt).  The row is then aligned to
+    that tag and the events are written against ``ref`` column by column,
+    so the gaps stand where the row's category was read and the designed
+    substitution is listed.  The row's own alignment to ``ref`` has no
+    reason to put the Alt base on the target: it can split one gap in two,
+    or delete the target, to avoid a substitution there.
 
     A sequence of another length than ``ref`` (a row whose primers were
     removed, see trim_locus_rows) is always aligned: the lengths themselves
@@ -3423,12 +3433,17 @@ def _describe(
     (both readings of the row agree on it), and one closing ``unresolved``
     event holds the Ref bases not read and the row's bases that stand
     there."""
+    if against is not None and len(against) != len(ref):
+        against = None
     if unresolved is not None:
         first, start = unresolved
         if first and not start:   # nothing of the row before it: the Ref bases before it are deleted
             events = [("del", 1, ref[:first], ".")]
         else:
-            events = _describe(ref[:first], sequence[:start], gap_band, gapped or first != start, whole=True)
+            events = _describe(
+                ref[:first], sequence[:start], gap_band, gapped or first != start, whole=True,
+                against=None if against is None else against[:first],
+            )
         events.append(("unresolved", first + 1, ref[first:], sequence[start:]))
         return events
     if sequence == ref:
@@ -3446,7 +3461,7 @@ def _describe(
         if shared < len(sequence):
             events.append(("overhang", len(ref) + 1, ".", sequence[shared:]))
         return events
-    ops, end_read, end_ref, _ = gapped_alignment(sequence, ref, gap_band, whole)
+    ops, end_read, end_ref, _ = gapped_alignment(sequence, ref if against is None else against, gap_band, whole)
     ops = _left_align(ops, sequence, ref)
     events = []
     k = 0
@@ -3463,14 +3478,18 @@ def _describe(
         inserted = sequence[i : ops[run_end][1] + 1] if kind == "I" else ""
         deleted = ref[j : ops[run_end][2] + 1] if kind == "D" else ""
         name = "ins" if kind == "I" else "del"
-        if j > 0:
+        before = ops[k - 1] if k else None
+        if before is not None and before[0] == "M" and _design_matches(sequence[before[1]], ref[before[2]]):
             events.append((name, j, ref[j - 1] + deleted, ref[j - 1] + inserted))
         else:
-            # No base precedes a gap on the very first base, so it is written
-            # without an anchor: 1:.>GG inserts GG before base 1, 1:TT>. deletes
-            # bases 1 and 2.  Borrowing the base after it as an anchor would
-            # use that base twice whenever another event starts there.
-            events.append((name, 1, deleted or ".", inserted or "."))
+            # The base before the gap cannot anchor it: there is none (a gap
+            # on the very first base), or the row shows another base there and
+            # a substitution already uses it (a gap right after the Alt base of
+            # a row read from the Alt tag).  The gap is then written without an
+            # anchor, from its own first base: 1:.>GG inserts GG before base 1,
+            # 32:CACG>. deletes bases 32 to 35.  Anchoring it on that base would
+            # use the base twice, and the row could not be rebuilt in order.
+            events.append((name, j + 1, deleted or ".", inserted or "."))
         k = run_end + 1
     if end_ref < len(ref):
         events.append(("clip", end_ref + 1, ref[end_ref:], "."))
@@ -3513,11 +3532,33 @@ def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT
     A row whose end is unresolved (row_decision) lists its events up to
     there and closes with ``unresolved``: the first Ref position not read,
     the Ref bases from it on, and the row's own bases that stand there.
+
+    A row read from the Alt tag (_read_from_alt) is aligned to that tag and
+    written in the Ref tag's positions, so its Variants and its category
+    show the same base on the target.  A gap right after a substituted base
+    is written without an anchor base (``32:CACG>.``, ``32:.>GG``), as a
+    gap on the first base of the tag is.
     """
     return _describe(
         locus.ref_tag, sequence, gap_band, _read_through_gaps(locus, sequence, gap_band),
         unresolved=unresolved_end(locus, sequence, gap_band),
+        against=locus.alt_tag if _read_from_alt(locus, sequence, gap_band) else None,
     )
+
+
+def _read_from_alt(locus: Locus, sequence: str, gap_band: int) -> bool:
+    """Whether a row's accepted gapped reading was made against the Alt tag.
+
+    row_decision reads a row from the Ref tag or from the Alt tag, whichever
+    explains it most cheaply; the two tags have the same positions, so the
+    reading can be written against the Ref tag column by column (_describe).
+    Never on a marker whose own design is an indel: there the tags' positions
+    differ past the designed gap, and every row is described by its alignment
+    to the Ref tag (_read_through_gaps)."""
+    reading = row_reading(locus, sequence, gap_band)
+    if reading is None or reading.template != locus.alt_tag or locus.alt_tag == locus.ref_tag:
+        return False
+    return not any(kind in ("ins", "del") for kind, *_ in _designed_events(locus.ref_tag, locus.alt_tag, gap_band))
 
 
 def unresolved_end(locus: Locus, sequence: str, gap_band: int) -> Optional[Tuple[int, int]]:
@@ -3635,11 +3676,8 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     (accepted_gapped_reading: fewest gap openings, strictly cheaper, well
     composed, verified by GAP_VERIFIED_SUFFIX bases after its last gap —
     clustered errors at the read end must not masquerade as a shift).  That
-    reading decides whether variant_events describes the row through gaps.
-    The events themselves are the row's alignment to the Ref tag: for a row
-    read from the Alt tag it can place a gap differently, and the row's
-    Variants then show the target unchanged or deleted on an AltMatch row.
-    A target inside a deletion, or
+    reading is the same one variant_events describes, so a row's category
+    and its Variants never disagree about where the target sits.  A target inside a deletion, or
     pushed past the read, is missing data and classifies as Other.  So does
     a target in the unresolved end of a row (row_decision): a gapped reading
     is cheaper there but unverified, the two readings can put different
@@ -3911,7 +3949,9 @@ def trim_locus_rows(
     printed.
 
     ``readings`` gives ``_describe`` what the trimmed sequences no longer
-    show, as ``(gapped, whole, unresolved)`` per row.  ``gapped`` is the
+    show, as ``(gapped, whole, unresolved, against)`` per row (``against``:
+    the Alt row as printed when the category was read from the Alt tag, so
+    the row is described from the same reading).  ``gapped`` is the
     decision made on the full tag (_read_through_gaps): a primer that
     verified a gap is gone from the row, so the decision is carried, not
     made again.  ``whole`` marks a row that was cut at its right primer on
@@ -3933,6 +3973,7 @@ def trim_locus_rows(
         tally["markers_right_primer_kept"] += 1
     merged: Dict[str, List] = {}
     gapped: Dict[str, bool] = {}
+    from_alt: Dict[str, bool] = {}   # the row whose category a printed row carries was read from the Alt tag
     for _, category, sequence in rows:
         trimmed = without_primers(sequence)
         gapped[trimmed] = gapped.get(trimmed, False) or _read_through_gaps(locus, sequence, gap_band)
@@ -3944,12 +3985,14 @@ def trim_locus_rows(
         entry = merged.get(trimmed)
         if entry is None:
             merged[trimmed] = [category, list(reads), total]
+            from_alt[trimmed] = _read_from_alt(locus, sequence, gap_band)
             continue
         tally["rows_merged"] += 1
         tally["rows_merged_across_allele_groups"] += ALLELE_GROUP[category] != ALLELE_GROUP[entry[0]]
         entry[1] = [kept + added for kept, added in zip(entry[1], reads)]
         if entry[0] not in ("Ref", "Alt") and total > entry[2]:
             entry[0] = category
+            from_alt[trimmed] = _read_from_alt(locus, sequence, gap_band)
         entry[2] = max(entry[2], total)
     shown = dataclasses.replace(
         locus,
@@ -3982,8 +4025,14 @@ def trim_locus_rows(
         # leaves nothing to mark.
         if first < len(shown.ref_tag) and (trimmed not in unresolved or first < unresolved[trimmed][0]):
             unresolved[trimmed] = (first, start)
+    # The fourth entry is _describe's ``against``: the Alt row as printed, for a
+    # row whose category was read from the Alt tag, so that its Variants show
+    # the gaps where that reading has them.
     readings = {
-        sequence: (gapped[sequence], ref_ends_at_primer and len(sequence) < uncut, unresolved.get(sequence))
+        sequence: (
+            gapped[sequence], ref_ends_at_primer and len(sequence) < uncut, unresolved.get(sequence),
+            shown.alt_tag if from_alt[sequence] else None,
+        )
         for sequence in merged
     }
     return shown, trimmed_rows, {sequence: entry[1] for sequence, entry in merged.items()}, readings

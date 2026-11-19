@@ -50,7 +50,8 @@ column *positions* are unchanged, so positional consumers see the same 16-column
 To keep SNP-only microhaplotypes, drop `indel`, `both` and `unresolved` rows by this label.
 
 **`Variants`** lists the row's events against the Ref tag, `;`-separated, in 1-based coordinates on
-the tag as printed:
+the tag as printed. They come from the alignment the row's category was read from, so the two show
+the same base on the target:
 
 | Token | Meaning |
 |-------|---------|
@@ -61,6 +62,7 @@ the tag as printed:
 | `overhang=3` | A deletion pulled 3 downstream bases into the window |
 | `unresolved=9` | The last 9 Ref bases are not read in this row. Its end has two explanations, a gap or substitutions, with too few bases after the gap to tell them apart ([Classification](evidence-model.md#classification)). Always the last token |
 | `1:.>GG`, `1:TT>.` | An insertion before the very first base, or a deletion that starts on it. No base precedes it, so it is written without an anchor base, and `.` stands for no bases. Here `GG` is inserted before base 1, and bases 1 and 2 are deleted |
+| `31:G>A;32:CACG>.`, `31:G>A;32:.>TT` | An insertion or deletion right after a substituted base. The substitution uses that base, so the gap is written without an anchor base as well, from its own first base. Here bases 32 to 35 are deleted, or `TT` is inserted before base 32. It appears on a row that carries the Alt base with a gap directly after it |
 
 An example value is `55:C>CAAAA;91:A>T;clip=4`. The Ref row is `.`, and the Alt row of a designed SNP
 is exactly the design (e.g. `46:C>G`).

@@ -34,9 +34,17 @@ Notable changes by version. Measurements behind each change are in the
   target was then counted as `RefMatch` (the Ref tag with two gaps around the target) or as `Other`
   (the target inside a deletion). Such rows are now `AltMatch`. Rows whose two alignments are equal
   in edits and in gaps still use the Ref tag's. On pecan, sweetpotato, alfalfa and blackberry 0.03%
-  to 0.10% of rows change category (0.002% to 0.04% of reads), all of them to `AltMatch`. `Variants`
-  is written from the row's alignment to the Ref tag as before, so on these rows it can show the
-  target unchanged or inside a deletion.
+  to 0.10% of rows change category (0.002% to 0.04% of reads), all of them to `AltMatch`.
+- `Variants` of a row whose category was read from the Alt tag is written from that same alignment,
+  in the Ref tag's coordinates. Before, it was always the row's own alignment to the Ref tag. That
+  alignment has no reason to put the Alt base on the target: it could split one gap in two, or put
+  the target inside a deletion, and `Variants` then showed the target unchanged or deleted on an
+  `AltMatch` row. An insertion or deletion right after a substituted base is written without an
+  anchor base (`31:G>A;32:CACG>.`), as one on the first base of a tag already was, because the
+  substitution uses that base; `call` reads this form. `--remove-primers on` writes the rows from
+  the same reading. On pecan, sweetpotato, alfalfa and blackberry 0.07% to 0.25% of rows get other
+  `Variants` (28 to 75 rows), and no row is left whose `Variants` and category put different bases
+  on the target. Categories and counts do not change.
 - `Variants` writes an insertion or deletion on the very first base of a tag without an anchor
   base (`1:.>GG`, `1:TT>.`). Before, it borrowed the base after it, which another event could use
   as well, and the row then could not be rebuilt from its `Variants`. A tag that starts with a

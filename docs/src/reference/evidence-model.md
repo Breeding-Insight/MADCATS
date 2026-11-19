@@ -124,10 +124,10 @@ insertions around the target. When the two are equal in gaps as well, the Ref ta
 This applies even to a row whose reads passed the substitution-only assignment check. An upstream
 insertion moves the target farther along the observed sequence; a deletion moves it earlier.
 The `Variants` annotation uses the same decision about whether to read through gaps, and reports
-events in the Ref tag's coordinates, with equivalent indel placements left-normalised. `Variants`
-is always the row's alignment to the Ref tag. For a row read from the Alt tag that alignment can
-place a gap differently, and `Variants` then shows the target unchanged or inside a deletion on an
-`AltMatch` row. The category is the reading of the target.
+events in the Ref tag's coordinates, with equivalent indel placements left-normalised. A row read
+from the Alt tag is written from that alignment too, so its `Variants` list the designed
+substitution and its gaps where the category was read, and the two show the same base on the
+target.
 
 **An unresolved end.** A gapped alignment can explain a row with fewer edits and still have fewer
 than 12 bases after its last gap. The row's end then has two explanations, a gap or a run of

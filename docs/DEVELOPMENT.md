@@ -4167,6 +4167,108 @@ as polyRAD's for a diploid population (polyRAD divides by the largest locus
 ploidy it receives, which is 2 in the stored comparisons, regardless of the
 samples' ploidy).
 
+**The read-model estimate: which markers it uses and where its search ends.**
+The estimate took its markers at even spacing through those with target reads,
+judged every overdispersion with the allele frequencies and dosage weights
+fitted at one value, and stopped after four rounds. Three cohort tables showed
+what that does: hexaploid sweetpotato (80 samples, 3,087 markers with target
+reads, 250 used), tetraploid alfalfa (356 samples, 3,000 markers, 56 used) and
+diploid pecan (376 samples, 3,098 markers, 53 used).
+
+On the sweetpotato table the estimate was 40. Without the table's first marker
+it was 30, and 13.0% fewer target genotypes were called (66,609 against
+76,582). With one marker's target reads gone and the table otherwise the same
+it was 30 as well: the list of markers with reads was one shorter, the even
+spacing landed on other markers from the second one on, and only 125 of the 250
+were the same. No genotype was called differently, only fewer. How much the
+calls depend on the value, at the background rate each table estimates:
+
+| Cohort | Value every marker gives | One grid step down | One grid step up |
+|---|---|---|---|
+| sweetpotato, 6x | 40 | 30: 13.0% fewer called | 50: 30.3% more |
+| alfalfa, 4x | 30 | 25: 4.8% fewer | 40: 5.3% more |
+| pecan, 2x | 18 | 16: 0.1% fewer | 20: 0.1% more |
+
+To replay the search on any choice of markers, every marker's log-likelihood
+was computed at each pair of grid values (the value its frequencies and weights
+were fitted at, and the value judged). On every marker of the sweetpotato table
+the old search rests at 30 when started at 9 and at 40 when started at 500;
+with each value judged by its own fit, 40 is ahead of 30 by 317 log units.
+Pecan and alfalfa have one resting value on all markers (18 and 30). Over 300
+random draws of the number of markers each cohort uses, the old search from 9
+was still moving after four rounds in 295 (sweetpotato), 114 (alfalfa) and 0
+(pecan), and ended elsewhere from 500 than from 9 in 190, 81 and 14. The
+log-likelihood of each value under its own fit had a single peak on the grid in
+all 2,400 draws tried, and a walk to the better neighbour reached it from 9 and
+from 500 in every one. That walk is the search now.
+
+On simulated hexaploid tables (100 markers, free weights, six seeds each), the
+old search run until it rests and the new one:
+
+| Samples | Simulated | Old, from 9 | Old, from 500 | New |
+|---|---|---|---|---|
+| 80 | 20 | 20, 20, 20, 18, 20, 20 | 25, 25, 25, 20, 25, 25 | 20, 25, 20, 20, 25, 25 |
+| 80 | 40 | 30, 50, 40, 50, 40, 50 | 40, 50, 50, 50, 40, 50 | 40, 50, 50, 50, 40, 50 |
+| 160 | 20 | 10, 20, 20, 10, 20, 20 | 25 in all six | 20, 25, 20, 20, 20, 20 |
+| 160 | 40 | 10, 40, 40, 40, 40, 10 | 40, 40, 40, 40, 50, 40 | 40 in all six |
+| 320 | 20 | 10, 20, 9, 10, 10, 10 | 20, 25, 25, 20, 25, 25 | 20, 20, 20, 20, 20, 25 |
+| 320 | 40 | 10, 40, 10, 9, 10, 9 | 40, 40, 40, 50, 50, 40 | 40 in all six |
+
+The more samples a marker has, the more the old search stayed where it
+started. The new one recovers the simulated value from 160 samples up. With 80
+samples it is one grid step high in half the tables and never low, as a
+likelihood maximised over one set of dosage weights per marker is expected to
+be; the old search's reluctance to move up hid that at this size. With four
+rounds from 9, as the old search ran when called once, hexaploid tables of 150
+markers and 80 samples simulated at 20 to 50 all gave 16 or 18. Simulated
+tetraploid tables gave the simulated value with either search. The tables
+earlier in this record were made with the old search.
+
+Even spacing sampled no better than chance. Taking every possible offset, it
+gave the value of every marker in 83% of the offsets on sweetpotato, 12% on
+pecan and 21% on alfalfa, against 73%, 13% and 38% of random draws. The markers
+are now those that come first by a hash of their IDs, which is a random draw
+that one marker more or less changes by one marker at most.
+
+**How many markers the estimate uses.** With the limit of 20,000 cells alone,
+alfalfa was estimated from 56 markers and pecan from 53, and the new stable
+draw gave 40 and 25 where every marker gives 30 and 18. So few markers are too
+few however they are drawn. Share of 1,000 random draws that give the value of
+every marker, and that come within one grid step of it:
+
+| Markers | sweetpotato | alfalfa | pecan |
+|---|---|---|---|
+| under the cell limit (250, 56, 53) | 73% / 100% | 38% / 78% | 13% / 44% |
+| twice | 86% / 100% | 49% / 89% | 20% / 61% |
+| four times | 95% / 100% | 60% / 96% | 30% / 78% |
+| eight times | 100% / 100% | 64% / 100% | 39% / 93% |
+| sixteen times | | 68% / 100% | 56% / 99% |
+
+The estimate now uses at least 250 markers (`OVERDISPERSION_MIN_MARKERS`, 20
+before), which is what sweetpotato's 80 samples already had. With more than 80
+samples it therefore takes longer the more samples there are, and the timings
+earlier in this record were made under the old limit. The real `call`, old and
+new, on four tables per cohort:
+
+| Table | sweetpotato old | new | alfalfa old | new | pecan old | new |
+|---|---|---|---|---|---|---|
+| as written | 40 | 40 | 30 | 30 | 18 | 16 |
+| markers in the opposite order | 40 | 40 | 30 | 30 | 18 | 16 |
+| without the first marker | 30 | 40 | 30 | 30 | 18 | 16 |
+| one marker without target reads | 30 | 40 | 30 | 30 | 18 | 16 |
+
+The new estimate is made on the same 250 markers in all four tables of a
+cohort, and the background-read rate is the old one in each (0.005, 0.005,
+0.003). On the tables as written it calls as many target genotypes as the old
+one on sweetpotato and alfalfa (76,582 and 780,411) and 0.08% fewer on pecan
+(1,080,081 against 1,080,921). Pecan's 16 is one grid step below the 18 of
+every marker; from 500 markers it is 18. Replaying the estimate from the
+per-marker tables on the markers the code takes gives the same three values.
+On a quiet machine and four cores the runs took 12 s against 10 s
+(sweetpotato), 9 s against 6 s (pecan) and 26 s against 8 s (alfalfa). The
+search for like samples (`--prior structure`) still takes its markers at even
+spacing.
+
 **Other checks.** On the bundled example all 96 target and 96 haplotype
 genotypes equal the simulated truth. `bcftools view` reads the three VCF types
 without warnings, including mixed-ploidy output. Output is identical for any

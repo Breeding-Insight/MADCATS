@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -785,6 +786,142 @@ class ReadModelEstimateTests(unittest.TestCase):
     def test_marker_subset_is_limited_and_evenly_spaced(self):
         self.assertEqual(call._evenly_spaced(list(range(10)), 20), list(range(10)))
         self.assertEqual(call._evenly_spaced(list(range(10)), 5), [0, 2, 4, 6, 8])
+
+    @staticmethod
+    def named_markers(markers=120, samples=400):
+        """Markers with reads in every sample."""
+        ids = [f"M{number:03d}" for number in range(markers)]
+        return ids, [[[number + 1, sample % 3] for sample in range(samples)] for number in range(markers)]
+
+    def room_for_fifty(self):
+        """400 samples leave room for 50 markers (20,000 cells) once the minimum does not ask for more."""
+        patcher = mock.patch.object(call, "OVERDISPERSION_MIN_MARKERS", 20)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_markers_are_chosen_by_their_ids_whatever_the_order_of_the_table(self):
+        self.room_for_fifty()
+        ids, table = self.named_markers()
+        chosen, cells, chosen_ids = call._markers_for_estimate(table, 400, ids)
+        self.assertEqual((len(chosen), cells), (50, 50 * 400))
+        self.assertEqual(chosen_ids, sorted(ids, key=call._marker_priority)[:50])
+        self.assertEqual(chosen, [table[ids.index(marker)] for marker in chosen_ids])
+        # The same markers listed in another order: the same selection, in the same order.
+        order = list(range(len(ids)))
+        random.Random(3).shuffle(order)
+        reordered = call._markers_for_estimate([table[index] for index in order], 400, [ids[index] for index in order])
+        self.assertEqual(reordered, (chosen, cells, chosen_ids))
+        # Selecting from a selection returns it unchanged.
+        self.assertEqual(call._markers_for_estimate(chosen, 400, chosen_ids), (chosen, cells, chosen_ids))
+        # Without IDs a marker's position stands for its ID.
+        self.assertEqual(
+            call._markers_for_estimate(table, 400)[2], sorted(map(str, range(len(ids))), key=call._marker_priority)[:50]
+        )
+
+    def test_estimate_uses_20000_cells_or_250_markers_whichever_is_more(self):
+        self.assertEqual((call.OVERDISPERSION_MAX_CELLS, call.OVERDISPERSION_MIN_MARKERS), (20000, 250))
+        # 40 samples: 20,000 cells are 500 markers.
+        ids, table = self.named_markers(markers=600, samples=40)
+        chosen, cells, chosen_ids = call._markers_for_estimate(table, 40, ids)
+        self.assertEqual((len(chosen), cells), (500, 20000))
+        # 400 samples: 20,000 cells would be 50 markers, too few to estimate from, so 250 are taken.
+        ids, table = self.named_markers(markers=300, samples=400)
+        chosen, cells, chosen_ids = call._markers_for_estimate(table, 400, ids)
+        self.assertEqual((len(chosen), cells), (250, 250 * 400))
+        self.assertEqual(chosen_ids, sorted(ids, key=call._marker_priority)[:250])
+        # A table with fewer markers gives all it has.
+        self.assertEqual(len(call._markers_for_estimate(table[:120], 400, ids[:120])[0]), 120)
+
+    def test_one_marker_more_or_less_replaces_at_most_one_chosen_marker(self):
+        self.room_for_fifty()
+        ids, table = self.named_markers()
+        by_priority = sorted(ids, key=call._marker_priority)
+        chosen = set(by_priority[:50])
+        self.assertEqual(set(call._markers_for_estimate(table, 400, ids)[2]), chosen)
+
+        def chosen_without(gone):
+            kept = [index for index, marker in enumerate(ids) if marker != gone]
+            return set(call._markers_for_estimate([table[index] for index in kept], 400, [ids[index] for index in kept])[2])
+
+        # A chosen marker that leaves the table is replaced by the next in line; any other changes nothing.
+        self.assertEqual(chosen_without(by_priority[0]), chosen - {by_priority[0]} | {by_priority[50]})
+        self.assertEqual(chosen_without(by_priority[-1]), chosen)
+        # A marker that loses its reads has left the estimate just the same.
+        emptied = [[[0, 0]] * 400 if marker == by_priority[0] else depths for marker, depths in zip(ids, table)]
+        self.assertEqual(set(call._markers_for_estimate(emptied, 400, ids)[2]), chosen_without(by_priority[0]))
+        # A marker added to the table takes at most one place.
+        for new in ("N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8"):
+            with_new = set(call._markers_for_estimate(table + [table[0]], 400, ids + [new])[2])
+            self.assertLessEqual(len(chosen - with_new), 1)
+            self.assertLessEqual(with_new - chosen, {new})
+        # Even spacing through the table, which this replaced, changed 21 of the 50 for one marker less.
+        self.assertGreater(len(set(call._evenly_spaced(ids, 50)) - set(call._evenly_spaced(ids[1:], 50))), 10)
+
+    def test_search_ends_at_the_same_value_wherever_it_starts(self):
+        table = simulated_two_allele_markers(20, 6, markers=40, samples=60)
+        ploidies = [6] * 60
+        from_default = call.estimate_overdispersion(table, ploidies)
+        self.assertIn(from_default.value, (16, 18, 20, 25))
+        self.assertEqual(from_default.values_visited[0], call.POLYRAD_OVERDISPERSION)
+        for start in (min(call.OVERDISPERSION_GRID), 30, max(call.OVERDISPERSION_GRID)):
+            estimate = call.estimate_overdispersion(table, ploidies, start=start)
+            self.assertEqual(estimate.value, from_default.value)
+            self.assertEqual((estimate.values_visited[0], estimate.values_visited[-1]), (start, estimate.value))
+        # From the highest value the search passes many more values than the four rounds it once stopped after.
+        self.assertGreater(len(estimate.values_visited), 8)
+        # No value of the grid is more probable than the one chosen, each judged with the markers called at it.
+        settings = call.ModelSettings()
+
+        def own_log_likelihood(value):
+            at_value = dataclasses.replace(settings, overdispersion=value)
+            return sum(
+                call.marker_overdispersion_log_likelihoods(depths, ploidies, at_value, (value,))[0] for depths in table
+            )
+
+        every_value = {value: own_log_likelihood(value) for value in call.OVERDISPERSION_GRID}
+        self.assertEqual(max(every_value, key=every_value.get), from_default.value)
+        for value, total in from_default.log_likelihood_by_value.items():
+            self.assertAlmostEqual(total, every_value[value], places=6)
+
+    def test_a_value_is_judged_with_its_own_fit_not_with_another_value_s(self):
+        # On this hexaploid table, comparing every value with the allele frequencies and dosage
+        # weights fitted at one value (the search this replaced) rests at 30 and at 40: a search
+        # arriving from below stopped at 30 and one arriving from above at 40.
+        table = simulated_two_allele_markers(30, 6, markers=30, samples=80)
+        ploidies = [6] * 80
+        settings = call.ModelSettings(prior=call.PRIOR_FREE)
+        grid = call.OVERDISPERSION_GRID
+
+        def best_with_the_fit_at(value):
+            at_value = dataclasses.replace(settings, overdispersion=value)
+            totals = [0.0] * len(grid)
+            for depths in table:
+                marker_totals = call.marker_overdispersion_log_likelihoods(depths, ploidies, at_value, grid)
+                totals = [total + marker_total for total, marker_total in zip(totals, marker_totals)]
+            return grid[max(range(len(grid)), key=totals.__getitem__)]
+
+        self.assertEqual((best_with_the_fit_at(30), best_with_the_fit_at(40)), (30, 40))
+        # Each judged with its own fit, 40 is the more probable, and the search ends there from either side.
+        for start in (9, 30, 40, 500):
+            estimate = call.estimate_overdispersion(table, ploidies, settings, start=start)
+            self.assertEqual(estimate.value, 40)
+        self.assertGreater(estimate.log_likelihood_by_value[40], estimate.log_likelihood_by_value[30])
+
+    def test_estimate_is_the_same_for_a_reordered_table(self):
+        ids = [f"M{number:02d}" for number in range(30)]
+        table = simulated_two_allele_markers(20, 4, markers=30, samples=60)
+        order = list(range(30))
+        random.Random(5).shuffle(order)
+        # Room for 20 of the 30 markers, so the selection matters.
+        with mock.patch.object(call, "OVERDISPERSION_MAX_CELLS", 20 * 60), \
+                mock.patch.object(call, "OVERDISPERSION_MIN_MARKERS", 20):
+            estimate = call.estimate_overdispersion(table, [4] * 60, marker_ids=ids)
+            reordered = call.estimate_overdispersion(
+                [table[index] for index in order], [4] * 60, marker_ids=[ids[index] for index in order]
+            )
+        self.assertEqual(estimate.markers_used, 20)
+        self.assertEqual(estimate.marker_ids, sorted(ids, key=call._marker_priority)[:20])
+        self.assertEqual(reordered, estimate)
 
 
 def simulated_group_markers(groups, samples_per_group, markers, ploidy=4, depth=(8, 16), overdispersion=50, seed=5):
@@ -1733,6 +1870,10 @@ class CommandBehaviourTests(CommandTestCase):
         self.assertIn(report["used"], (16, 18, 20, 25))
         self.assertEqual(report["used"], report["estimate"])
         self.assertEqual(report["markers_used"], 40)
+        # The markers the estimate was made on, and the path of its search, are recorded.
+        self.assertEqual(report["markers"], [f"M{number:03d}" for number in range(40)])
+        self.assertEqual(report["values_visited"][-1], report["estimate"])
+        self.assertIn(format(report["estimate"], "g"), report["log_likelihood_by_value"])
         self.assertIn("Estimated overdispersion", self.stderr)
         self.assertIn(f"overdispersion {report['used']:g}, estimated from the read counts", self.model_line(prefix))
 
@@ -1742,6 +1883,36 @@ class CommandBehaviourTests(CommandTestCase):
 
         self.call_madc(madc, "--ploidy", "4", "--overdispersion", "30")
         self.assertEqual(self.qc["overdispersion"], {"requested": 30.0, "used": 30.0})
+
+    def test_read_model_estimate_follows_the_markers_not_their_order_or_number(self):
+        table = simulated_two_allele_markers(20, 4, markers=36, samples=60)
+        rows = []
+        for number, depths in enumerate(table):
+            marker = f"M{number:03d}"
+            rows.append([(marker, "Ref", REF_TAG, [pair[0] for pair in depths]),
+                         (marker, "Alt", ALT_TAG, [pair[1] for pair in depths])])
+        samples = [f"s{sample:02d}" for sample in range(60)]
+
+        def estimate_of(marker_rows, name):
+            madc = self.write_madc([row for pair in marker_rows for row in pair], samples, name=name)
+            self.call_madc(madc, "--ploidy", "4")
+            return self.qc["overdispersion"], self.qc["background_rate"]
+
+        # Room for 20 of the 36 markers.
+        with mock.patch.object(call, "OVERDISPERSION_MAX_CELLS", 20 * 60), \
+                mock.patch.object(call, "OVERDISPERSION_MIN_MARKERS", 20):
+            overdispersion, background = estimate_of(rows, "listed.csv")
+            self.assertEqual(overdispersion["markers_used"], 20)
+            self.assertEqual(len(overdispersion["markers"]), 20)
+            # The same table with its markers in the opposite order.
+            self.assertEqual(estimate_of(rows[::-1], "reversed.csv"), (overdispersion, background))
+            # Without a marker the estimate did not use, nothing changes.
+            unused = next(index for index in range(36) if f"M{index:03d}" not in overdispersion["markers"])
+            self.assertEqual(estimate_of(rows[:unused] + rows[unused + 1:], "one_less.csv"), (overdispersion, background))
+            # Without one it used, one marker takes its place and the other 19 stay.
+            used = int(overdispersion["markers"][0][1:])
+            one_replaced, _ = estimate_of(rows[:used] + rows[used + 1:], "one_replaced.csv")
+            self.assertEqual(len(set(one_replaced["markers"]) & set(overdispersion["markers"])), 19)
 
     def test_selfing_rate_favours_homozygous_calls(self):
         # 17 Ref reads and 3 Alt reads: a heterozygote under random mating, but with nearly all

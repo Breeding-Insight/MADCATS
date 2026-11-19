@@ -116,10 +116,18 @@ explains the row with fewer edits, stays within the substitution and gap limits,
 at least 12 bases after its last gap, the target base comes from that alignment instead. A target
 inside a deletion, or pushed past the end of the read, is `Other`.
 
+The row is aligned to the Ref tag and to the Alt tag, and the alignment with fewer edits is used.
+When both need the same number of edits, the one with fewer separate gaps is used. An Alt haplotype
+with one insertion beside its target is then read as that, and not as a Ref haplotype with two
+insertions around the target. When the two are equal in gaps as well, the Ref tag's is used.
+
 This applies even to a row whose reads passed the substitution-only assignment check. An upstream
 insertion moves the target farther along the observed sequence; a deletion moves it earlier.
 The `Variants` annotation uses the same decision about whether to read through gaps, and reports
-events in the Ref tag's coordinates, with equivalent indel placements left-normalised.
+events in the Ref tag's coordinates, with equivalent indel placements left-normalised. `Variants`
+is always the row's alignment to the Ref tag. For a row read from the Alt tag that alignment can
+place a gap differently, and `Variants` then shows the target unchanged or inside a deletion on an
+`AltMatch` row. The category is the reading of the target.
 
 **An unresolved end.** A gapped alignment can explain a row with fewer edits and still have fewer
 than 12 bases after its last gap. The row's end then has two explanations, a gap or a run of

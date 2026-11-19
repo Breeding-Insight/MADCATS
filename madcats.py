@@ -864,10 +864,23 @@ def _reading_from_ops(sequence: str, template: str, ops, end_read: int, end_ref:
     return GappedReading(edits, substitutions, gap_bases, gap_events, ops, end_read, end_ref, last_gap_end, ref_to_read)
 
 
+def _reading_cost(reading: GappedReading) -> Tuple[int, int]:
+    """How the two canonicals' readings of one row are ranked: fewest edits,
+    then fewest gap openings.
+
+    A row can fit the Ref tag and the Alt tag in the same number of edits:
+    six inserted bases as one insertion beside the Alt base, or split in two
+    around a Ref base.  The reading with fewer separate gaps is the one
+    taken, as gapped_alignment already takes it among the alignments to one
+    tag.  Readings equal in both leave the Ref tag's standing (it is tried
+    first)."""
+    return reading.edits, reading.gap_events
+
+
 def row_reading(locus: Locus, sequence: str, gap_band: int) -> Optional[GappedReading]:
     """The locus-level decision both consumers share: the accepted gapped reading
-    of ``sequence`` against whichever canonical explains it most cheaply, or
-    ``None``.  The bound a gapped reading must beat is the cheaper of the two
+    of ``sequence`` against whichever canonical explains it most cheaply
+    (_reading_cost), or ``None``.  The bound a gapped reading must beat is the cheaper of the two
     substitution-only readings, and the composition guard is applied against
     the canonical the row is read from, so a designed substitution never counts
     against an AltMatch row's indel reading."""
@@ -879,7 +892,8 @@ def row_decision(locus: Locus, sequence: str, gap_band: int) -> RowDecision:
 
     Over both canonicals there is the cheapest gapped reading that is
     verified (row_reading: GAP_VERIFIED_SUFFIX bases follow its last gap)
-    and the cheapest one whether verified or not.  Where the two are the
+    and the cheapest one whether verified or not.  Cheapest is fewest
+    edits, then fewest gap openings (_reading_cost).  Where the two are the
     same reading, or no gapped reading is cheaper than substitutions, the
     whole row is read.  Where they differ, the row's end has two
     explanations and too few bases to tell them apart: a gap there, or the
@@ -909,9 +923,10 @@ def _row_decision(ref_tag: str, alt_tag: str, sequence: str, gap_band: int, veri
         reading = _unverified_gapped_reading(sequence, template, gap_band, substitutions)
         if reading is None:
             continue
-        if cheapest is None or reading.edits < cheapest.edits:
+        cost = _reading_cost(reading)
+        if cheapest is None or cost < _reading_cost(cheapest):
             cheapest, cheapest_template = reading, template
-        if reading.last_gap_end <= len(sequence) - verified_suffix and (verified is None or reading.edits < verified.edits):
+        if reading.last_gap_end <= len(sequence) - verified_suffix and (verified is None or cost < _reading_cost(verified)):
             verified, verified_template = reading, template
     if cheapest is None or (verified is not None and verified.ops == cheapest.ops and verified_template == cheapest_template):
         return RowDecision(verified, None)
@@ -3620,8 +3635,11 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     (accepted_gapped_reading: fewest gap openings, strictly cheaper, well
     composed, verified by GAP_VERIFIED_SUFFIX bases after its last gap —
     clustered errors at the read end must not masquerade as a shift).  That
-    reading is the same one variant_events describes, so a row's category
-    and its Variants never disagree about where the target sits.  A target inside a deletion, or
+    reading decides whether variant_events describes the row through gaps.
+    The events themselves are the row's alignment to the Ref tag: for a row
+    read from the Alt tag it can place a gap differently, and the row's
+    Variants then show the target unchanged or deleted on an AltMatch row.
+    A target inside a deletion, or
     pushed past the read, is missing data and classifies as Other.  So does
     a target in the unresolved end of a row (row_decision): a gapped reading
     is cheaper there but unverified, the two readings can put different

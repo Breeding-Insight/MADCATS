@@ -28,6 +28,15 @@ Notable changes by version. Measurements behind each change are in the
   0.13% and the substitutions written that no haplotype carries from 108,592 to 8,312, while 1.0%
   fewer rows are counted for the right allele. Rows without the token are written as before,
   except a few whose counts change because the pooled denoiser groups rows by category.
+- `generate` reads a row from the Alt tag when the Ref tag and the Alt tag explain it through gaps
+  in the same number of edits and the Alt tag needs fewer separate gaps. Before, the Ref tag's
+  alignment was used on every such tie. An Alt haplotype with one insertion or deletion beside its
+  target was then counted as `RefMatch` (the Ref tag with two gaps around the target) or as `Other`
+  (the target inside a deletion). Such rows are now `AltMatch`. Rows whose two alignments are equal
+  in edits and in gaps still use the Ref tag's. On pecan, sweetpotato, alfalfa and blackberry 0.03%
+  to 0.10% of rows change category (0.002% to 0.04% of reads), all of them to `AltMatch`. `Variants`
+  is written from the row's alignment to the Ref tag as before, so on these rows it can show the
+  target unchanged or inside a deletion.
 - `Variants` writes an insertion or deletion on the very first base of a tag without an anchor
   base (`1:.>GG`, `1:TT>.`). Before, it borrowed the base after it, which another event could use
   as well, and the row then could not be rebuilt from its `Variants`. A tag that starts with a

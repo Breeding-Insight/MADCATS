@@ -21,14 +21,16 @@ them:
    every marker get one more try with a gapped alignment under the same edit limit, so the counts
    include undesigned indels. Credit a read that fits several tiled markers of one amplicon equally
    to each of them, and drop other ties. Reads shorter than the tag count toward a full-length
-   allele whose start they match. Cache results per sample.
+   allele whose start they match. Keep the commonest bases that follow a tag in longer reads, for
+   stage 6. Cache results per sample.
 3. Count exact tag sequences per sample.
 4. Apply the evidence rules. Always write canonical Ref and Alt rows, and report any other sequence
    only if it passes an evidence route.
 5. Denoise. Within each sample, merge rare sequences one edit away from a much more common one
    into it. A pooled pass then merges sequences that failed the evidence rules into a parent that
    carries the same target allele.
-6. Classify each row as Ref, Alt, RefMatch, AltMatch or Other, and annotate it.
+6. Classify each row as Ref, Alt, RefMatch, AltMatch or Other, and annotate it. A row whose
+   target the tag cannot read is read again with the bases that follow the tag.
 7. Write the MADC, the QC/provenance JSON and the variants sidecar.
 
 The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in detail.
@@ -64,7 +66,7 @@ The [Evidence Model](../reference/evidence-model.md) explains stages 2–6 in de
 | `--leading-anchor <SEQ\|auto>` | none | Constant sequence before the amplicon in raw deliveries (for DArT, `GATGGATCCAGTGC`). MADCATS cuts each read where the anchor ends, and the anchor must end within 40 bases beyond its own length. `auto` detects it from a sample of up to 24 FASTQs. With one or two FASTQs the detected anchor may include the sample barcode, and the run warns about it |
 | `--leading-anchor-mismatches {0,1}` | 1 | Substitutions allowed in the leading anchor. With `1`, MADCATS cuts a read that has no exact copy after its only one-substitution match, and counts it as `reads_leading_anchor_mismatch`. A read with no such match, or more than one, counts as `reads_no_leading_anchor`. Anchors under 12 bases must match exactly. `0` requires an exact match for every anchor, as in 0.13.0 |
 | `--primer-mismatches {0,1}` | 1 | Mismatches allowed while assigning a primer/anchor. With `0`, reads from Match haplotypes whose distinguishing SNP falls inside the anchor are lost |
-| `--gapped-rescue {on,off}` | `on` | Rescue indel reads and allow accepted gapped alignments to locate the target allele and annotate variants. A row whose end has a cheaper but unverified gap is read up to it and marked `unresolved`. With `off`, retained indel rows can have incorrect target categories; see [Classification](../reference/evidence-model.md#classification) |
+| `--gapped-rescue {on,off}` | `on` | Rescue indel reads and allow accepted gapped alignments to locate the target allele and annotate variants. A row whose end has a cheaper but unverified gap is read up to it and marked `unresolved`, unless the bases after the tag settle it. With `off`, retained indel rows can have incorrect target categories; see [Classification](../reference/evidence-model.md#classification) |
 | `--max-indel-length <INT>` | 10 | Widest gap (alignment band) a gapped alignment may use |
 | `--tile-groups {auto,declared,off}` | `auto` | Link tiled markers (markers that read the same tag window of one amplicon), so a read is credited to every tile it fits instead of being dropped as a tie. `auto` links tiles declared with `LocusGroup` and detects undeclared ones, `declared` links only the declared ones, and `off` links none. See [Tiled Markers](../getting-started/input-formats.md#tiled-markers) |
 | `--partial-read-mode {on,off}` | `on` | Add a read shorter than the tag to the one full-length allele (already passing the evidence rules) whose start it matches, only when it is longer than every prefix shared between that locus's alleles. `off` drops such reads |
@@ -132,8 +134,9 @@ blanket guarantee of v0.13 output. Tile-group crediting was added after v0.13 an
 at a leading anchor, restores the v0.13 assignment. And a row whose end has a cheaper but
 unverified gap is now marked `unresolved`, where v0.13 read it at the fixed offsets (see
 [Classification](../reference/evidence-model.md#classification)): about 2 to 3 rows in 100 on the
-cohorts measured, of which the ones with the target in that end become `Other`. No option restores
-the old reading of those rows. Version/provenance metadata differs too.
+cohorts measured, of which the ones with the target in that end become `Other` unless the bases
+after the tag settle them. No option restores the old reading of those rows. Version/provenance
+metadata differs too.
 
 What to know before using it:
 

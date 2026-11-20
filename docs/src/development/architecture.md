@@ -77,7 +77,8 @@ annotation use the same `row_reading`, so those stages always agree.
   sequential passes.
 - The per-sample cache (`--cache-dir`) is keyed by the panel and every read-assignment parameter,
   so downstream thresholds never invalidate it. `CACHE_FORMAT_VERSION` is bumped whenever the
-  serialized cache or raw-read processing changes.
+  serialized cache or raw-read processing changes. The cache also holds the commonest bases
+  after each tag that read continuation can use (`keeps_continuation`).
 
 ## Vocabulary
 

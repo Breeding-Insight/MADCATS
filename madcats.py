@@ -123,14 +123,15 @@ section opens with a banner comment:
    helpers).
 2. Alignment engine: the Myers prescreen, the banded DP, and
    ``accepted_gapped_reading``/``row_decision`` — the one gapped reading a
-   row may be given, and where a row stops being read because its end has
-   two explanations.
+   row may be given, where a row stops being read because its end has
+   two explanations, and how the bases after the tag settle such an end.
 3. Panel definition: design-file reconstruction, reference-tag tables, and
    primer-free inference.
 4. Platform intake: pair merging, window location and freezing, tiling and
    routing, window-scan.
 5. Per-sample read assignment: ``PrimerIndex``, ``tile_families``,
-   ``select_markers``, ``process_sample`` and its cache.
+   ``select_markers``, ``process_sample`` and its cache; the bases after
+   a tag (``keeps_continuation``, ``pooled_continuations``).
 6. Evidence, denoising and partial-read salvage: ``EvidenceRule``,
    ``collect_evidence``, ``finalize_counts``, ``apply_partial_reads``.
 7. Classification and annotation: ``classify_sequence``, ``variant_events``,
@@ -184,7 +185,7 @@ __version__ = "0.14.0"
 # 0.4.0: fuzzy primer matches resolve across all matched depths by tag
 # identity instead of preferring the deepest primer, so caches built with
 # --primer-mismatches 1 (or prefix-nested panels) must be regenerated.
-CACHE_FORMAT_VERSION = "0.5.0"
+CACHE_FORMAT_VERSION = "0.6.0"
 TAG_LENGTH_DEFAULT = 81
 QUALITY_THRESHOLDS = (10, 20, 30, 40)
 
@@ -238,6 +239,12 @@ GAP_BAND_DEFAULT = 10        # --max-indel-length: the widest gap a gapped readi
 GAP_MAX_SUBSTITUTIONS = 6    # composition guard: an indel haplotype is its canonical plus gaps and FEW substitutions
 GAP_MAX_EVENTS = 6           # ... in few separate gap events; a co-amplified paralog needs many substitutions
 GAP_VERIFIED_SUFFIX = 12     # bases that must follow the last gap before a gapped reading may re-read the target
+CONTINUATION_BASES = 40      # read continuation: bases after the tag kept from a read
+CONTINUATIONS_KEPT = 3       # ... commonest continuations kept per tag and sample
+CONTINUATION_REACHED_BY = 0.9  # ... all are cut to the longest length this share of the cohort's reads reach
+CONTINUATION_MIN_READS = 3   # ... a tag's commonest continuation counts with this many reads (kept from as many in a sample)
+CONTINUATION_MIN_SHARE = 0.6 # ... and this share of the tag's reads that carry one
+CONTINUATION_MAX_MISMATCHES = 2  # ... a longer window settles a row only if it reads the added bases this cleanly
 PARTIAL_TAIL_DEFAULT = 9     # --min-partial-length defaults to --tag-length minus this: at most 9 unobserved tail bases
 LEADING_ANCHOR_SEARCH = 40   # --leading-anchor: the anchor must end within this many bases beyond its own length
 LEADING_ANCHOR_MISMATCHES_DEFAULT = 1  # --leading-anchor-mismatches: substitutions tolerated in the anchor
@@ -291,6 +298,8 @@ class SampleResult:
     partial_quality_support: Dict[Tuple[int, str], Tuple[int, ...]]
     qc: Dict[str, int]
     cache_hit: bool = False
+    # (marker index, tag) -> [(bases after the tag, reads)], commonest first (keeps_continuation)
+    continuations: Dict[Tuple[int, str], List[Tuple[str, int]]] = dataclasses.field(default_factory=dict)
 
 
 class EvidenceSupport(NamedTuple):
@@ -891,17 +900,21 @@ def _reading_cost(reading: GappedReading) -> Tuple[int, int]:
     return reading.edits, reading.gap_events
 
 
-def row_reading(locus: Locus, sequence: str, gap_band: int) -> Optional[GappedReading]:
+def row_reading(
+    locus: Locus, sequence: str, gap_band: int, continuations: Optional[Mapping[str, str]] = None
+) -> Optional[GappedReading]:
     """The locus-level decision both consumers share: the accepted gapped reading
     of ``sequence`` against whichever canonical explains it most cheaply
     (_reading_cost), or ``None``.  The bound a gapped reading must beat is the cheaper of the two
     substitution-only readings, and the composition guard is applied against
     the canonical the row is read from, so a designed substitution never counts
     against an AltMatch row's indel reading."""
-    return row_decision(locus, sequence, gap_band).reading
+    return row_decision(locus, sequence, gap_band, continuations).reading
 
 
-def row_decision(locus: Locus, sequence: str, gap_band: int) -> RowDecision:
+def row_decision(
+    locus: Locus, sequence: str, gap_band: int, continuations: Optional[Mapping[str, str]] = None
+) -> RowDecision:
     """How a row is read: its accepted gapped reading, and where it stops being read.
 
     Over both canonicals there is the cheapest gapped reading that is
@@ -921,10 +934,96 @@ def row_decision(locus: Locus, sequence: str, gap_band: int) -> RowDecision:
     equal placements (_right_align), so every base both explanations agree
     on stays read.  The decision is made once here and shared by
     classify_sequence, variant_events and the primer removal.
+
+    ``continuations`` maps a tag of this marker to the bases its reads
+    carry after it (pooled_continuations).  With them, a row whose target
+    lies in an unresolved end is decided again on a longer window
+    (_continued_decision).  A row whose target the tag reads is never
+    asked, so its category cannot change.
     """
     if gap_band <= 0 or sequence in (locus.ref_tag, locus.alt_tag):
         return RowDecision(None, None)
-    return _row_decision(locus.ref_tag, locus.alt_tag, sequence, gap_band, GAP_VERIFIED_SUFFIX)
+    decision = _row_decision(locus.ref_tag, locus.alt_tag, sequence, gap_band, GAP_VERIFIED_SUFFIX)
+    if not continuations or not _target_unread(locus, decision):
+        return decision
+    return _continued_decision(locus, sequence, gap_band, continuations) or decision
+
+
+def _target_unread(locus: Locus, decision: RowDecision) -> bool:
+    """The marker's target lies in the end the decision leaves unresolved."""
+    return decision.unresolved is not None and locus.variant_pos >= decision.unresolved[0]
+
+
+def _continued_decision(
+    locus: Locus, sequence: str, gap_band: int, continuations: Mapping[str, str]
+) -> Optional[RowDecision]:
+    """The decision of a row whose target is unread, made on a longer window; None when that settles nothing.
+
+    The window is the row and the two canonical tags, each followed by the
+    bases its own reads carry after the tag (the Alt tag borrows the Ref
+    tag's when it has none).  It is the same decision on more bases
+    (_row_decision), with no new way to align.  Its answer is taken when
+    the window grows by at least GAP_VERIFIED_SUFFIX bases, its own end is
+    resolved, and it reads the added bases with at most
+    CONTINUATION_MAX_MISMATCHES substitutions.  The last test keeps out a
+    row that only fits the longer tags through many substitutions.
+
+    The answer is cut back to the tag (_cut_reading): the row is read as
+    far as its own bases go.  A target the longer window finds past the tag
+    is not in the row, and the row stays Other.
+    """
+    row_more = continuations.get(sequence)
+    ref_more = continuations.get(locus.ref_tag)
+    if not row_more or not ref_more:
+        return None
+    alt_more = continuations.get(locus.alt_tag) or ref_more
+    added = min(len(row_more), len(ref_more), len(alt_more))
+    if added < GAP_VERIFIED_SUFFIX:
+        return None
+    row = sequence + row_more[:added]
+    ref = locus.ref_tag + ref_more[:added]
+    alt = locus.alt_tag + alt_more[:added]
+    reading, unresolved = _row_decision(ref, alt, row, gap_band, GAP_VERIFIED_SUFFIX)
+    if unresolved is not None:
+        return None
+    length = len(sequence)
+    if reading is None:
+        mismatches = min(tag_mismatches(row[length:], template[length:]) for template in (ref, alt))
+    else:
+        mismatches = sum(
+            1 for kind, i, j in reading.ops
+            if kind == "M" and i >= length and not _design_matches(row[i], reading.template[j])
+        )
+    if mismatches > CONTINUATION_MAX_MISMATCHES:
+        return None
+    return RowDecision(None if reading is None else _cut_reading(reading, sequence), None)
+
+
+def _cut_reading(reading: GappedReading, sequence: str) -> GappedReading:
+    """A longer window's reading as the row itself shows it.
+
+    Kept are the alignment steps that use the row's own bases and the tag's
+    own positions.  The reading ends where an insertion pushes the tag's
+    bases past the row, or a deletion pulls in bases from past the tag, as
+    it does for a row read on its tag alone (gapped_alignment)."""
+    length = len(sequence)
+    template = reading.template[:length]
+    ops, end_read, end_ref = _cut_alignment(reading.ops, 0, length, length)
+    edits = sum(1 for kind, i, j in ops if kind != "M" or not _design_matches(sequence[i], template[j]))
+    return _reading_from_ops(sequence, template, ops, end_read, end_ref, edits)
+
+
+def _cut_alignment(ops, start: int, row_length: int, ref_length: int):
+    """The steps of an alignment among ``row_length`` row bases and ``ref_length`` template bases from
+    ``start`` on, counted from there: ``(ops, end_read, end_ref)`` as gapped_alignment gives them."""
+    kept = tuple(
+        (kind, i - start, j - start)
+        for kind, i, j in ops
+        if start <= i < start + row_length and start <= j < start + ref_length
+    )
+    end_read = sum(1 for kind, _, _ in kept if kind != "D")
+    end_ref = sum(1 for kind, _, _ in kept if kind != "I")
+    return kept, end_read, end_ref
 
 
 @functools.lru_cache(maxsize=65536)
@@ -2392,7 +2491,13 @@ def _load_cache(path: Path, sample: Sample, source_stat: os.stat_result) -> Opti
         # invalidates its cache without any content hashing on the hot path.
         if payload["source_size"] != source_stat.st_size or payload["source_mtime_ns"] != source_stat.st_mtime_ns:
             return None
-        counts = {(int(marker), sequence): int(count) for marker, sequence, count in payload["counts"]}
+        # A counts entry is [marker, tag, reads], followed by [bases, reads] for each continuation kept.
+        counts = {(int(marker), sequence): int(count) for marker, sequence, count, *_ in payload["counts"]}
+        continuations = {
+            (int(marker), sequence): [(bases, int(reads)) for bases, reads in kept]
+            for marker, sequence, _, *kept in payload["counts"]
+            if kept
+        }
         quality_support = {
             (int(marker), sequence): tuple(int(value) for value in values)
             for marker, sequence, *values in payload["quality_support"]
@@ -2413,6 +2518,7 @@ def _load_cache(path: Path, sample: Sample, source_stat: os.stat_result) -> Opti
             partial_quality_support=partial_quality_support,
             qc=payload["qc"],
             cache_hit=True,
+            continuations=continuations,
         )
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -2425,7 +2531,10 @@ def _write_cache(path: Path, result: SampleResult, source_stat: os.stat_result) 
         "source_size": source_stat.st_size,
         "source_mtime_ns": source_stat.st_mtime_ns,
         "qc": result.qc,
-        "counts": [[marker, sequence, count] for (marker, sequence), count in result.counts.items()],
+        "counts": [
+            [marker, sequence, count, *result.continuations.get((marker, sequence), ())]
+            for (marker, sequence), count in result.counts.items()
+        ],
         "quality_support": [
             [marker, sequence, *values]
             for (marker, sequence), values in result.quality_support.items()
@@ -2666,6 +2775,56 @@ def add_quality_support(
             support[key][quality_index] += 1
 
 
+def keeps_continuation(locus: Locus, tag: str, gap_band: int) -> bool:
+    """Whether the read pass keeps the bases that follow ``tag`` in its reads.
+
+    Only row_decision uses them, and only for a row whose target lies in
+    an unresolved end.  It compares such a row with the two canonical tags,
+    so theirs are kept too."""
+    if gap_band <= 0:
+        return False
+    return tag in (locus.ref_tag, locus.alt_tag) or _target_unread(locus, row_decision(locus, tag, gap_band))
+
+
+def pooled_continuations(results: Sequence[SampleResult]) -> Tuple[Dict[int, Dict[str, str]], int]:
+    """What follows each tag across the cohort: ``({marker index: {tag: bases}}, length)``.
+
+    Reads end at different places, so one continuation arrives at several
+    lengths.  All are cut to ``length``, the longest that
+    CONTINUATION_REACHED_BY of the reads reach; reads that stop short of it
+    are left out.  A tag then has a continuation when its commonest one has
+    CONTINUATION_MIN_READS reads and CONTINUATION_MIN_SHARE of the tag's
+    reads.  A tag followed by two sequences in turn (a paralog, a second
+    indel past the tag) has none.
+    """
+    found: Dict[Tuple[int, str], Counter] = defaultdict(Counter)
+    reads_by_length: Counter = Counter()
+    for result in results:
+        for key, kept in result.continuations.items():
+            for bases, reads in kept:
+                found[key][bases] += reads
+                reads_by_length[len(bases)] += reads
+    all_reads = sum(reads_by_length.values())
+    length = reaching = 0
+    for candidate in sorted(reads_by_length, reverse=True):
+        reaching += reads_by_length[candidate]
+        if reaching >= CONTINUATION_REACHED_BY * all_reads:
+            length = candidate
+            break
+    pooled: Dict[int, Dict[str, str]] = defaultdict(dict)
+    for (marker_index, tag), counts in found.items():
+        at_length: Counter = Counter()
+        for bases, reads in counts.items():
+            if len(bases) >= length:
+                at_length[bases[:length]] += reads
+        if not at_length:
+            continue
+        bases, reads = at_length.most_common(1)[0]
+        if reads >= CONTINUATION_MIN_READS and reads >= CONTINUATION_MIN_SHARE * sum(at_length.values()):
+            pooled[marker_index][tag] = bases
+    return dict(pooled), length
+
+
 def process_sample(
     sample: Sample,
     loci: Sequence[Locus],
@@ -2691,6 +2850,11 @@ def process_sample(
     whole-tag-clean read tallies is kept so quality thresholds can change
     later without touching the FASTQs again.  Reads shorter than the tag are
     collected separately for the optional partial-read stage.
+
+    A read longer than the tag also shows what follows it.  For the tags
+    row_decision can use that for (keeps_continuation), the commonest of
+    those continuations are kept with their read counts, from the tag's
+    third read in the sample on.
     """
     fastq_path = Path(sample.fastq)
     source_stat = fastq_path.stat()
@@ -2713,6 +2877,8 @@ def process_sample(
     # primer-less reads fail the trie walk cheaply and are not worth storing.
     full_decisions: Dict[str, Tuple[Tuple[int, ...], str]] = {}
     partial_decisions: Dict[str, Tuple[Tuple[int, ...], str]] = {}
+    continuations: Dict[Tuple[int, str], Counter] = defaultdict(Counter)
+    keepers: Dict[str, Tuple[int, ...]] = {}   # per tag, the markers that keep its continuation
     family_of = {member: family for family in settings.tile_families for member in family}
     for sequence, quality in fastq_records(fastq_path):
         qc["reads_total"] += 1
@@ -2779,6 +2945,17 @@ def process_sample(
             key = (marker_index, tag)
             exact_counts[key] += 1
             add_quality_support(exact_quality_support, key, quality[:settings.tag_length])
+        # What follows the tag is kept from the tag's third read on: most tags are read once or
+        # twice, and deciding whether to keep theirs (keeps_continuation) would cost an alignment each.
+        continuation = sequence[settings.tag_length : settings.tag_length + CONTINUATION_BASES]
+        if len(continuation) >= GAP_VERIFIED_SUFFIX and exact_counts[(markers[0], tag)] >= CONTINUATION_MIN_READS:
+            if tag not in keepers:
+                keepers[tag] = tuple(
+                    marker_index for marker_index in markers
+                    if keeps_continuation(loci[marker_index], tag, settings.gap_band)
+                )
+            for marker_index in keepers[tag]:
+                continuations[(marker_index, tag)][continuation] += 1
 
     resolve_n_tags(exact_counts, exact_quality_support, loci, qc)
     qc["unique_full_tags_raw"] = len(exact_counts)
@@ -2793,6 +2970,10 @@ def process_sample(
         },
         qc=dict(qc),
         cache_hit=False,
+        # A tag with an N is counted under the tag it resolves to and keeps no continuation.
+        continuations={
+            key: found.most_common(CONTINUATIONS_KEPT) for key, found in continuations.items() if key in exact_counts
+        },
     )
     if cache_path is not None:
         _write_cache(cache_path, result, source_stat)
@@ -3497,7 +3678,7 @@ def marker_type_label(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
 
 def _describe(
     ref: str, sequence: str, gap_band: int, gapped: bool, whole: bool = False, unresolved: Optional[Tuple[int, int]] = None,
-    against: Optional[str] = None,
+    against: Optional[str] = None, alignment=None,
 ):
     """Events of ``sequence`` against ``ref`` (the core of variant_events).
 
@@ -3528,7 +3709,14 @@ def _describe(
     of these two sequences.  The part before it is described end to end
     (both readings of the row agree on it), and one closing ``unresolved``
     event holds the Ref bases not read and the row's bases that stand
-    there."""
+    there.
+
+    ``alignment`` is an alignment of these two sequences that the caller
+    already has (``ops``, ``end_read``, ``end_ref`` as gapped_alignment
+    gives them).  It is written as it stands and none is made here: a row
+    that read continuation settled was read on more bases than it holds."""
+    if alignment is not None:
+        return _alignment_events(*alignment, ref, sequence)
     if against is not None and len(against) != len(ref):
         against = None
     if unresolved is not None:
@@ -3558,6 +3746,11 @@ def _describe(
             events.append(("overhang", len(ref) + 1, ".", sequence[shared:]))
         return events
     ops, end_read, end_ref, _ = gapped_alignment(sequence, ref if against is None else against, gap_band, whole)
+    return _alignment_events(ops, end_read, end_ref, ref, sequence)
+
+
+def _alignment_events(ops, end_read: int, end_ref: int, ref: str, sequence: str):
+    """The events of one alignment of ``sequence``, written against ``ref`` (see _describe and gapped_alignment)."""
     ops = _left_align(ops, sequence, ref)
     events = []
     k = 0
@@ -3600,15 +3793,19 @@ def _designed_events(ref: str, alt: str, gap_band: int):
     return tuple(_describe(ref, alt, gap_band, gapped=_reading(alt, ref, gap_band, guard=False) is not None))
 
 
-def _read_through_gaps(locus: Locus, sequence: str, gap_band: int) -> bool:
+def _read_through_gaps(
+    locus: Locus, sequence: str, gap_band: int, continuations: Optional[Mapping[str, str]] = None
+) -> bool:
     """Whether a row is described through gaps: every row of a marker whose
     own design is an indel, and otherwise a row with an accepted gapped
     reading (row_reading, the decision classification made)."""
     designed = _designed_events(locus.ref_tag, locus.alt_tag, gap_band)
-    return any(kind in ("ins", "del") for kind, *_ in designed) or row_reading(locus, sequence, gap_band) is not None
+    return any(kind in ("ins", "del") for kind, *_ in designed) or row_reading(locus, sequence, gap_band, continuations) is not None
 
 
-def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT):
+def variant_events(
+    locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT, continuations: Optional[Mapping[str, str]] = None
+):
     """Every event a row carries against the Ref tag, in 1-based tag coordinates.
 
     Returns ``(kind, position, ref_allele, alt_allele)`` tuples in tag order:
@@ -3634,15 +3831,26 @@ def variant_events(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT
     show the same base on the target.  A gap right after a substituted base
     is written without an anchor base (``32:CACG>.``, ``32:.>GG``), as a
     gap on the first base of the tag is.
+
+    A row that read continuation settled (row_decision with
+    ``continuations``) is written from that reading, cut to the row's own
+    bases.  Its alignment was made on more bases than the row holds, so it
+    is taken from the decision and not made again on the tag.
     """
+    reading, unresolved = row_decision(locus, sequence, gap_band, continuations)
+    from_alt = _read_from_alt(locus, sequence, gap_band, continuations)
+    if reading is not None and unresolved is None and (from_alt or reading.template == locus.ref_tag):
+        return _alignment_events(reading.ops, reading.end_read, reading.end_ref, locus.ref_tag, sequence)
     return _describe(
-        locus.ref_tag, sequence, gap_band, _read_through_gaps(locus, sequence, gap_band),
-        unresolved=unresolved_end(locus, sequence, gap_band),
-        against=locus.alt_tag if _read_from_alt(locus, sequence, gap_band) else None,
+        locus.ref_tag, sequence, gap_band, _read_through_gaps(locus, sequence, gap_band, continuations),
+        unresolved=unresolved_end(locus, sequence, gap_band, continuations),
+        against=locus.alt_tag if from_alt else None,
     )
 
 
-def _read_from_alt(locus: Locus, sequence: str, gap_band: int) -> bool:
+def _read_from_alt(
+    locus: Locus, sequence: str, gap_band: int, continuations: Optional[Mapping[str, str]] = None
+) -> bool:
     """Whether a row's accepted gapped reading was made against the Alt tag.
 
     row_decision reads a row from the Ref tag or from the Alt tag, whichever
@@ -3651,13 +3859,15 @@ def _read_from_alt(locus: Locus, sequence: str, gap_band: int) -> bool:
     Never on a marker whose own design is an indel: there the tags' positions
     differ past the designed gap, and every row is described by its alignment
     to the Ref tag (_read_through_gaps)."""
-    reading = row_reading(locus, sequence, gap_band)
+    reading = row_reading(locus, sequence, gap_band, continuations)
     if reading is None or reading.template != locus.alt_tag or locus.alt_tag == locus.ref_tag:
         return False
     return not any(kind in ("ins", "del") for kind, *_ in _designed_events(locus.ref_tag, locus.alt_tag, gap_band))
 
 
-def unresolved_end(locus: Locus, sequence: str, gap_band: int) -> Optional[Tuple[int, int]]:
+def unresolved_end(
+    locus: Locus, sequence: str, gap_band: int, continuations: Optional[Mapping[str, str]] = None
+) -> Optional[Tuple[int, int]]:
     """row_decision's unresolved stretch in the Ref tag's coordinates, as a row's Variants show it, or None.
 
     The decision counts positions on the canonical tag each reading was
@@ -3669,7 +3879,7 @@ def unresolved_end(locus: Locus, sequence: str, gap_band: int) -> Optional[Tuple
     written from, _read_through_gaps) puts under that base, moved back over
     any Ref bases deleted right before it.  A known designed indel does not
     settle another gap near the row's end."""
-    stretch = row_decision(locus, sequence, gap_band).unresolved
+    stretch = row_decision(locus, sequence, gap_band, continuations).unresolved
     if stretch is None or stretch[0] <= locus.variant_pos:
         return stretch
     if not any(kind in ("ins", "del") for kind, *_ in _designed_events(locus.ref_tag, locus.alt_tag, gap_band)):
@@ -3760,7 +3970,9 @@ def parse_variants(text: str, ref: str, sequence: str):
     return events
 
 
-def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT) -> str:
+def classify_sequence(
+    locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT, continuations: Optional[Mapping[str, str]] = None
+) -> str:
     """Classify an observed tag against the canonical Ref/Alt definitions.
 
     The Ref/Alt categories require exact sequence equality; per-row read
@@ -3780,7 +3992,8 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
     bases at the target, and neither is taken.  The
     variant-base comparison is IUPAC-aware on the design side only: an
     ambiguous observed base such as N is missing data, not evidence for
-    either allele, and classifies as Other.
+    either allele, and classifies as Other.  ``continuations`` are handed
+    to row_decision, which may settle an unresolved end with them.
     """
     if sequence == locus.ref_tag:
         return "Ref"
@@ -3791,7 +4004,7 @@ def classify_sequence(locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFA
         # The cheapest substitution-only reading over both canonicals is the
         # bound a gapped reading must beat; the reading itself is the one
         # accepted_gapped_reading gives, shared with the row's Variants.
-        best, unresolved = row_decision(locus, sequence, gap_band)
+        best, unresolved = row_decision(locus, sequence, gap_band, continuations)
         if unresolved is not None and locus.variant_pos >= unresolved[0]:
             return "Other"
         if best is not None:
@@ -3930,7 +4143,8 @@ def _cheapest_ops(row: str, template: str, gap_band: int, slack: Sequence[int] =
 
 
 def right_primer_cut(
-    locus: Locus, sequence: str, site: Optional[Tuple[int, str]], gap_band: int
+    locus: Locus, sequence: str, site: Optional[Tuple[int, str]], gap_band: int,
+    continuations: Optional[Mapping[str, str]] = None,
 ) -> Tuple[int, Optional[str]]:
     """How many bases after a row's left primer are the sample's own: ``(cut, kept)``.
 
@@ -3990,7 +4204,7 @@ def right_primer_cut(
             if primer_from(earlier, primer) and 2 <= sum(
                 1 for i in range(earlier, size) if i not in aligned or not _design_matches(body[i], template[aligned[i]])
             ):
-                reading = row_reading(locus, sequence, gap_band)   # where classification read the category
+                reading = row_reading(locus, sequence, gap_band, continuations)   # where classification read the category
                 category_base = locus.variant_pos if reading is None else reading.ref_to_read.get(locus.variant_pos)
                 if category_base is None or earlier > category_base - after_left:
                     cut, moved = earlier, True
@@ -4037,6 +4251,7 @@ def trim_locus_rows(
     site: Optional[Tuple[int, str]],
     gap_band: int,
     tally: Counter,
+    continuations: Optional[Mapping[str, str]] = None,
 ):
     """One marker's rows without their primers: ``(locus, rows, counts, readings)`` as the table shows them.
 
@@ -4056,9 +4271,11 @@ def trim_locus_rows(
     printed.
 
     ``readings`` gives ``_describe`` what the trimmed sequences no longer
-    show, as ``(gapped, whole, unresolved, against)`` per row (``against``:
-    the Alt row as printed when the category was read from the Alt tag, so
-    the row is described from the same reading).  ``gapped`` is the
+    show, as ``(gapped, whole, unresolved, against, alignment)`` per row
+    (``against``: the Alt row as printed when the category was read from
+    the Alt tag, so the row is described from the same reading;
+    ``alignment``: for a row that read continuation settled, the alignment
+    it was read from, cut to the bases shown).  ``gapped`` is the
     decision made on the full tag (_read_through_gaps): a primer that
     verified a gap is gone from the row, so the decision is carried, not
     made again.  ``whole`` marks a row that was cut at its right primer on
@@ -4071,19 +4288,31 @@ def trim_locus_rows(
     when the stretch lay in the primer that was cut from the Ref row.
     """
     after_left = len(locus.left_primer)
-    cuts = {sequence: right_primer_cut(locus, sequence, site, gap_band) for _, _, sequence in rows}
+    cuts = {sequence: right_primer_cut(locus, sequence, site, gap_band, continuations) for _, _, sequence in rows}
     without_primers = lambda sequence: sequence[after_left : after_left + cuts[sequence][0]]
     if without_primers(locus.ref_tag) == without_primers(locus.alt_tag):
         # right_primer_cut keeps the target base, so the canonical rows stay
         # distinct; if they ever would not, the marker keeps its right end.
         cuts = {sequence: (len(sequence) - after_left, None) for sequence in cuts}
         tally["markers_right_primer_kept"] += 1
+    def settled_alignment(sequence: str):
+        """The alignment read continuation settled a row with, among the bases shown; None for any other row."""
+        reading, unresolved = row_decision(locus, sequence, gap_band, continuations)
+        if reading is None or unresolved is not None or row_decision(locus, sequence, gap_band).unresolved is None:
+            return None
+        if reading.template != locus.ref_tag and not _read_from_alt(locus, sequence, gap_band, continuations):
+            return None   # read from the Alt tag of a designed indel: not in the Ref tag's positions
+        if any(kind != "M" for kind, i, j in reading.ops if i < after_left or j < after_left):
+            return None   # a gap in the left primer: the row and the Ref row as shown start at different bases
+        return _cut_alignment(reading.ops, after_left, cuts[sequence][0], cuts[locus.ref_tag][0])
+
     merged: Dict[str, List] = {}
     gapped: Dict[str, bool] = {}
     from_alt: Dict[str, bool] = {}   # the row whose category a printed row carries was read from the Alt tag
+    settled: Dict[str, object] = {}  # ... and the alignment it was settled with (settled_alignment)
     for _, category, sequence in rows:
         trimmed = without_primers(sequence)
-        gapped[trimmed] = gapped.get(trimmed, False) or _read_through_gaps(locus, sequence, gap_band)
+        gapped[trimmed] = gapped.get(trimmed, False) or _read_through_gaps(locus, sequence, gap_band, continuations)
         reads = counts[sequence]
         total = sum(reads)
         tally["rows_right_primer_removed"] += after_left + len(trimmed) < len(sequence)
@@ -4092,14 +4321,16 @@ def trim_locus_rows(
         entry = merged.get(trimmed)
         if entry is None:
             merged[trimmed] = [category, list(reads), total]
-            from_alt[trimmed] = _read_from_alt(locus, sequence, gap_band)
+            from_alt[trimmed] = _read_from_alt(locus, sequence, gap_band, continuations)
+            settled[trimmed] = settled_alignment(sequence)
             continue
         tally["rows_merged"] += 1
         tally["rows_merged_across_allele_groups"] += ALLELE_GROUP[category] != ALLELE_GROUP[entry[0]]
         entry[1] = [kept + added for kept, added in zip(entry[1], reads)]
         if entry[0] not in ("Ref", "Alt") and total > entry[2]:
             entry[0] = category
-            from_alt[trimmed] = _read_from_alt(locus, sequence, gap_band)
+            from_alt[trimmed] = _read_from_alt(locus, sequence, gap_band, continuations)
+            settled[trimmed] = settled_alignment(sequence)
         entry[2] = max(entry[2], total)
     shown = dataclasses.replace(
         locus,
@@ -4116,7 +4347,7 @@ def trim_locus_rows(
     ref_ends_at_primer = len(shown.ref_tag) < uncut or (site is not None and site[0] == len(locus.ref_tag))
     unresolved: Dict[str, Tuple[int, int]] = {}
     for _, _, sequence in rows:
-        stretch = unresolved_end(locus, sequence, gap_band)
+        stretch = unresolved_end(locus, sequence, gap_band, continuations)
         if stretch is None:
             continue
         trimmed = without_primers(sequence)
@@ -4138,7 +4369,7 @@ def trim_locus_rows(
     readings = {
         sequence: (
             gapped[sequence], ref_ends_at_primer and len(sequence) < uncut, unresolved.get(sequence),
-            shown.alt_tag if from_alt[sequence] else None,
+            shown.alt_tag if from_alt[sequence] else None, settled[sequence],
         )
         for sequence in merged
     }
@@ -4371,6 +4602,10 @@ def write_madc(
     above, then shown without their primers (trim_locus_rows): sequences,
     consensus, Variants and MarkerType are those of the trimmed rows, and
     rows that become identical are one row.
+
+    What the reads carry after their tags is pooled over the samples first
+    (pooled_continuations) and handed to every reading of a row, so a row
+    whose end the tag leaves unresolved can be settled (row_decision).
     """
     output.parent.mkdir(parents=True, exist_ok=True)
     observed: Dict[int, Counter] = defaultdict(Counter)
@@ -4396,6 +4631,8 @@ def write_madc(
     reads_in_emitted_rows = 0
     per_sample_emitted = [0] * len(results)
     unresolved_ends = {"rows": 0, "reads": 0, "rows_target_not_read": 0, "reads_target_not_read": 0}
+    continuations, bases_after_tag = pooled_continuations(results)
+    read_continuation = {"bases_after_tag": bases_after_tag, "rows_settled": 0, "reads_settled": 0}
     primer_tally: Counter = Counter()
     if options.remove_primers:
         geometry = amplicon_geometry(loci)
@@ -4410,6 +4647,7 @@ def write_madc(
         ]
         writer.writerow(header_columns + [result.sample.display_name for result in results])
         for locus in loci:
+            after_tag = continuations.get(locus.index)
             forced = {locus.ref_tag: "Ref", locus.alt_tag: "Alt"}
             sequences = set(forced)
             for sequence, count in observed.get(locus.index, {}).items():
@@ -4424,17 +4662,20 @@ def write_madc(
                     excluded[route]["reads"] += count
             rows = []
             for sequence in sequences:
-                category = forced.get(sequence) or classify_sequence(locus, sequence, gap_band)
+                category = forced.get(sequence) or classify_sequence(locus, sequence, gap_band, after_tag)
                 rows.append((ALLELE_TYPE_ORDER.get(category, 99), category, sequence))
-                stretch = row_decision(locus, sequence, gap_band).unresolved
+                stretch = row_decision(locus, sequence, gap_band, after_tag).unresolved
+                reads = observed[locus.index][sequence]
                 if stretch is not None:
                     # Counted on the full tags, so the tally is the same with and without primers.
-                    reads = observed[locus.index][sequence]
                     target_in_it = locus.variant_pos >= stretch[0]
                     unresolved_ends["rows"] += 1
                     unresolved_ends["reads"] += reads
                     unresolved_ends["rows_target_not_read"] += target_in_it
                     unresolved_ends["reads_target_not_read"] += reads * target_in_it
+                elif row_decision(locus, sequence, gap_band).unresolved is not None:
+                    read_continuation["rows_settled"] += 1   # its target is unread on the tag alone
+                    read_continuation["reads_settled"] += reads
             rows.sort(key=lambda row: (row[0], row[2]))
             counts_by_sequence = {
                 sequence: [result.counts.get((locus.index, sequence), 0) for result in results] for _, _, sequence in rows
@@ -4443,7 +4684,7 @@ def write_madc(
             if options.remove_primers:
                 # From here on ``locus`` is the marker as the table shows it.
                 locus, rows, counts_by_sequence, readings = trim_locus_rows(
-                    locus, rows, counts_by_sequence, primer_sites[locus.marker][0], gap_band, primer_tally
+                    locus, rows, counts_by_sequence, primer_sites[locus.marker][0], gap_band, primer_tally, after_tag
                 )
                 designed = _describe(locus.ref_tag, locus.alt_tag, gap_band, *readings[locus.alt_tag])
             type_serials = Counter()
@@ -4478,7 +4719,7 @@ def write_madc(
                 label = variants = "."
                 if options.annotations:
                     if readings is None:
-                        events = variant_events(locus, sequence, gap_band)
+                        events = variant_events(locus, sequence, gap_band, after_tag)
                     else:
                         events = _describe(locus.ref_tag, sequence, gap_band, *readings[sequence])
                     label = marker_type_label(locus, sequence, gap_band, events, designed)
@@ -4542,6 +4783,7 @@ def write_madc(
         "novel_rows_by_evidence_route": dict(route_counts),
         "excluded_novel": excluded,
         "unresolved_ends": unresolved_ends,
+        "read_continuation": read_continuation,
         "reads_in_emitted_rows": reads_in_emitted_rows,
         "per_sample_reads_in_emitted_rows": per_sample_emitted,
     }

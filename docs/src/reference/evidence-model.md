@@ -144,8 +144,31 @@ to the first base at which the two explanations differ, and no further:
 Reading such a row at the fixed offsets, as versions before this outcome did, writes its end as
 substitutions that no sample carries, and an insertion or deletion before the target can put the
 base of the other allele on the target. Reading it through the unverified gap is right more often
-but invents gaps in rows that have none. The row's own continuation past the tag would settle it,
-and a tag does not hold it.
+but invents gaps in rows that have none.
+
+**Read continuation.** A read longer than the tag shows what follows it, and that can settle a
+row whose target lies in an unresolved end. `generate` keeps the commonest bases after such a row
+and after the two canonical tags, and pools them over the samples. It then reads the row again on
+a longer window: the row, the Ref tag and the Alt tag, each followed by its own bases. This is the
+same decision on more bases, with three outcomes:
+
+- the gap stands, and the target is read through it;
+- the substitutions stand, and the target is read at the fixed offset;
+- the longer window settles nothing, and the row stays unresolved.
+
+The read pass keeps these bases from a tag's third read in a sample on, so a sample's first two
+reads of a tag are not counted. A tag's continuation counts when 3 of the kept reads and 60% of
+them carry it. The window must grow by at least 12 bases, and it must read the added bases with at
+most 2 substitutions.
+
+A settled row is written like any other row. Its `Variants` list the gap or the substitutions as
+far as the row's own bases go. A target that an insertion pushed past the tag is not in the row,
+so the row stays `Other`. A row whose target the tag already reads is never asked, so its category
+cannot change.
+
+Read continuation needs reads that run at least 12 bases past the tag. Reads written by
+`normalize-reads` end at the tag, so it does not act on them. The QC JSON reports the length
+compared and the rows settled under `output_summary.read_continuation`.
 
 With `--gapped-rescue off`, both classification and annotation use the fixed offsets. Many indel
 reads fail assignment, but some still pass the substitution-only identity limit. Those rows can

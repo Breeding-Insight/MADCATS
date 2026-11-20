@@ -28,6 +28,20 @@ Notable changes by version. Measurements behind each change are in the
   0.13% and the substitutions written that no haplotype carries from 108,592 to 8,312, while 1.0%
   fewer rows are counted for the right allele. Rows without the token are written as before,
   except a few whose counts change because the pooled denoiser groups rows by category.
+- `generate` settles a row whose target lies in an unresolved end with the bases its reads carry
+  after the tag (read continuation). The read pass keeps the commonest of those bases for such
+  rows and for the two canonical tags. The row is then decided again on the longer window: it is
+  read through its gap or as substitutions and written like any other row, or it stays unresolved.
+  A target that an insertion pushed past the tag stays `Other`. Reads must run at least 12 bases
+  past the tag, so reads that end at the tag, and reads from `normalize-reads`, give the same table
+  as before. The QC JSON gains `read_continuation`. The cache format changed: existing caches are
+  rebuilt once. On three sets of simulated haplotypes the rows counted for the right allele rise
+  from 91.7% to 94.8% (v0.13: 92.2%) and unread rows fall from 3.2% to 0.06%; rows counted for the
+  wrong allele stay at 0.14% (v0.13: 1.15%). On pecan 149 rows are settled and 124 of them gain an
+  allele; on sweetpotato 45 and 31. No other row of those tables changes, and no read count. With
+  `--remove-primers on`, 7 of the settled pecan rows are cut at their right primer before the
+  target, like the rows named below. A run takes 4% to 7% longer on these cohorts and the cache
+  grows by 2% to 3%.
 - `generate` reads a row from the Alt tag when the Ref tag and the Alt tag explain it through gaps
   in the same number of edits and the Alt tag needs fewer separate gaps. Before, the Ref tag's
   alignment was used on every such tie. An Alt haplotype with one insertion or deletion beside its

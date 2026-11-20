@@ -3976,16 +3976,17 @@ def category_base(
     """Which base of a row its category is read from, as an index into the row; None when it shows none.
 
     The fixed offset, or where the row's accepted gapped reading puts the
-    target (row_decision).  None for a target inside a deletion, pushed
-    past the row, or in an unresolved end.  classify_sequence names the
+    target (row_decision).  None for a target inside a deletion, past the
+    row's end, or in an unresolved end.  classify_sequence names the
     category from this base and right_primer_cut never removes it.
     """
     decision = row_decision(locus, sequence, gap_band, continuations)
     if _target_unread(locus, decision):
         return None
     if decision.reading is None:
-        return locus.variant_pos
-    index = decision.reading.ref_to_read.get(locus.variant_pos)
+        index = locus.variant_pos
+    else:
+        index = decision.reading.ref_to_read.get(locus.variant_pos)
     return index if index is not None and index < len(sequence) else None
 
 

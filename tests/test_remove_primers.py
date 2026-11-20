@@ -283,6 +283,16 @@ class CutTests(unittest.TestCase):
         early = dataclasses.replace(locus, variant_pos=LEFT + TARGET, alt_tag=tag_of(parts, substituted(insert, TARGET)))
         self.assertEqual(self.trimmed(early, row, site), (row[LEFT : LEFT + INSERT - 2], None))
 
+    def test_row_that_ends_before_its_target_has_no_category_base(self):
+        # generate never writes such a row: a row is a whole tag.  The functions still answer for
+        # one.  It shows no base on the target, so it is Other and no primer is kept for it.
+        locus = self.loci[0]
+        short = locus.ref_tag[: locus.variant_pos]
+        for gap_band in (GAP_BAND, 0):
+            self.assertIsNone(mp.category_base(locus, short, gap_band))
+            self.assertEqual(mp.classify_sequence(locus, short, gap_band), "Other")
+        self.assertEqual(self.trimmed(locus, short), (short[LEFT:], None))
+
 
 class DescriptionTests(unittest.TestCase):
     """Events of rows of another length than their Ref row, as a table without primers has them."""

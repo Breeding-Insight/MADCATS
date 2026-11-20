@@ -1785,16 +1785,23 @@ class TablesWithoutPrimersTests(CommandTestCase):
         ref_only = [call.MadcRow("M1|Ref", "Ref", REF_TAG[8:26], (1,))]
         self.assertEqual(call.design_as_written(design, ref_only), (REF_TAG[8:26], "", 4))
 
-    def test_variants_cell_that_generate_did_not_write_is_not_used(self):
+    def test_variants_cell_that_cannot_be_read_is_not_replaced_by_a_guess(self):
+        # The cell may hold a token a later ``generate`` writes.  The row is left unread and
+        # counted; its events are never derived from the sequences in the cell's place.
         locus = madcats.Locus(0, "M1", "", "", "G", "C", 3, REF_TAG[8:26], ALT_TAG[8:26])
         with_site = REF_TAG_SITE_20[8:26]
-        for cell in ("NA", "0.25", "12:G", "x:G>T"):
+        for cell in ("NA", "0.25", "12:G", "x:G>T", "12:G>T;someday=3"):
             row = call.MadcRow("M1|RefMatch", "RefMatch", with_site, (1,), cell)
-            self.assertIsNone(call.table_events(row, locus.ref_tag), cell)
-            self.assertEqual(call.read_row(locus, row, 10).substitutions, {12: "T"}, cell)
-            # ... and a row of another length with such a cell is not read at all.
+            self.assertIs(call.table_events(row, locus.ref_tag), call.NOT_UNDERSTOOD, cell)
+            reading = call.read_row(locus, row, 10)
+            self.assertFalse(reading.understood, cell)
+            self.assertFalse(reading.comparable, cell)
+            self.assertIsNone(reading.base_at(12), cell)
             shorter = call.MadcRow("M1|RefMatch", "RefMatch", with_site[:-2], (1,), cell)
             self.assertFalse(call.read_row(locus, shorter, 10).comparable, cell)
+        # A row without the cell is still read from the sequences.
+        bare = call.MadcRow("M1|RefMatch", "RefMatch", with_site, (1,), None)
+        self.assertEqual(call.read_row(locus, bare, 10).substitutions, {12: "T"})
 
 
 class HaplotypeVcfTests(CommandTestCase):

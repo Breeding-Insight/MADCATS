@@ -79,6 +79,9 @@ def rebuild(ref, events):
         elif kind == "overhang":
             out.append(ref[done:] + alt_allele)
             done = len(ref)
+        elif kind == "unresolved":   # the Ref bases from here on are not read: the row's own bases stand there
+            out.append(ref[done:start] + alt_allele)
+            done = len(ref)
         else:
             out.append(ref[done:start] + alt_allele.replace(".", ""))
             done = start + len(ref_allele.replace(".", ""))

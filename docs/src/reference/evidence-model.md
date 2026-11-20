@@ -116,18 +116,45 @@ explains the row with fewer edits, stays within the substitution and gap limits,
 at least 12 bases after its last gap, the target base comes from that alignment instead. A target
 inside a deletion, or pushed past the end of the read, is `Other`.
 
+The row is aligned to the Ref tag and to the Alt tag, and the alignment with fewer edits is used.
+When both need the same number of edits, the one with fewer separate gaps is used. An Alt haplotype
+with one insertion beside its target is then read as that, and not as a Ref haplotype with two
+insertions around the target. When the two are equal in gaps as well, the Ref tag's is used.
+
 This applies even to a row whose reads passed the substitution-only assignment check. An upstream
 insertion moves the target farther along the observed sequence; a deletion moves it earlier.
 The `Variants` annotation uses the same decision about whether to read through gaps, and reports
-events in the Ref tag's coordinates, with equivalent indel placements left-normalised.
+events in the Ref tag's coordinates, with equivalent indel placements left-normalised. A row read
+from the Alt tag is written from that alignment too, so its `Variants` list the designed
+substitution and its gaps where the category was read, and the two show the same base on the
+target.
+
+**An unresolved end.** A gapped alignment can explain a row with fewer edits and still have fewer
+than 12 bases after its last gap. The row's end then has two explanations, a gap or a run of
+substitutions, and too few bases to tell them apart. `generate` takes neither. It reads the row up
+to the first base at which the two explanations differ, and no further:
+
+- a target at or after that base is `Other`, because the two explanations can put different bases
+  on it;
+- a target before it is read as usual;
+- the row's `Variants` close with `unresolved=k`, and its `MarkerType` is `unresolved`
+  (see [Output Formats](output-formats.md));
+- the QC JSON counts such rows and their reads under `output_summary.unresolved_ends`.
+
+Reading such a row at the fixed offsets, as versions before this outcome did, writes its end as
+substitutions that no sample carries, and an insertion or deletion before the target can put the
+base of the other allele on the target. Reading it through the unverified gap is right more often
+but invents gaps in rows that have none. The row's own continuation past the tag would settle it,
+and a tag does not hold it.
 
 With `--gapped-rescue off`, both classification and annotation use the fixed offsets. Many indel
 reads fail assignment, but some still pass the substitution-only identity limit. Those rows can
 receive the wrong biological category, and an indel can appear as several substitutions. Turning
-rescue off is therefore not an indel-safe way to classify target alleles. Even with rescue on,
-a gap that fails the acceptance checks falls back to fixed offsets; repeats and gaps near the
-tag end can remain unresolved. Agreement between a category and its annotation is not independent
-proof of the biological event.
+rescue off is therefore not an indel-safe way to classify target alleles, and it writes no
+`unresolved` rows. Even with rescue on, a gap that is no cheaper than substitutions or that fails
+the substitution and gap limits is read at the fixed offsets, and so is a deletion longer than
+`--max-indel-length`. Agreement between a category and its annotation is not independent proof of
+the biological event.
 
 `--remove-primers on` acts after classification and preserves that decision. It changes the
 printed sequences and annotation coordinates, not how the target was identified. Identical

@@ -13,6 +13,39 @@ Notable changes by version. Measurements behind each change are in the
   the left primer. Reads are still assigned, counted, denoised and classified on the full tags,
   so a row keeps its category. The QC JSON gains `primer_removal`. The default is `off`, and the
   table written with `off` is unchanged.
+- `generate` leaves the end of a row unresolved when a gapped alignment explains the row with
+  fewer edits than substitutions but has fewer than 12 bases after its last gap. Such a row was
+  read at the fixed offsets: its end was written as substitutions, and an insertion or deletion
+  before the target could put the other allele's base on the target. It is now read up to the
+  first base at which the two explanations differ. A target at or after that base is `Other`.
+  `Variants` closes with the new token `unresolved=k` (the last `k` Ref bases are not read in this
+  row), `MarkerType` has the new value `unresolved`, the sidecar the new `Type` `unresolved`, and
+  the QC JSON counts the rows under `unresolved_ends`. `--remove-primers on` carries the decision
+  into the rows as printed. This changes the default table. On pecan, sweetpotato, alfalfa and
+  blackberry 2.2% to 3.2% of rows get the token (0.7% to 2.0% of reads), and 0.12% to 0.22% of
+  reads move from `RefMatch` or `AltMatch` to `Other`; none moves to the other allele. On three
+  sets of simulated haplotypes the rows counted for the wrong target allele fall from 1.2% to
+  0.13% and the substitutions written that no haplotype carries from 108,592 to 8,312, while 1.0%
+  fewer rows are counted for the right allele. Rows without the token are written as before,
+  except a few whose counts change because the pooled denoiser groups rows by category.
+- `generate` reads a row from the Alt tag when the Ref tag and the Alt tag explain it through gaps
+  in the same number of edits and the Alt tag needs fewer separate gaps. Before, the Ref tag's
+  alignment was used on every such tie. An Alt haplotype with one insertion or deletion beside its
+  target was then counted as `RefMatch` (the Ref tag with two gaps around the target) or as `Other`
+  (the target inside a deletion). Such rows are now `AltMatch`. Rows whose two alignments are equal
+  in edits and in gaps still use the Ref tag's. On pecan, sweetpotato, alfalfa and blackberry 0.03%
+  to 0.10% of rows change category (0.002% to 0.04% of reads), all of them to `AltMatch`.
+- `Variants` of a row whose category was read from the Alt tag is written from that same alignment,
+  in the Ref tag's coordinates. Before, it was always the row's own alignment to the Ref tag. That
+  alignment has no reason to put the Alt base on the target: it could split one gap in two, or put
+  the target inside a deletion, and `Variants` then showed the target unchanged or deleted on an
+  `AltMatch` row. An insertion or deletion right after a substituted base is written without an
+  anchor base (`31:G>A;32:CACG>.`), as one on the first base of a tag already was, because the
+  substitution uses that base; `call` reads this form. `--remove-primers on` writes the rows from
+  the same reading. On pecan, sweetpotato, alfalfa and blackberry 0.07% to 0.25% of rows get other
+  `Variants` (28 to 75 rows), and with primers kept no row is left whose `Variants` and category
+  put different bases on the target. Without primers 16 to 31 rows per panel still do: rows cut at
+  their right primer to another length than the Ref row. Categories and counts do not change.
 - `Variants` writes an insertion or deletion on the very first base of a tag without an anchor
   base (`1:.>GG`, `1:TT>.`). Before, it borrowed the base after it, which another event could use
   as well, and the row then could not be rebuilt from its `Variants`. A tag that starts with a

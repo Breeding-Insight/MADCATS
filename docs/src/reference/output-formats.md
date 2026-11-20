@@ -45,11 +45,15 @@ column *positions* are unchanged, so positional consumers see the same 16-column
 | `snp` | Substitutions only (the Alt row of a designed SNP is `snp`) |
 | `indel` | Gaps only (the Alt row of a designed indel is `indel`) |
 | `both` | Substitutions and gaps |
+| `unresolved` | The row's end is not read (`unresolved=k` in `Variants`), whatever the row carries before it. A gap there is likely but unverified |
 
-To keep SNP-only microhaplotypes, drop `indel` and `both` rows by this label.
+To keep SNP-only microhaplotypes, drop `indel`, `both` and `unresolved` rows by this label.
 
 **`Variants`** lists the row's events against the Ref tag, `;`-separated, in 1-based coordinates on
-the tag as printed:
+the tag as printed. They come from the alignment the row's category was read from, so the two show
+the same base on the target. One exception: in a table without primers, a row cut at its right
+primer to another length than the Ref row is aligned end to end, which can differ from the reading
+its category came from.
 
 | Token | Meaning |
 |-------|---------|
@@ -58,15 +62,28 @@ the tag as printed:
 | `70:TAG>T` | Deletion |
 | `clip=4` | An insertion pushed the last 4 Ref bases out of the window |
 | `overhang=3` | A deletion pulled 3 downstream bases into the window |
+| `unresolved=9` | The last 9 Ref bases are not read in this row. Its end has two explanations, a gap or substitutions, with too few bases after the gap to tell them apart ([Classification](evidence-model.md#classification)). Always the last token |
 | `1:.>GG`, `1:TT>.` | An insertion before the very first base, or a deletion that starts on it. No base precedes it, so it is written without an anchor base, and `.` stands for no bases. Here `GG` is inserted before base 1, and bases 1 and 2 are deleted |
+| `31:G>A;32:CACG>.`, `31:G>A;32:.>TT` | An insertion or deletion right after a substituted base. The substitution uses that base, so the gap is written without an anchor base as well, from its own first base. Here bases 32 to 35 are deleted, or `TT` is inserted before base 32. It appears on a row that carries the Alt base with a gap directly after it |
 
 An example value is `55:C>CAAAA;91:A>T;clip=4`. The Ref row is `.`, and the Alt row of a designed SNP
 is exactly the design (e.g. `46:C>G`).
 
 Each `position:REF>ALT` token reads "replace these Ref bases, starting at this position, by these
 bases". `clip=k` drops the last `k` Ref bases, and `overhang=k` appends the row's own last `k`
-bases. No two tokens of a row use the same Ref base, so applying them in order rebuilds the row
-from the Ref row.
+bases. `unresolved=k` drops the last `k` Ref bases too, and then appends whatever of the row has
+not been built yet. No two tokens of a row use the same Ref base, so applying them in order
+rebuilds the row from the Ref row.
+
+On a marker whose own design is an insertion or deletion, every row is written through gaps
+against the Ref row, and the unread end is counted on the Ref row as everywhere else. The designed
+insertion or deletion does not settle another gap near the row's end.
+
+A row with `unresolved=k` says nothing about Ref positions from `length - k + 1` on: no
+substitution, no insertion or deletion, and no agreement with the Ref row either. A consumer that
+counts reads per position should leave the row's reads out there, as it does for `clip`.
+A reader that does not know a token should not guess the row from its sequence: the token states
+something about the row that the sequence alone does not show.
 
 With `--remove-primers on` the frame is the Ref row as printed, so position 1 is the first base
 after the left primer. Whether a row is read through an insertion or deletion is decided on its
@@ -76,6 +93,11 @@ compared with the Ref row end to end. A difference at its end is then an inserti
 Every other row is a fixed-length window and keeps `clip` and `overhang`. A row that differs from
 the Ref row in length by more than `--max-indel-length` is compared base by base from its start,
 and the rest is `clip` or `overhang`.
+
+An unresolved end is decided on the full tag as well, and carried: the row keeps `unresolved=k`,
+counted on the Ref row as printed, whatever length it was cut to. A right primer found at another
+place shows that the row gained or lost bases, not which reading of its end was right. Only an
+unread stretch that lay wholly in the primer cut from the Ref row leaves nothing to mark.
 
 ## Variants Sidecar
 
@@ -87,7 +109,7 @@ and the rest is `clip` or `overhang`.
 | `CloneID`, `AlleleID`, `AlleleSequence` | Row identity |
 | `Position` | 1-based position on the Ref tag |
 | `Ref`, `Alt` | Event alleles |
-| `Type` | `snp`, `ins`, `del`, `clip` (Ref holds the unobserved bases) or `overhang` (Alt holds the pulled-in bases) |
+| `Type` | `snp`, `ins`, `del`, `clip` (Ref holds the unobserved bases), `overhang` (Alt holds the pulled-in bases) or `unresolved` (Position is the first Ref base not read, Ref the Ref bases from it on, Alt the row's bases that stand there) |
 
 ## QC / Provenance JSON
 
@@ -99,6 +121,9 @@ and the rest is `clip` or `overhang`.
 - the tile families (`tile_families`) and the extra credits they add (`tile_extra_credits_*`,
   described in [Read Accounting](evidence-model.md#read-accounting))
 - row counts by category, by evidence route, and by `marker_types`
+- `unresolved_ends`: the rows whose end is not read and their reads, and how many of them have the
+  target in that end (those rows are `Other`). Counted on the full tags, so it is the same with and
+  without `--remove-primers on` and with `--annotations off`
 - the variants sidecar path
 - with `--remove-primers on`, `primer_removal`: the panel's amplicon length, the markers by whether
   their right primer was located (and if not, why), the rows that were merged, the rows that lost

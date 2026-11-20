@@ -156,8 +156,10 @@ same decision on more bases, with three outcomes:
 - the substitutions stand, and the target is read at the fixed offset;
 - the longer window settles nothing, and the row stays unresolved.
 
-A tag's continuation counts when 3 reads and 60% of its reads carry it. The window must grow by at
-least 12 bases, and it must read the added bases with at most 2 substitutions.
+The read pass keeps these bases from a tag's third read in a sample on, so a sample's first two
+reads of a tag are not counted. A tag's continuation counts when 3 of the kept reads and 60% of
+them carry it. The window must grow by at least 12 bases, and it must read the added bases with at
+most 2 substitutions.
 
 A settled row is written like any other row. Its `Variants` list the gap or the substitutions as
 far as the row's own bases go. A target that an insertion pushed past the tag is not in the row,

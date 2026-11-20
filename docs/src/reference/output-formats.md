@@ -124,6 +124,9 @@ unread stretch that lay wholly in the primer cut from the Ref row leaves nothing
 - `unresolved_ends`: the rows whose end is not read and their reads, and how many of them have the
   target in that end (those rows are `Other`). Counted on the full tags, so it is the same with and
   without `--remove-primers on` and with `--annotations off`
+- `read_continuation`: the number of bases after the tag that reads were compared over
+  (`bases_after_tag`, 0 when reads end at the tag), and the rows and reads whose unread target
+  they settled ([Classification](evidence-model.md#classification))
 - the variants sidecar path
 - with `--remove-primers on`, `primer_removal`: the panel's amplicon length, the markers by whether
   their right primer was located (and if not, why), the rows that were merged, the rows that lost

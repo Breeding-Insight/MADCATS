@@ -160,9 +160,10 @@ What to know before using it:
   usual cause, because in a fixed-length tag it looks like substitutions. A cut at the designed
   position in a row whose last 8 bases and primer bases are as designed was wrong in 0.2% to 0.3%
   of rows, and any other cut in 3% to 5%.
-- **A row keeps its right primer** when the cut would remove the target base or leave fewer than
-  10 bases. The QC JSON counts these rows. Its count of rows that lost right-primer bases
-  (`rows_right_primer_removed`) includes the Ref and Alt rows of markers without reads.
+- **A row keeps its right primer** when the cut would remove the base its category was read from,
+  or leave fewer than 10 bases. A row whose target is not read has no such base and is cut where
+  its primer is found. The QC JSON counts these rows. Its count of rows that lost right-primer
+  bases (`rows_right_primer_removed`) includes the Ref and Alt rows of markers without reads.
 - **Merged rows of different categories.** When rows of two categories become the same sequence,
   the row takes the category of the one with the most reads, or Ref or Alt if one of them is the
   canonical row. The QC JSON counts these merges (`rows_merged_across_allele_groups`). They are the

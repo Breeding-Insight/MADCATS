@@ -38,10 +38,8 @@ Notable changes by version. Measurements behind each change are in the
   rebuilt once. On three sets of simulated haplotypes the rows counted for the right allele rise
   from 91.7% to 94.8% (v0.13: 92.2%) and unread rows fall from 3.2% to 0.06%; rows counted for the
   wrong allele stay at 0.14% (v0.13: 1.15%). On pecan 149 rows are settled and 124 of them gain an
-  allele; on sweetpotato 45 and 31. No other row of those tables changes, and no read count. With
-  `--remove-primers on`, 7 of the settled pecan rows are cut at their right primer before the
-  target, like the rows named below. A run takes 4% to 7% longer on these cohorts and the cache
-  grows by 2% to 3%.
+  allele; on sweetpotato 45 and 31. No other row of those tables changes, and no read count. A
+  run takes 4% to 7% longer on these cohorts and the cache grows by 2% to 3%.
 - `generate` reads a row from the Alt tag when the Ref tag and the Alt tag explain it through gaps
   in the same number of edits and the Alt tag needs fewer separate gaps. Before, the Ref tag's
   alignment was used on every such tie. An Alt haplotype with one insertion or deletion beside its
@@ -58,8 +56,19 @@ Notable changes by version. Measurements behind each change are in the
   substitution uses that base; `call` reads this form. `--remove-primers on` writes the rows from
   the same reading. On pecan, sweetpotato, alfalfa and blackberry 0.07% to 0.25% of rows get other
   `Variants` (28 to 75 rows), and with primers kept no row is left whose `Variants` and category
-  put different bases on the target. Without primers 16 to 31 rows per panel still do: rows cut at
-  their right primer to another length than the Ref row. Categories and counts do not change.
+  put different bases on the target. Without primers up to 27 rows per panel still do, nearly all
+  of them rows of another length than the Ref row, which are read again as printed. Categories and
+  counts do not change.
+- `generate --remove-primers on` no longer cuts off the base a row's category was read from. The cut
+  placed the target with its own alignment, which could differ from the row's reading. The row then
+  lost that base, and its `Variants` showed no base or another one on the target. Such a row now
+  keeps its right primer: 14 rows on pecan and 5 on alfalfa, none on sweetpotato or blackberry. A
+  row whose target is not read has no such base and is cut where its primer is found: 10 rows on
+  pecan, 17 on alfalfa, 3 on sweetpotato and 1 on blackberry, all `Other`. No row merges or splits,
+  and no read moves between alleles. Rows whose category and `Variants` disagree fall from 37 to 27
+  on pecan and from 22 to 18 on alfalfa. Against pecan's full reads, 7 of the 14 rows are now cut
+  right or closer. In the other 7 the old cut was right or one base off: their category had been
+  read from a primer base. Tables written with primers are unchanged.
 - `Variants` writes an insertion or deletion on the very first base of a tag without an anchor
   base (`1:.>GG`, `1:TT>.`). Before, it borrowed the base after it, which another event could use
   as well, and the row then could not be rebuilt from its `Variants`. A tag that starts with a

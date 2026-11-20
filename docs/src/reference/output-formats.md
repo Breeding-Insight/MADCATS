@@ -51,9 +51,9 @@ To keep SNP-only microhaplotypes, drop `indel`, `both` and `unresolved` rows by 
 
 **`Variants`** lists the row's events against the Ref tag, `;`-separated, in 1-based coordinates on
 the tag as printed. They come from the alignment the row's category was read from, so the two show
-the same base on the target. One exception: in a table without primers, a row cut at its right
-primer to another length than the Ref row is aligned end to end, which can differ from the reading
-its category came from.
+the same base on the target. One exception: in a table without primers, a row of another length
+than the Ref row is read again as printed, which can differ from the reading its category came
+from. The row still holds the base its category was read from.
 
 | Token | Meaning |
 |-------|---------|

@@ -3970,6 +3970,25 @@ def parse_variants(text: str, ref: str, sequence: str):
     return events
 
 
+def category_base(
+    locus: Locus, sequence: str, gap_band: int, continuations: Optional[Mapping[str, str]] = None
+) -> Optional[int]:
+    """Which base of a row its category is read from, as an index into the row; None when it shows none.
+
+    The fixed offset, or where the row's accepted gapped reading puts the
+    target (row_decision).  None for a target inside a deletion, pushed
+    past the row, or in an unresolved end.  classify_sequence names the
+    category from this base and right_primer_cut never removes it.
+    """
+    decision = row_decision(locus, sequence, gap_band, continuations)
+    if _target_unread(locus, decision):
+        return None
+    if decision.reading is None:
+        return locus.variant_pos
+    index = decision.reading.ref_to_read.get(locus.variant_pos)
+    return index if index is not None and index < len(sequence) else None
+
+
 def classify_sequence(
     locus: Locus, sequence: str, gap_band: int = GAP_BAND_DEFAULT, continuations: Optional[Mapping[str, str]] = None
 ) -> str:
@@ -3999,19 +4018,9 @@ def classify_sequence(
         return "Ref"
     if sequence == locus.alt_tag:
         return "Alt"
-    index = locus.variant_pos
-    if gap_band > 0:
-        # The cheapest substitution-only reading over both canonicals is the
-        # bound a gapped reading must beat; the reading itself is the one
-        # accepted_gapped_reading gives, shared with the row's Variants.
-        best, unresolved = row_decision(locus, sequence, gap_band, continuations)
-        if unresolved is not None and locus.variant_pos >= unresolved[0]:
-            return "Other"
-        if best is not None:
-            mapped = best.ref_to_read.get(locus.variant_pos)
-            if mapped is None or mapped >= len(sequence):
-                return "Other"
-            index = mapped
+    index = category_base(locus, sequence, gap_band, continuations)
+    if index is None:
+        return "Other"
     base = sequence[index]
     if len(IUPAC_BASES.get(base, frozenset(base))) != 1:
         return "Other"
@@ -4150,8 +4159,8 @@ def right_primer_cut(
 
     The row without its primers is ``sequence[len(left primer):][:cut]``.
     ``kept`` is None, or why a right primer found in the row stays in it:
-    "target" (the cut would remove the target base) or "short" (fewer than
-    TRIM_MIN_BASES bases would remain).
+    "target" (the cut would remove the base the row's category was read
+    from) or "short" (fewer than TRIM_MIN_BASES bases would remain).
 
     A row is a fixed-length window of its amplicon, so an insertion moves
     the right primer toward the row's end and a deletion brings more of it
@@ -4164,8 +4173,7 @@ def right_primer_cut(
     and the reading leaves two or more bases from there on unexplained.
     An insertion: the bases at the cut are not the primer's (two or more
     differ), and the row reads exactly as primer from up to ``gap_band``
-    bases later.  Neither rule moves the cut onto the base the row's
-    category was read from.
+    bases later.
 
     Last, the primer is looked for directly, in a row whose cut does not
     read as primer and in every row of a marker without a site: whole, or
@@ -4175,17 +4183,26 @@ def right_primer_cut(
     ``gap_band`` allows for.  The whole primer is not looked for on a
     marker whose own Ref tag holds a copy of it before the site: there a
     copy in a row is the insert's, not the end of a shorter product.
+
+    No cut removes the base the row's category was read from
+    (category_base).  The alignment made here to find the primer can put
+    the target elsewhere, so it is not asked.  A row whose target is not
+    read has no such base, and is cut wherever its primer is found.
     """
     after_left = len(locus.left_primer)
     body = sequence[after_left:]
     size = len(body)
     cut = size
+    read_from = category_base(locus, sequence, gap_band, continuations)
 
     def primer_from(index: int, primer: str) -> bool:
         """body[index:] is exactly the start of ``primer``."""
         return size - index <= len(primer) and tag_mismatches(body[index:], primer[: size - index]) == 0
 
-    ops = None
+    def removes_category_base(index: int) -> bool:
+        """A cut at ``index`` takes the base the row's category was read from."""
+        return read_from is not None and index <= read_from - after_left
+
     primers: Tuple[str, ...] = ()
     if site is not None:
         start, primer = site
@@ -4204,11 +4221,8 @@ def right_primer_cut(
             if primer_from(earlier, primer) and 2 <= sum(
                 1 for i in range(earlier, size) if i not in aligned or not _design_matches(body[i], template[aligned[i]])
             ):
-                reading = row_reading(locus, sequence, gap_band, continuations)   # where classification read the category
-                category_base = locus.variant_pos if reading is None else reading.ref_to_read.get(locus.variant_pos)
-                if category_base is None or earlier > category_base - after_left:
+                if not removes_category_base(earlier):
                     cut, moved = earlier, True
-                    ops = tuple(op for op in ops if op[1] < cut)
                 break
         at_cut = body[cut : cut + len(primer)]
         if not moved and size - cut >= 2 and tag_mismatches(at_cut, primer[: len(at_cut)]) >= 2:
@@ -4217,7 +4231,6 @@ def right_primer_cut(
                 if later > size - 2:
                     break
                 if primer_from(later, primer):
-                    ops = tuple(op for op in ops if op[1] < cut)
                     cut = later
                     break
     elif locus.right_primer:
@@ -4234,10 +4247,7 @@ def right_primer_cut(
                 cut = hit
                 break
     if cut < size:
-        if ops is None:
-            ops = _cheapest_ops(body, locus.ref_tag[after_left:], gap_band)
-        target = next((i for kind, i, j in ops if kind == "M" and j == locus.variant_pos - after_left), None)
-        if target is not None and cut <= target:
+        if removes_category_base(cut):
             return size, "target"
         if cut < TRIM_MIN_BASES:
             return size, "short"

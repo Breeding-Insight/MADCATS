@@ -258,6 +258,31 @@ class CutTests(unittest.TestCase):
         few_bases = tag_of(parts, parts[1][: mp.TRIM_MIN_BASES - 1])
         self.assertEqual(self.trimmed(early_target, few_bases), (whole(few_bases), "short"))
 
+    def test_row_keeps_the_base_its_category_was_read_from(self):
+        # A diverged haplotype: seven substitutions, and two bases missing shortly before the
+        # target, which is the last insert base but one.  Seven substitutions are too many for a
+        # gapped reading, so the row is read at the fixed offsets.  There its first primer base
+        # stands on the target, and that base is the Alt base.  The alignment that finds the
+        # primer reads the deletion and places the target two bases earlier, so it would cut
+        # the primer off together with the base the category was read from.
+        rng = random.Random(2)
+        parts = left, insert, right = dna(rng, LEFT), dna(rng, INSERT), dna(rng, RIGHT)
+        target = INSERT - 2
+        alt_insert = insert[:target] + right[0] + insert[target + 1 :]
+        locus = mp.Locus(0, "m", left, right, insert[target], right[0], LEFT + target, tag_of(parts, insert), tag_of(parts, alt_insert))
+        diverged = insert
+        for index in range(1, 20, 3):
+            diverged = substituted(diverged, index)
+        row = tag_of(parts, diverged[:26] + diverged[28:])
+        site = (LEFT + INSERT, right)
+        self.assertIsNone(mp.row_reading(locus, row, GAP_BAND))
+        self.assertEqual(mp.classify_sequence(locus, row, GAP_BAND), "AltMatch")
+        self.assertTrue(right.startswith(row[LEFT + target :]))   # the primer begins on the base that was read
+        self.assertEqual(self.trimmed(locus, row, site), (row[LEFT:], "target"))
+        # On a marker with its target elsewhere, the same row is cut where its primer begins.
+        early = dataclasses.replace(locus, variant_pos=LEFT + TARGET, alt_tag=tag_of(parts, substituted(insert, TARGET)))
+        self.assertEqual(self.trimmed(early, row, site), (row[LEFT : LEFT + INSERT - 2], None))
+
 
 class DescriptionTests(unittest.TestCase):
     """Events of rows of another length than their Ref row, as a table without primers has them."""
